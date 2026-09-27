@@ -21,11 +21,109 @@
   const player = new LivePlayer();
   let starting = false;
   let playGeneration = 0;
+  let nativeAvailable = false;
+  let nativeSnapshot = { state: 'stopped' };
+  let nativeCommandGeneration = 0;
+  let nativeCommandTail = Promise.resolve();
+  let nativePlayGeneration = 0;
+  let nativePollInFlight = false;
+  let nativePollFailures = 0;
+  let nativeCommandsPending = 0;
+  let nativeModeChange = false;
+  let nativeVolumeTimer = null;
+  const outputMode = $('#output-mode');
   const playButton = $('#play-button');
   let paused = false;
   let holdTimer = null;
   let held = false;
   const playState = $('#play-state');
+
+  function nativeActive() {
+    return ['starting', 'playing', 'paused'].includes(nativeSnapshot.state);
+  }
+
+  function nativeLocked() {
+    return nativeActive();
+  }
+
+  function nativeStatusText(snapshot) {
+    if (snapshot.state === 'starting') return 'Starting native audio…';
+    if (snapshot.state === 'playing') {
+      const device = snapshot.device ? ` · ${snapshot.device}` : '';
+      const rate = snapshot.sample_rate ? ` · ${(snapshot.sample_rate / 1000).toLocaleString()} kHz` : '';
+      return `Playing${device}${rate}`;
+    }
+    if (snapshot.state === 'paused') return 'Paused';
+    if (snapshot.state === 'error') return 'Native audio error';
+    return 'Stopped';
+  }
+
+  function applyNativeSnapshot(snapshot) {
+    if (!snapshot || !['stopped', 'starting', 'playing', 'paused', 'error'].includes(snapshot.state)) {
+      throw new Error('The server returned an invalid native transport status.');
+    }
+    if (['starting', 'playing', 'paused'].includes(snapshot.state)) {
+      if (player.context || starting) stopLive();
+      outputMode.value = 'native';
+    }
+    nativeSnapshot = snapshot;
+    if (outputMode.value === 'native') {
+      playState.textContent = nativeStatusText(snapshot);
+      $('#output-level').value = Number.isFinite(snapshot.level) ? Math.max(0, Math.min(1, snapshot.level)) : 0;
+      if (snapshot.state === 'error') setNotice(snapshot.error || 'Native audio stopped with an error.', true);
+    }
+    syncStatus();
+  }
+
+  async function nativeCommand(payload) {
+    const generation = ++nativeCommandGeneration;
+    nativeCommandsPending += 1;
+    const command = nativeCommandTail.then(async () => {
+      const response = await request('/api/transport', { method: 'POST', body: JSON.stringify(payload) });
+      return response.json();
+    });
+    nativeCommandTail = command.catch(() => {});
+    try {
+      const snapshot = await command;
+      if (generation === nativeCommandGeneration) applyNativeSnapshot(snapshot);
+      return generation === nativeCommandGeneration;
+    } finally { nativeCommandsPending -= 1; }
+  }
+
+  async function stopNative() {
+    if (!nativeAvailable) return false;
+    nativePlayGeneration += 1;
+    clearTimeout(nativeVolumeTimer);
+    try {
+      await nativeCommand({ action: 'stop' });
+      return nativeSnapshot.state === 'stopped';
+    } catch (error) {
+      announceError(`Could not stop native audio. ${error.message}`);
+      return false;
+    }
+  }
+
+  async function loadCapabilities() {
+    try {
+      const response = await request('/api/capabilities');
+      const capabilities = await response.json();
+      nativeAvailable = capabilities.live_audio === true;
+      const option = outputMode.querySelector('option[value="native"]');
+      option.disabled = !nativeAvailable;
+      $('#native-build-hint').hidden = nativeAvailable;
+      if (nativeAvailable) {
+        const transportResponse = await request('/api/transport');
+        applyNativeSnapshot(await transportResponse.json());
+        if (nativeActive()) outputMode.value = 'native';
+      }
+      syncStatus();
+    } catch (error) {
+      nativeAvailable = false;
+      outputMode.querySelector('option[value="native"]').disabled = true;
+      $('#native-build-hint').hidden = false;
+      setNotice(`Native output is unavailable. Build with the native-audio feature to enable it. ${error.message}`);
+    }
+  }
 
   function stopLive() {
     playGeneration += 1;
@@ -85,7 +183,7 @@
   }
 
   setInterval(() => {
-    $('#output-level').value = player.level();
+    if (outputMode.value === 'browser') $('#output-level').value = player.level();
     if (player.context && !starting && !paused && player.context.state !== 'running') {
       stopLive();
       setNotice('Browser audio was interrupted. Press Play to resume.');
@@ -109,7 +207,7 @@
   function setBusy(value) {
     busy = value;
     document.querySelectorAll('button, input, select').forEach((control) => {
-      if (control === fileInput || control === playButton || control.id === 'monitor-volume') return;
+      if (control === fileInput || control === playButton || control.id === 'monitor-volume' || control === outputMode) return;
       control.disabled = value;
     });
     syncStatus();
@@ -122,17 +220,24 @@
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
     text.textContent = error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
-    applyButton.disabled = busy || !dirty;
-    saveButton.disabled = busy;
-    loadButton.disabled = busy;
-    renderButton.disabled = busy;
-    playButton.disabled = busy && !player.context && !starting;
-    playButton.textContent = starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
+    const locked = nativeLocked();
+    applyButton.disabled = busy || locked || !dirty;
+    saveButton.disabled = busy || locked;
+    loadButton.disabled = busy || locked;
+    renderButton.disabled = busy || locked;
+    outputMode.disabled = busy || nativeModeChange;
+    playButton.disabled = nativeModeChange || (busy && !player.context && !starting && !nativeActive());
+    const nativeSelected = outputMode.value === 'native';
+    playButton.textContent = nativeSelected
+      ? nativeSnapshot.state === 'starting' ? 'Stop' : nativeSnapshot.state === 'playing' ? 'Pause' : 'Play'
+      : starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
     playButton.title = 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
-    if (add) add.disabled = busy || draft.tracks.length >= 64;
-    if (emptyAdd) emptyAdd.disabled = busy || draft.tracks.length >= 64;
+    if (add) add.disabled = busy || locked || draft.tracks.length >= 64;
+    if (emptyAdd) emptyAdd.disabled = busy || locked || draft.tracks.length >= 64;
+    tracksEl.querySelectorAll('button, input').forEach(control => { control.disabled = busy || locked; });
+    rateSelect.disabled = busy || locked;
   }
 
   function announceError(message) {
@@ -458,6 +563,75 @@
     }
   }
 
+  async function toggleNative() {
+    if (!nativeAvailable || busy || nativeModeChange) return;
+    if (nativeSnapshot.state === 'starting') {
+      await stopNative();
+      return;
+    }
+    if (nativeSnapshot.state === 'playing') {
+      try { await nativeCommand({ action: 'pause' }); }
+      catch (error) { announceError(`Could not pause native audio. ${error.message}`); }
+      return;
+    }
+    if (nativeSnapshot.state === 'paused') {
+      try { await nativeCommand({ action: 'resume' }); }
+      catch (error) { announceError(`Could not resume native audio. ${error.message}`); }
+      return;
+    }
+
+    const startGeneration = ++nativePlayGeneration;
+    const appliedOk = await applyDraft();
+    if (startGeneration !== nativePlayGeneration || outputMode.value !== 'native') return;
+    if (!appliedOk) return;
+    // Invalidate a pending browser start before releasing its stream.
+    playGeneration += 1;
+    starting = false;
+    paused = false;
+    player.stop();
+    $('#output-level').value = 0;
+    if (!draft.tracks.length) { setNotice('Add a sine track, then press Play.'); return; }
+    nativeSnapshot = { state: 'starting' };
+    playState.textContent = 'Starting native audio…';
+    syncStatus();
+    try {
+      await nativeCommand({ action: 'play', seconds: 60, volume: Number($('#monitor-volume').value) });
+    } catch (error) {
+      nativeSnapshot = { state: 'error', error: error.message };
+      applyNativeSnapshot(nativeSnapshot);
+    }
+  }
+
+  async function changeOutputMode() {
+    nativePlayGeneration += 1;
+    if (outputMode.value === 'native') {
+      if (!nativeAvailable) {
+        outputMode.value = 'browser';
+        return;
+      }
+      // Switching away from a running browser stream is safe and synchronous.
+      if (player.context || starting) stopLive();
+      applyNativeSnapshot(nativeSnapshot);
+      syncStatus();
+      return;
+    }
+    if (nativeAvailable) {
+      clearTimeout(nativeVolumeTimer);
+      nativeModeChange = true;
+      syncStatus();
+      const stopped = await stopNative();
+      nativeModeChange = false;
+      if (!stopped) {
+        outputMode.value = 'native';
+        syncStatus();
+        return;
+      }
+    }
+    playState.textContent = 'Stopped';
+    $('#output-level').value = 0;
+    syncStatus();
+  }
+
   async function loadCurrentSession() {
     setBusy(true);
     setNotice('Connecting to the studio…');
@@ -505,7 +679,8 @@
   }
   playButton.addEventListener('click', () => {
     if (held) { held = false; return; }
-    void toggleLive();
+    if (outputMode.value === 'native') void toggleNative();
+    else void toggleLive();
   });
   playButton.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
@@ -513,17 +688,38 @@
     playButton.setPointerCapture(event.pointerId);
     holdTimer = setTimeout(() => {
       held = true;
-      stopLive();
+      if (outputMode.value === 'native') void stopNative();
+      else stopLive();
     }, 600);
   });
   const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
   playButton.addEventListener('pointerup', cancelHold);
   playButton.addEventListener('pointercancel', cancelHold);
   playButton.addEventListener('lostpointercapture', cancelHold);
-  $('#monitor-volume').addEventListener('input', event => player.setVolume(Number(event.target.value)));
-  window.addEventListener('pagehide', stopLive);
+  $('#monitor-volume').addEventListener('input', event => {
+    const volume = Number(event.target.value);
+    player.setVolume(volume);
+    if (outputMode.value === 'native' && nativeAvailable && nativeActive()) {
+      clearTimeout(nativeVolumeTimer);
+      nativeVolumeTimer = setTimeout(() => {
+        void nativeCommand({ action: 'volume', volume }).catch(error => announceError(`Could not change native listening volume. ${error.message}`));
+      }, 60);
+    }
+  });
+  outputMode.addEventListener('change', () => { void changeOutputMode(); });
+  window.addEventListener('pagehide', () => {
+    stopLive();
+    if (nativeAvailable && nativeActive()) {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (token) headers.set('X-DAW-Token', token);
+      void fetch('/api/transport', { method: 'POST', headers, body: JSON.stringify({ action: 'stop' }), keepalive: true }).catch(() => {});
+    }
+  });
   document.addEventListener('keydown', event => {
-    if (event.code === 'Escape') stopLive();
+    if (event.code === 'Escape') {
+      if (outputMode.value === 'native') void stopNative();
+      else stopLive();
+    }
   });
   $('#empty-add-button').addEventListener('click', addTrack);
   applyButton.addEventListener('click', () => { void applyDraft(); });
@@ -551,4 +747,21 @@
 
   renderTracks();
   void loadCurrentSession();
+  void loadCapabilities();
+  setInterval(async () => {
+    if (!nativeAvailable || nativePollInFlight || nativeCommandsPending || nativeModeChange) return;
+    nativePollInFlight = true;
+    const generation = nativeCommandGeneration;
+    try {
+      const response = await request('/api/transport');
+      const snapshot = await response.json();
+      nativePollFailures = 0;
+      if (generation === nativeCommandGeneration && !nativeCommandsPending && !nativeModeChange) applyNativeSnapshot(snapshot);
+    } catch (_) {
+      nativePollFailures += 1;
+      if (nativePollFailures === 3 && nativeActive()) {
+        setNotice('Native status is unavailable. Playback may still be active; its 60-second limit still applies. Try Stop or restart the studio.', true);
+      }
+    } finally { nativePollInFlight = false; }
+  }, 300);
 })();

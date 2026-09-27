@@ -14,14 +14,44 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; live audio and plugin hosting are false |
+| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects the native macOS build; plugin hosting is false |
 | `session.get` | `{}` | Current session |
 | `session.replace` | `{ "session": <session> }` | Validated replacement session |
 | `session.save` | `{ "path": "session.json" }` | `{ "path": "session.json" }` |
 | `session.load` | `{ "path": "session.json" }` | Validated loaded session |
 | `render` | `{ "path": "tone.wav", "seconds": 1.0 }` | `{ "frames": 48000, "sample_rate": 48000, "channels": 2, "clipped_frames": 0 }` |
 
-All operations are synchronous and serial. There is no cancellation, undo, transport, request deduplication, or concurrent editing yet. Replacement/load validate before changing state. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
+Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or concurrent editing yet. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
+
+## Native transport
+
+Build with `--features native-audio` on macOS. `capabilities.live_audio` means this build supports native playback, not that a working device is connected. The following methods are recognized in every build; unsupported builds return `audio_unavailable`, except status and stop, which return stopped.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `transport.status` | `{}` | Current transport snapshot |
+| `transport.play` | `{ "seconds": 60, "volume": 0.25 }` | Snapshot after starting the current session |
+| `transport.pause` | `{}` | Snapshot after requesting silence without advancing phase |
+| `transport.resume` | `{}` | Snapshot after requesting continued playback |
+| `transport.stop` | `{}` | Stopped snapshot after stream release; idempotent |
+| `transport.volume` | `{ "volume": 0.25 }` | Snapshot after updating monitor volume; no-op while stopped |
+
+Both play fields are required: seconds is 0.001–60 and volume is 0–1. Playback uses the default output device and a prepared copy of the session at its device rate. Play while active fails; stop first. Pause/resume while stopped fail. Volume changes are applied at callback boundaries without smoothing and do not affect saved sessions or WAV exports.
+
+Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a callback transition is pending), `playing`, `paused`, or `error`. Active snapshots also contain `device`, `sample_rate`, `submitted_frames`, and `volume`. Error snapshots contain diagnostic `error` text. `level` is the latest callback peak after monitor volume. Playing/paused states reflect callback observation, not just command dispatch. Poll status to observe transitions and later device errors. Submitted frames count DSP output, not acoustic delivery.
+
+Playback ends at either the requested frame count or the wall-time deadline, including pauses, followed by a short bounded buffer drain. The owner checks deadlines without needing status requests. Stop releases the stream before acknowledgment; EOF terminates the engine and releases process resources. The control queue holds at most eight messages and commands time out after ten seconds; a timed-out command has an uncertain result, so restart the engine before relying on playback state. Audio callbacks use atomics and never wait on the command queue. Default device selection and host permissions remain platform limitations.
+
+The GUI uses a 60-second native snapshot, locks session edits while active, and retains browser mode for live draft editing. Use one editing window: native transport is shared, while Web Audio players belong to individual tabs. Closing a page requests native stop on a best-effort basis; the engine's duration limit still applies.
+
+```jsonl
+{"protocol_version":1,"id":"play","method":"transport.play","params":{"seconds":10,"volume":0.25}}
+{"protocol_version":1,"id":"inspect","method":"transport.status"}
+{"protocol_version":1,"id":"pause","method":"transport.pause"}
+{"protocol_version":1,"id":"resume","method":"transport.resume"}
+{"protocol_version":1,"id":"quiet","method":"transport.volume","params":{"volume":0.1}}
+{"protocol_version":1,"id":"stop","method":"transport.stop"}
+```
 
 ## Session schema v1
 
@@ -52,6 +82,8 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `invalid_params` | Wrong or unknown params; malformed replacement shape; invalid duration |
 | `invalid_session` | Session validation or load parsing failed; session file too large |
 | `io_error` | File open/write/read/sync or WAV encoding failed |
+| `audio_unavailable` | Native playback is not enabled for this build/platform |
+| `audio_error` | Native device/setup/control failure or invalid transport state |
 | `internal_error` | Unexpected session serialization failure |
 
 ## Complete command examples

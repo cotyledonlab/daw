@@ -56,12 +56,15 @@ fn path_str(path: &Path) -> &str {
 }
 
 #[test]
-fn capabilities_report_the_implemented_offline_only_surface() {
+fn capabilities_report_the_implemented_build_surface() {
     let mut controller = Controller::default();
     let response = request(&mut controller, "caps", "capabilities", json!({}));
     let capabilities = ok(&response);
 
-    assert_eq!(capabilities["live_audio"], false);
+    assert_eq!(
+        capabilities["live_audio"],
+        cfg!(all(feature = "native-audio", target_os = "macos"))
+    );
     assert_eq!(capabilities["plugin_hosting"], false);
     assert_eq!(capabilities["render"]["format"], "wav_pcm16");
     assert_eq!(capabilities["render"]["channels"], 2);

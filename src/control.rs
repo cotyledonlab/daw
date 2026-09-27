@@ -16,6 +16,12 @@ pub const METHODS: &[&str] = &[
     "session.save",
     "session.load",
     "render",
+    "transport.status",
+    "transport.play",
+    "transport.pause",
+    "transport.resume",
+    "transport.stop",
+    "transport.volume",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +76,8 @@ impl Response {
 #[derive(Default)]
 pub struct Controller {
     session: Session,
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    transport: crate::audio::Transport,
 }
 
 #[derive(Deserialize)]
@@ -90,6 +98,18 @@ struct ReplaceParams {
 struct RenderParams {
     path: String,
     seconds: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlayParams {
+    seconds: f64,
+    volume: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VolumeParams {
+    volume: f64,
 }
 
 fn params<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, ControlError> {
@@ -139,7 +159,7 @@ impl Controller {
             "capabilities" => {
                 let _: EmptyParams = params(value)?;
                 Ok(
-                    json!({ "methods": METHODS, "devices": ["sine"], "live_audio": false,
+                    json!({ "methods": METHODS, "devices": ["sine"], "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
                     "plugin_hosting": false, "render": { "format": "wav_pcm16", "channels": 2, "max_seconds": 60 },
                     "session_schema_version": 1, "max_message_bytes": MAX_MESSAGE_BYTES }),
                 )
@@ -154,6 +174,7 @@ impl Controller {
                     .session
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                self.stop_transport()?;
                 self.session = replacement.session;
                 Ok(json!(self.session))
             }
@@ -186,6 +207,7 @@ impl Controller {
                 replacement
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                self.stop_transport()?;
                 self.session = replacement;
                 Ok(json!(self.session))
             }
@@ -202,10 +224,70 @@ impl Controller {
                 })?;
                 Ok(json!(report))
             }
+            "transport.status" | "transport.play" | "transport.pause" | "transport.resume"
+            | "transport.stop" | "transport.volume" => self.transport_command(method, value),
             _ => Err(ControlError::new(
                 "unknown_method",
                 format!("unknown method: {method}"),
             )),
+        }
+    }
+
+    fn stop_transport(&mut self) -> Result<(), ControlError> {
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        self.transport
+            .stop()
+            .map_err(|e| ControlError::new("audio_error", e))?;
+        Ok(())
+    }
+
+    fn transport_command(&mut self, method: &str, value: Value) -> Result<Value, ControlError> {
+        let mut seconds = 0.0;
+        let mut volume = 0.25;
+        match method {
+            "transport.play" => {
+                let p: PlayParams = params(value)?;
+                seconds = p.seconds;
+                volume = p.volume;
+                render::validate_duration(seconds)
+                    .map_err(|e| ControlError::new("invalid_params", e))?;
+            }
+            "transport.volume" => {
+                volume = params::<VolumeParams>(value)?.volume;
+            }
+            _ => {
+                let _: EmptyParams = params(value)?;
+            }
+        }
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err(ControlError::new(
+                "invalid_params",
+                "volume must be between 0 and 1",
+            ));
+        }
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        {
+            let result = match method {
+                "transport.play" => self.transport.start(&self.session, seconds, volume),
+                "transport.pause" => self.transport.pause(),
+                "transport.resume" => self.transport.resume(),
+                "transport.stop" => self.transport.stop(),
+                "transport.volume" => self.transport.volume(volume),
+                _ => self.transport.status(),
+            };
+            result.map_err(|e| ControlError::new("audio_error", e))
+        }
+        #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+        {
+            let _ = seconds;
+            if matches!(method, "transport.status" | "transport.stop") {
+                Ok(json!({"state":"stopped","level":0}))
+            } else {
+                Err(ControlError::new(
+                    "audio_unavailable",
+                    "build with --features native-audio on macOS",
+                ))
+            }
         }
     }
 }

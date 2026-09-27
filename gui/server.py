@@ -124,9 +124,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.authorized(api=self.path.startswith("/api/")):
             return
-        if self.path == "/api/session":
+        if self.path in ("/api/session", "/api/capabilities", "/api/transport"):
             try:
-                self.send_json(200, self.server.engine.call("session.get"))
+                method = {"/api/session": "session.get", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
+                self.send_json(200, self.server.engine.call(method))
             except EngineError as error:
                 self.send_json(422, {"error": str(error)})
             return
@@ -162,6 +163,11 @@ class Handler(BaseHTTPRequestHandler):
                 if set(data) != {"session"}:
                     raise ValueError("Expected session only.")
                 self.send_json(200, self.server.engine.call("session.replace", data))
+            elif self.path == "/api/transport":
+                action = data.pop("action", None)
+                if action not in ("play", "pause", "resume", "stop", "volume"):
+                    raise ValueError("Unknown transport action.")
+                self.send_json(200, self.server.engine.call("transport." + action, data))
             elif self.path == "/api/render":
                 if set(data) != {"seconds"}:
                     raise ValueError("Expected seconds only.")

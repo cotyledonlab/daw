@@ -37,9 +37,9 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless 
 
 Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply/save still validate and persist through Rust. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
 
-This is built-in sine playback, not the native audio engine or plugin host. The headless Rust capabilities correctly continue to report `live_audio: false`. There is no timeline or scheduled transport yet.
+Browser output is built-in sine audition. Native output below runs the Rust engine. Neither mode has a timeline or plugin hosting yet.
 
-## Native playback spike (macOS)
+## Native playback (macOS)
 
 ```sh
 cargo build --locked --features native-audio
@@ -47,7 +47,7 @@ target/debug/daw devices
 target/debug/daw play path/to/session.json 2 0.25
 ```
 
-This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. The browser GUI still uses its own player; native controls are not connected to it yet. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
+This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. After this build, restart `python3 gui/server.py` and choose **Native audio** in the GUI. Play applies the draft and starts the Rust engine. The same button pauses/resumes; hold it or press Escape to Stop. Track editing is locked during native playback; listening volume remains adjustable. Native playback uses a fixed session snapshot and ends after 60 seconds of wall time, including time paused. Switching output stops the previous player in that window. Browser output remains available for immediate draft edits. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
 
 ## Develop
 
@@ -61,6 +61,6 @@ node --test gui/test_live.cjs
 
 `src/session.rs` owns the serializable model and validation. `src/control.rs` owns commands and persistence. `src/engine.rs` owns prepared block DSP and persistent oscillator phase; `src/render.rs` owns WAV encoding. `src/main.rs` owns bounded input framing and stdout responses. The offline renderer is a reference implementation, not a real-time audio callback.
 
-`gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes session inspection/replacement and temporary WAV downloads only, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
+`gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T03 and the T04 CLI spike are complete. Continue native transport/GUI integration with T04b; T01 can proceed independently in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T03, T04, and T04b are complete. Continue with T01 machine-readable discovery, then T02 revision-checked edits in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

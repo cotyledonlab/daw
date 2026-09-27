@@ -53,12 +53,23 @@
           <button id="play-button" class="button button-primary" type="button">Play</button>
           <span id="play-state" role="status" aria-live="polite">Stopped</span>
         </div>
+        <div class="output-mode-control">
+          <label for="output-mode">Audio output</label>
+          <div class="select-wrap">
+            <select id="output-mode" aria-describedby="native-build-hint">
+              <option value="browser">Browser</option>
+              <option value="native" disabled>Native audio</option>
+            </select>
+            <span class="chevron" aria-hidden="true"></span>
+          </div>
+          <span id="native-build-hint" class="output-hint">Native output requires a build with the native-audio feature.</span>
+        </div>
         <div class="monitor-controls">
           <label for="monitor-volume">Listening volume</label>
           <input id="monitor-volume" type="range" min="0" max="1" step="0.01" value="0.25">
           <meter id="output-level" min="0" max="1" value="0" aria-label="Live output level"></meter>
         </div>
-        <p class="live-help">Click Play/Pause. Hold the button or press Escape to stop. Edits are heard live; apply or save to keep them. Listening volume affects playback only.</p>
+        <p class="live-help">Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session before playback and stops after 60 seconds, including time paused. This limit does not affect WAV duration. Listening volume affects playback only.</p>
       </section>
 
       <section class="toolbar" aria-label="Session actions">
@@ -102,7 +113,7 @@
       <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
     </main>
 
-    <footer class="footer"><span>Browser sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Plugin hosting coming later</span></footer>
+    <footer class="footer"><span>Browser or native sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Plugin hosting coming later</span></footer>
   </div>
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>

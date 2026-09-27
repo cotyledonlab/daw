@@ -68,6 +68,29 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertIn(b"Reload this window", body)
         self.assertEqual(self.get_session()["sample_rate"], 48000)
 
+    def test_capabilities_and_transport_routes_are_authenticated_and_report_stopped(self):
+        status, _, _ = self.request("GET", "/api/capabilities", token=False)
+        self.assertEqual(status, 403)
+        status, body, _ = self.request("GET", "/api/capabilities")
+        self.assertEqual(status, 200, body)
+        capabilities = json.loads(body)
+        self.assertIn("transport.status", capabilities["methods"])
+
+        status, _, _ = self.request("GET", "/api/transport", token=False)
+        self.assertEqual(status, 403)
+        status, body, _ = self.request("GET", "/api/transport")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["state"], "stopped")
+
+        status, body, _ = self.post("/api/transport", {"action": "stop"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["state"], "stopped")
+
+    def test_transport_rejects_unknown_actions(self):
+        status, body, _ = self.post("/api/transport", {"action": "render", "path": "/tmp/owned.wav"})
+        self.assertEqual(status, 422, body)
+        self.assertIn(b"Unknown transport action", body)
+
     def test_invalid_host_and_origin_are_rejected(self):
         status, _, _ = self.request("GET", "/api/session", host="attacker.example")
         self.assertEqual(status, 403)
