@@ -162,6 +162,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/session":
                 if set(data) != {"session"}:
                     raise ValueError("Expected session only.")
+                if isinstance(data["session"], dict) and data["session"].get("schema_version") == 2:
+                    raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for note sequencing sessions.")
                 self.send_json(200, self.server.engine.call("session.replace", data))
             elif self.path == "/api/transport":
                 action = data.pop("action", None)

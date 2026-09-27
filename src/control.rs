@@ -39,6 +39,16 @@ fn capabilities() -> Value {
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
         "session_schema_version": session::SCHEMA_VERSION,
+        "supported_session_schema_versions": [1, 2],
+        "sequencing": {
+            "schema_version": 2, "offline": true,
+            "native_requires_matching_sample_rate": true,
+            "browser_audition": false,
+            "max_clips": session::MAX_CLIPS, "max_notes": session::MAX_NOTES,
+            "max_voices": session::MAX_VOICES, "max_frame": session::MAX_FRAME,
+            "envelope_ms": 5, "ticks_per_quarter": 960,
+            "tempo_milli_bpm": {"minimum": 20000, "maximum": 300000, "default": 120000}
+        },
         "editing": {
             "max_operations": MAX_EDIT_OPERATIONS,
             "revision_type": "decimal_string",

@@ -24,6 +24,11 @@ impl PlaybackBuffer {
         if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
             return Err("volume must be finite and between 0 and 1".into());
         }
+        if session.schema_version == 2 && device_rate != session.sample_rate {
+            return Err(
+                "note sessions require the device rate to match the session sample rate".into(),
+            );
+        }
         let mut adjusted = session.clone();
         adjusted.sample_rate = device_rate;
         // Prepare at the actual device rate, preserving Hz. No sample resampling needed

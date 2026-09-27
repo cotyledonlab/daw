@@ -6,6 +6,7 @@
   let applied = null;
   let draft = structuredClone(DEFAULT_SESSION);
   let busy = false;
+  let unsupportedSession = false;
 
   const $ = (selector) => document.querySelector(selector);
   const tracksEl = $('#tracks');
@@ -195,7 +196,7 @@
   }
 
   function isDirty() {
-    return !applied || JSON.stringify(draft) !== JSON.stringify(applied);
+    return !unsupportedSession && (!applied || JSON.stringify(draft) !== JSON.stringify(applied));
   }
 
   function setNotice(message, isError = false) {
@@ -219,25 +220,26 @@
     const dirty = isDirty();
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
-    text.textContent = error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
+    text.textContent = unsupportedSession ? 'Note session · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
     const locked = nativeLocked();
-    applyButton.disabled = busy || locked || !dirty;
-    saveButton.disabled = busy || locked;
-    loadButton.disabled = busy || locked;
-    renderButton.disabled = busy || locked;
-    outputMode.disabled = busy || nativeModeChange;
-    playButton.disabled = nativeModeChange || (busy && !player.context && !starting && !nativeActive());
+    applyButton.disabled = unsupportedSession || busy || locked || !dirty;
+    saveButton.disabled = unsupportedSession || busy || locked;
+    loadButton.disabled = unsupportedSession || busy || locked;
+    fileInput.disabled = unsupportedSession || busy || locked;
+    renderButton.disabled = unsupportedSession || busy || locked;
+    outputMode.disabled = unsupportedSession || busy || nativeModeChange;
+    playButton.disabled = nativeModeChange || (unsupportedSession && !nativeActive()) || (busy && !player.context && !starting && !nativeActive());
     const nativeSelected = outputMode.value === 'native';
-    playButton.textContent = nativeSelected
+    playButton.textContent = unsupportedSession && nativeActive() ? 'Stop' : nativeSelected
       ? nativeSnapshot.state === 'starting' ? 'Stop' : nativeSnapshot.state === 'playing' ? 'Pause' : 'Play'
       : starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
     playButton.title = 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
-    if (add) add.disabled = busy || locked || draft.tracks.length >= 64;
-    if (emptyAdd) emptyAdd.disabled = busy || locked || draft.tracks.length >= 64;
-    tracksEl.querySelectorAll('button, input').forEach(control => { control.disabled = busy || locked; });
-    rateSelect.disabled = busy || locked;
+    if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
+    if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
+    tracksEl.querySelectorAll('button, input').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
+    rateSelect.disabled = unsupportedSession || busy || locked;
   }
 
   function announceError(message) {
@@ -639,6 +641,14 @@
       const response = await request('/api/session', { method: 'GET' });
       const result = await response.json();
       const session = result.session || result;
+      if (session && session.schema_version === 2) {
+        unsupportedSession = true;
+        emptyEl.hidden = true;
+        $('#track-count').textContent = `${session.tracks.length} ${session.tracks.length === 1 ? "track" : "tracks"} · read-only`;
+        selectSampleRate(session.sample_rate);
+        setNotice('This session uses the note-session format. Use the scripting interface; this editor supports continuous sine sessions only.', true);
+        return;
+      }
       const validation = validateSession(session);
       if (validation) throw new Error(`The server returned an invalid session: ${validation}`);
       applied = clone(session);
@@ -679,6 +689,7 @@
   }
   playButton.addEventListener('click', () => {
     if (held) { held = false; return; }
+    if (unsupportedSession) { if (nativeActive()) void stopNative(); return; }
     if (outputMode.value === 'native') void toggleNative();
     else void toggleLive();
   });

@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "sample_rate": 48000,
+  "tempo_milli_bpm": 120000,
+  "tracks": [
+    {
+      "id": "arp",
+      "mode": "sequenced",
+      "device": {
+        "kind": "sine",
+        "frequency_hz": 440,
+        "gain": 0.15
+      },
+      "clips": [
+        {
+          "kind": "notes",
+          "id": "phrase",
+          "start_frame": 0,
+          "length_frames": 96000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 12000,
+              "frequency_hz": 261.625565,
+              "velocity": 0.8
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 329.627557,
+              "velocity": 0.8
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 12000,
+              "frequency_hz": 391.995436,
+              "velocity": 0.8
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 523.251131,
+              "velocity": 0.8
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

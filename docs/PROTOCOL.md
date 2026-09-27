@@ -51,7 +51,7 @@ Every successful edit, replace, or load advances the revision exactly once, incl
 {"protocol_version":1,"id":"replace","method":"session.replace","params":{"expected_revision":"1","session":{"schema_version":1,"sample_rate":48000,"tracks":[]}}}
 ```
 
-This example assumes a fresh engine. The edit returns revision `"1"`; the checked replacement advances it to `"2"`. `capabilities.editing` reports the operation names, `max_operations`, and `revision_type: "decimal_string"`. No sample-rate edits, undo, or native live graph updates are introduced by the batch command.
+This example assumes a fresh engine. The edit returns revision `"1"`; the checked replacement advances it to `"2"`. `capabilities.editing` reports the operation names, `max_operations`, and `revision_type: "decimal_string"`. No sample-rate edits, clip/note-specific edit operations, undo, or native live graph updates are introduced by the batch command. For v2, `add_track` requires `mode` and `clips`; parameter edits affect the track device, not individual note frequencies. Use guarded full replacement for clip edits.
 
 ## Discovery metadata
 
@@ -96,7 +96,17 @@ The GUI uses a 60-second native snapshot, locks session edits while active, and 
 {"protocol_version":1,"id":"stop","method":"transport.stop"}
 ```
 
-The [timeline contract](decisions/timeline.md) describes a future schema v2. Its fixtures are design-only and cannot be loaded by the current engine; capabilities continue to advertise schema v1 only.
+## Session schema v2
+
+Schema v2 implements the note subset of the [timeline contract](decisions/timeline.md): required root `tempo_milli_bpm`, required per-track `mode` and `clips`, and `kind: "notes"` clips containing frame-positioned note gates. See [the runnable arpeggio](../examples/sessions/arpeggio.json) for the full shape. Schema-v1 fields and behavior remain unchanged, and no load silently upgrades them.
+
+`capabilities.supported_session_schema_versions` is `[1,2]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
+
+Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips, seek, loops, and automation are not accepted yet.
+
+`session.replace`, `session.load`, and whole-track batches validate notes and peak polyphony before stopping playback or committing a new revision. `session.save` preserves the selected schema. The explicit upgrade example maps v1 tracks to continuous v2 tracks without changing their sound. In-place sample-rate editing is not exposed: a full replacement supplies a new arrangement and does not rescale any positions automatically.
+
+The separate `timeline-contract.json` fixtures remain design-only reference cases, including future loop behavior, and are not loadable sessions.
 
 ## Session schema v1
 

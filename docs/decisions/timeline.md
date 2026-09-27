@@ -1,6 +1,6 @@
 # Timeline contract
 
-Status: T05 design approved for implementation, not an implemented session format. The current engine still accepts only schema v1 and renders continuous sine tracks. T06 implements the note subset below; T07 adds audio and seek/loop transport; T08 adds automation. None of those capabilities should be advertised before their working implementation lands.
+Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07 adds audio and seek/loop transport; T08 adds automation. None of those capabilities should be advertised before their working implementation lands.
 
 ## Positions and tempo
 
@@ -18,11 +18,11 @@ frame = floor((2 * numerator + denominator) / (2 * denominator))
 
 Products use checked u128 in Rust. Ties round upward. Convert onset and end positions independently, then subtract to obtain duration; never accumulate rounded beat lengths. Reject a placement whose rounded end is not after its start. Tick positions are authoring inputs, not a second persisted timing source. Editing tempo changes the beat grid for future placement; it does not move existing frames. Retiming existing material must be an explicit later operation. Tempo maps, negative pre-roll, swing, and time stretching are deferred.
 
-Session sample-rate changes after timeline content exists are rejected initially. An explicit future resampling/retiming operation must define that conversion. Native timeline playback initially requires the device rate to equal the session rate. The existing procedural v1 sine audition can retain its rate adaptation, but applying that adaptation directly to frame-indexed clips would change their timing.
+In-place session sample-rate editing is not exposed initially. Full replacement supplies a new arrangement with explicit frame positions and never rescales those positions automatically. An explicit future resampling/retiming operation must define that conversion. Native timeline playback initially requires the device rate to equal the session rate. The existing procedural v1 sine audition can retain its rate adaptation, but applying that adaptation directly to frame-indexed clips would change their timing.
 
 ## Note subset for schema v2 (T06)
 
-The following example is a proposed schema-v2 session, not a runnable example for today's engine:
+The following is a supported schema-v2 note session:
 
 ```json
 {
@@ -56,7 +56,7 @@ Clip start is relative to the session; note start is relative to its clip. Note 
 
 Track IDs remain unique within the session; clip IDs are unique within a track; note IDs are unique within a clip. Every ID is 1–128 UTF-8 bytes. T06 limits: 64 tracks, 1,024 note clips total, 16,384 notes total, and 64 simultaneous voices across the session, including release tails. Validation computes peak overlap of voice lifetimes and rejects excess polyphony rather than stealing voices; this must happen before session commit as well as preparation. A continuous track consumes one voice slot. Validate before publishing any replacement. Keep the 1 MiB request/session-file bound; it may limit content before the item caps do.
 
-T06 does not accept audio clips, loop fields, automation fields, or new timeline transport commands. It exposes only working note rendering and its actual validation limits in capabilities. It must reject native playback of v2 until rate-matched scheduling and callback preparation are verified. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
+T06 does not accept audio clips, loop fields, automation fields, or new timeline transport commands. It exposes only working note rendering and its actual validation limits in capabilities. Native playback is enabled only at the matching session rate, after callback preparation and lifecycle verification. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
 
 ## Note envelope and clip ends
 
@@ -101,7 +101,7 @@ Keep the protocol envelope at version 1. Schema v1 reads, saves, edits, and rend
 
 An explicit client-side upgrade maps each v1 track to `mode: "continuous"`, `clips: []`, preserving ID, device, sample rate, and track order, and adds tempo 120000. It must preserve v1 rendered samples, including summation order for migrated continuous tracks. Thus the v2 stable identity ordering above applies to sequenced voices; continuous tracks retain serialized order and are mixed first. Mixed sessions then sum sequenced voices in identity order. No automatic downgrade is available for sequenced content. Revisions remain process-local: validated replacement with the upgraded session advances the current revision once.
 
-Implement T06 in these bounded commits:
+T06 implementation checklist (completed together to keep v2 behavior coherent):
 
 1. Add v2 note models and strict validation alongside unchanged v1 paths; add explicit upgrade example, capability metadata, and unsupported-client guards. Test v1 compatibility, limits, duplicate identities, ranges, and upgrade round trips. Do not expose successful v2 rendering until step 2 works; reject it explicitly in intermediate commits.
 2. Prepare sorted note events and a fixed voice pool off the callback. Implement offsets/envelopes and linear offline rendering. Adapt the fixture cases into real Rust engine tests, including uneven blocks, adjacent clip tails, short gates, simultaneous notes, and polyphony rejection. Retain the allocation counter check.

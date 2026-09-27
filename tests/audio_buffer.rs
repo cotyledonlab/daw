@@ -7,6 +7,8 @@ use std::f64::consts::TAU;
 fn tone() -> Session {
     Session {
         tracks: vec![Track {
+            mode: None,
+            clips: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,

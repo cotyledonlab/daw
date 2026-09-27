@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, record, or sequence clips. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, record, or play audio clips. Schema-v2 sine note clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
 
 ## Run
 
@@ -37,7 +37,7 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless 
 
 Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply/save still validate and persist through Rust. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
 
-Browser output is built-in sine audition. Native output below runs the Rust engine. Neither mode has a timeline or plugin hosting yet.
+Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes at a matching device rate. Neither mode hosts plugins yet.
 
 ## Native playback (macOS)
 
@@ -48,6 +48,26 @@ target/debug/daw play path/to/session.json 2 0.25
 ```
 
 This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. After this build, restart `python3 gui/server.py` and choose **Native audio** in the GUI. Play applies the draft and starts the Rust engine. The same button pauses/resumes; hold it or press Escape to Stop. Track editing is locked during native playback; listening volume remains adjustable. Native playback uses a fixed session snapshot and ends after 60 seconds of wall time, including time paused. Switching output stops the previous player in that window. Browser output remains available for immediate draft edits. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
+
+## Scripted note sequencing
+
+[The arpeggio example](examples/sessions/arpeggio.json) contains four notes at 48 kHz. Play it using the native build above:
+
+```sh
+target/debug/daw play examples/sessions/arpeggio.json 2 0.25
+```
+
+The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
+
+The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Audio clips, seek, loops, and automation remain planned.
+
+To preserve an existing sine session while explicitly upgrading its format:
+
+```sh
+python3 examples/upgrade_session.py old-session.json new-session.json
+```
+
+This validates both versions, preserves continuous playback and track order, and refuses to overwrite the destination. Sessions are never silently upgraded on load.
 
 ## Develop
 
@@ -63,4 +83,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T01–T04b and the T05 design are complete. The [timeline contract](docs/decisions/timeline.md) and checked reference fixtures guide T06 note sequencing in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T06 note sequencing is complete. The [timeline contract](docs/decisions/timeline.md) and checked reference fixtures guide T07 audio clips and transport in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

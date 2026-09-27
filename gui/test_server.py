@@ -120,6 +120,15 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 422, body)
         self.assertEqual(self.get_session(), SESSION)
 
+    def test_note_session_upload_is_rejected_before_replacing_engine_session(self):
+        status, _, _ = self.post("/api/session", {"session": SESSION})
+        self.assertEqual(status, 200)
+        note_session = {"schema_version": 2, "sample_rate": 48000, "tracks": []}
+        status, body, _ = self.post("/api/session", {"session": note_session})
+        self.assertEqual(status, 422, body)
+        self.assertIn(b"scripting interface", body)
+        self.assertEqual(self.get_session(), SESSION)
+
     def test_bad_params_and_duration_return_safe_errors(self):
         for path, body in (
             ("/api/session", {"unexpected": True}),

@@ -1,4 +1,4 @@
-//! Offline DAW core. No device drivers or foreign plugin code run in this slice.
+//! Scriptable sine/note engine with offline rendering and optional macOS playback.
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 pub mod audio;
 pub mod audio_buffer;
