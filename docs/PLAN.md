@@ -62,13 +62,15 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T03, T04, and T04b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T03, T04, and T04b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
-### T01: machine-readable discovery
+### T01: machine-readable discovery (complete)
 
 **Depends on:** S0. **Owner:** Luna. **Files:** `src/control.rs`, `docs/PROTOCOL.md`, `tests/control.rs`.
 
 Extend capabilities with parameter descriptions, units, defaults, limits, session limits, and file behavior. Preserve existing fields. Acceptance: a client constructs a valid sine session from metadata alone; limits match validation tests. No future devices or new transport.
+
+Implemented additive session limits, device parameter descriptions/defaults/units, a structured rate-dependent Nyquist bound, file behavior, and the minimum render duration. Validation and discovery share rate, gain, ID, track-count, and duration constants. The Python demo constructs its device from metadata. Boundary tests exercise metadata against the authoritative validator.
 
 ### T02: revision-checked atomic edits
 
@@ -154,4 +156,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T04b is complete. Implement T01 machine-readable discovery next, then review T02 revision-checked edits before assigning it to Luna. Keep native snapshot semantics until an explicit live-edit design is tested. T05 follows T02. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T01 and T04b are complete. Review the T02 revision-checked edit contract next, then assign its implementation to Luna. Keep native snapshot semantics until an explicit live-edit design is tested. T05 follows T02. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.

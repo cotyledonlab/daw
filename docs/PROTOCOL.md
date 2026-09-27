@@ -23,6 +23,19 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 
 Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or concurrent editing yet. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
 
+## Discovery metadata
+
+`capabilities` preserves its existing fields and adds `session`, `device_metadata`, and `file_behavior`. Clients should ignore unfamiliar capability fields. This is project-specific metadata, not JSON Schema. No session fields become optional: `default` is a suggested value for constructing a new session, not an implicit parser default.
+
+- `session.sample_rate` describes an integer in Hz, with inclusive `minimum`/`maximum` and a `default` of 48000. `session.tracks` gives `min_items` and `max_items`. `session.track_id` gives UTF-8 byte limits and requires uniqueness within the session. `session.unknown_fields` is `reject`.
+- `device_metadata` is keyed by the implemented kind names in `devices`. Each entry has a description and `parameters` keyed by the persisted parameter names. Parameters describe their type, unit, default, required/finite flags, and bounds. `minimum`/`maximum` are inclusive; `exclusive_minimum` is strict.
+- Sine `frequency_hz` has unit `Hz`, default 440, and exclusive minimum 0. Its `maximum_from` is `{ "field": "session.sample_rate", "factor": 0.5, "exclusive": true }`: multiply the chosen session rate by the factor to obtain the strict upper bound. This is a field reference, not executable code. Native/browser playback can impose a lower limit from the actual output rate.
+- Sine `gain` uses linear amplitude, defaults to 0.15, and has inclusive bounds 0 and 1. It is not decibels or listening volume.
+- `file_behavior` describes the headless interface: relative paths use `process_working_directory`, `overwrite` is false for save/render, `parent_directories` is `must_exist`, and `max_session_bytes` limits loaded files. Browser file uploads/downloads remain constrained by the bridge.
+- `render.min_seconds` adds the inclusive lower duration bound (0.001) alongside the existing maximum (60).
+
+For example, after reading capabilities, construct a device by selecting a name from `devices`, setting `kind` to that name, and copying each parameter's default from `device_metadata[kind].parameters`. Use `session.sample_rate.default` and `session_schema_version` for the containing session, and supply a unique track ID. [The Python demo](../examples/demo.py) does this without hard-coded oscillator parameters, then saves and renders the result. Metadata does not replace server validation.
+
 ## Native transport
 
 Build with `--features native-audio` on macOS. `capabilities.live_audio` means this build supports native playback, not that a working device is connected. The following methods are recognized in every build; unsupported builds return `audio_unavailable`, except status and stop, which return stopped.

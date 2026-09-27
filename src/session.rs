@@ -3,6 +3,12 @@ use std::collections::HashSet;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_TRACKS: usize = 64;
+pub const MIN_SAMPLE_RATE: u32 = 8_000;
+pub const MAX_SAMPLE_RATE: u32 = 192_000;
+pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub const MAX_TRACK_ID_BYTES: usize = 128;
+pub const MIN_GAIN: f64 = 0.0;
+pub const MAX_GAIN: f64 = 1.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -31,7 +37,7 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
-            sample_rate: 48_000,
+            sample_rate: DEFAULT_SAMPLE_RATE,
             tracks: vec![],
         }
     }
@@ -45,7 +51,7 @@ impl Session {
                 self.schema_version
             ));
         }
-        if !(8_000..=192_000).contains(&self.sample_rate) {
+        if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&self.sample_rate) {
             return Err("sample_rate must be between 8000 and 192000".into());
         }
         if self.tracks.len() > MAX_TRACKS {
@@ -53,7 +59,8 @@ impl Session {
         }
         let mut ids = HashSet::new();
         for track in &self.tracks {
-            if track.id.is_empty() || track.id.len() > 128 || !ids.insert(&track.id) {
+            if track.id.is_empty() || track.id.len() > MAX_TRACK_ID_BYTES || !ids.insert(&track.id)
+            {
                 return Err(
                     "track IDs must be unique, nonempty, and at most 128 UTF-8 bytes".into(),
                 );
@@ -66,7 +73,7 @@ impl Session {
                     {
                         return Err("frequency_hz must be positive and below Nyquist".into());
                     }
-                    if !gain.is_finite() || !(0.0..=1.0).contains(&gain) {
+                    if !gain.is_finite() || !(MIN_GAIN..=MAX_GAIN).contains(&gain) {
                         return Err("gain must be finite and between 0 and 1".into());
                     }
                 }

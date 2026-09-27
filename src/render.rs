@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::io::{Seek, Write};
 
 const BLOCK_FRAMES: usize = 256;
+pub const MIN_SECONDS: f64 = 0.001;
+pub const MAX_SECONDS: f64 = 60.0;
 
 #[derive(Debug, Serialize)]
 pub struct RenderReport {
@@ -13,7 +15,7 @@ pub struct RenderReport {
 }
 
 pub fn validate_duration(seconds: f64) -> Result<(), String> {
-    if !seconds.is_finite() || !(0.001..=60.0).contains(&seconds) {
+    if !seconds.is_finite() || !(MIN_SECONDS..=MAX_SECONDS).contains(&seconds) {
         return Err("seconds must be finite and between 0.001 and 60".into());
     }
     Ok(())

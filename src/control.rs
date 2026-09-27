@@ -1,4 +1,7 @@
-use crate::{render, session::Session};
+use crate::{
+    render,
+    session::{self, Session},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -23,6 +26,60 @@ pub const METHODS: &[&str] = &[
     "transport.stop",
     "transport.volume",
 ];
+
+// Discovery is additive to protocol v1. Defaults are construction suggestions;
+// required session/device fields remain required during deserialization.
+fn capabilities() -> Value {
+    json!({
+        "methods": METHODS,
+        "devices": ["sine"],
+        "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
+        "plugin_hosting": false,
+        "session_schema_version": session::SCHEMA_VERSION,
+        "max_message_bytes": MAX_MESSAGE_BYTES,
+        "render": {
+            "format": "wav_pcm16", "channels": 2,
+            "min_seconds": render::MIN_SECONDS, "max_seconds": render::MAX_SECONDS as u64
+        },
+        "session": {
+            "sample_rate": {
+                "type": "integer", "unit": "Hz", "description": "Session sample rate.",
+                "minimum": session::MIN_SAMPLE_RATE, "maximum": session::MAX_SAMPLE_RATE,
+                "default": session::DEFAULT_SAMPLE_RATE
+            },
+            "tracks": {"min_items": 0, "max_items": session::MAX_TRACKS},
+            "track_id": {
+                "type": "string", "min_utf8_bytes": 1,
+                "max_utf8_bytes": session::MAX_TRACK_ID_BYTES, "unique": true
+            },
+            "unknown_fields": "reject"
+        },
+        "device_metadata": {
+            "sine": {
+                "description": "Sine oscillator mixed equally into left and right channels.",
+                "parameters": {
+                    "frequency_hz": {
+                        "type": "number", "unit": "Hz", "default": 440.0,
+                        "description": "Oscillator frequency, strictly below half the session sample rate.",
+                        "exclusive_minimum": 0.0,
+                        "maximum_from": {"field": "session.sample_rate", "factor": 0.5, "exclusive": true},
+                        "finite": true, "required": true
+                    },
+                    "gain": {
+                        "type": "number", "unit": "linear", "default": 0.15,
+                        "description": "Oscillator amplitude before summing and hard clipping.",
+                        "minimum": session::MIN_GAIN, "maximum": session::MAX_GAIN,
+                        "finite": true, "required": true
+                    }
+                }
+            }
+        },
+        "file_behavior": {
+            "relative_paths": "process_working_directory", "overwrite": false,
+            "parent_directories": "must_exist", "max_session_bytes": MAX_MESSAGE_BYTES
+        }
+    })
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -158,11 +215,7 @@ impl Controller {
         match method {
             "capabilities" => {
                 let _: EmptyParams = params(value)?;
-                Ok(
-                    json!({ "methods": METHODS, "devices": ["sine"], "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
-                    "plugin_hosting": false, "render": { "format": "wav_pcm16", "channels": 2, "max_seconds": 60 },
-                    "session_schema_version": 1, "max_message_bytes": MAX_MESSAGE_BYTES }),
-                )
+                Ok(capabilities())
             }
             "session.get" => {
                 let _: EmptyParams = params(value)?;
