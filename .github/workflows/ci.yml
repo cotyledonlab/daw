@@ -19,3 +19,7 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --locked
       - run: python3 -m unittest gui.test_server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test gui/test_live.cjs

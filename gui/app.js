@@ -18,6 +18,74 @@
   const rateSelect = $('#sample-rate');
   const durationInput = $('#duration');
   const fileInput = $('#session-file');
+  const player = new LivePlayer();
+  let starting = false;
+  let playGeneration = 0;
+  const playButton = $('#play-button');
+  const stopButton = $('#stop-button');
+  const playState = $('#play-state');
+
+  function stopLive() {
+    playGeneration += 1;
+    starting = false;
+    player.stop();
+    playState.textContent = 'Stopped';
+    $('#output-level').value = 0;
+    syncStatus();
+  }
+
+  function updateLive() {
+    if (!player.context || starting) return;
+    try {
+      const error = validateSession(draft);
+      if (error) throw new Error(error);
+      player.update(draft);
+    } catch (error) {
+      stopLive();
+      setNotice(`Playback stopped. ${error.message}`, true);
+    }
+  }
+
+  async function playLive() {
+    if (starting || player.context || busy) return;
+    const error = validateSession(draft);
+    if (error) { announceError(error); return; }
+    if (!draft.tracks.length) { setNotice('Add a sine track, then press Play.'); return; }
+    starting = true;
+    const generation = ++playGeneration;
+    playState.textContent = 'Starting…';
+    syncStatus();
+    const timeout = setTimeout(() => {
+      if (starting && generation === playGeneration) {
+        stopLive();
+        setNotice('Audio did not start. Press Play again or try your system browser.', true);
+      }
+    }, 5000);
+    try {
+      const started = await player.start(draft);
+      if (!started || generation !== playGeneration) return;
+      starting = false;
+      updateLive();
+      syncStatus();
+      if (player.context) {
+        playState.textContent = `Playing · ${player.context.sampleRate / 1000} kHz`;
+        setNotice('Playing live. Frequency and gain edits are heard immediately.');
+      }
+    } catch (error) {
+      if (generation === playGeneration) {
+        stopLive();
+        setNotice(`Could not start audio. ${error.message}`, true);
+      }
+    } finally { clearTimeout(timeout); }
+  }
+
+  setInterval(() => {
+    $('#output-level').value = player.level();
+    if (player.context && !starting && player.context.state !== 'running') {
+      stopLive();
+      setNotice('Browser audio was interrupted. Press Play to resume.');
+    }
+  }, 100);
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -36,7 +104,7 @@
   function setBusy(value) {
     busy = value;
     document.querySelectorAll('button, input, select').forEach((control) => {
-      if (control === fileInput) return;
+      if (control === fileInput || control === stopButton || control.id === 'monitor-volume') return;
       control.disabled = value;
     });
     syncStatus();
@@ -53,6 +121,8 @@
     saveButton.disabled = busy;
     loadButton.disabled = busy;
     renderButton.disabled = busy;
+    playButton.disabled = busy || starting || Boolean(player.context);
+    stopButton.disabled = !starting && !player.context;
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = busy || draft.tracks.length >= 64;
@@ -72,7 +142,7 @@
     try {
       response = await fetch(path, { ...options, headers });
     } catch (error) {
-      throw new Error('Could not reach the local DAW server. Check that the offline studio is running and try again.');
+      throw new Error('Could not reach the local DAW server. Check that the studio is running and try again.');
     }
     if (!response.ok) {
       let message = `The server returned an error (${response.status}).`;
@@ -94,7 +164,7 @@
       if (!track || typeof track.id !== 'string' || !track.id.length || new TextEncoder().encode(track.id).length > 128 || ids.has(track.id)) return 'Track IDs must be unique and no longer than 128 UTF-8 bytes.';
       ids.add(track.id);
       const device = track.device;
-      if (!device || device.kind !== 'sine') return 'Only sine tracks are supported by this offline studio.';
+      if (!device || device.kind !== 'sine') return 'Only sine tracks are supported by this studio.';
       if (!Number.isFinite(device.frequency_hz) || device.frequency_hz <= 0 || device.frequency_hz >= session.sample_rate / 2) return `Track ${Array.from(ids).length} frequency must be above 0 Hz and below Nyquist (${session.sample_rate / 2} Hz).`;
       if (!Number.isFinite(device.gain) || device.gain < 0 || device.gain > 1) return `Track ${Array.from(ids).length} gain must be between 0 and 1.`;
     }
@@ -238,6 +308,7 @@
   function markEdited() {
     setNotice('');
     syncStatus();
+    updateLive();
   }
 
   function addTrack() {
@@ -323,6 +394,7 @@
       fileInput.value = '';
       return;
     }
+    stopLive();
     setBusy(true);
     setNotice('Reading and validating session…');
     try {
@@ -382,7 +454,7 @@
 
   async function loadCurrentSession() {
     setBusy(true);
-    setNotice('Connecting to the offline studio…');
+    setNotice('Connecting to the studio…');
     try {
       const response = await request('/api/session', { method: 'GET' });
       const result = await response.json();
@@ -403,6 +475,13 @@
   }
 
   $('#add-track-button').addEventListener('click', addTrack);
+  playButton.addEventListener('click', () => { void playLive(); });
+  stopButton.addEventListener('click', stopLive);
+  $('#monitor-volume').addEventListener('input', event => player.setVolume(Number(event.target.value)));
+  window.addEventListener('pagehide', stopLive);
+  document.addEventListener('keydown', event => {
+    if (event.code === 'Escape') stopLive();
+  });
   $('#empty-add-button').addEventListener('click', addTrack);
   applyButton.addEventListener('click', () => { void applyDraft(); });
   saveButton.addEventListener('click', () => { void saveSession(); });
