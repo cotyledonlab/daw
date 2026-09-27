@@ -1,15 +1,25 @@
 # DAW
 
-A minimal, agent-controllable DAW project. The first slice is a headless Rust scaffold: versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
+A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, play live audio, record, sequence clips, or show a GUI. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, play live audio, record, or sequence clips. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
 
 ## Run
 
-Install Rust 1.85 or newer, then from this directory:
+Install Rust 1.85 or newer and Python 3.10 or newer, then from this directory:
 
 ```sh
 cargo build --locked
+python3 gui/server.py
+```
+
+The launcher opens a browser window. Add sine tracks, edit frequency/gain, and apply your changes. Save session downloads a JSON file; Load session imports one. Render WAV applies the current edits and downloads a stereo WAV. The browser manages download locations. There is no live playback yet.
+
+The server binds only to `127.0.0.1`, chooses a free port, and starts one Rust engine. Use one editing window; multiple tabs share that engine and do not have conflict detection. Save your session before stopping the server with Ctrl+C. Refresh discards unapplied edits; stopping the server discards the in-memory session. For a specific port or manual browser opening, run `python3 gui/server.py --port 8765 --no-open`.
+
+For the headless scripting demo:
+
+```sh
 python3 examples/demo.py
 ```
 
@@ -21,7 +31,7 @@ Send commands from any language that can launch a child process and read/write J
 printf '%s\n' '{"protocol_version":1,"id":"1","method":"capabilities"}' | cargo run --quiet --locked -- serve
 ```
 
-Read the [protocol](docs/PROTOCOL.md) for all commands and errors. This is a local trusted-process interface with the caller's filesystem permissions. There is no network listener or authentication. IDs correlate responses; they do not provide deduplication. Rendering is synchronous and each invocation starts at frame zero.
+Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless interface runs with the caller's filesystem permissions and has no network listener. The optional GUI adds the loopback bridge described below. IDs correlate responses; they do not provide deduplication. Rendering is synchronous and each invocation starts at frame zero.
 
 ## Develop
 
@@ -29,8 +39,11 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. This is a loc
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
+python3 -m unittest gui.test_server
 ```
 
 `src/session.rs` owns the serializable model and validation. `src/control.rs` owns commands and persistence. `src/render.rs` owns offline DSP and WAV encoding. `src/main.rs` owns bounded input framing and stdout responses. The offline renderer is a reference implementation, not a real-time audio callback.
+
+`gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes session inspection/replacement and temporary WAV downloads only, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
 Start the next implementation with ticket T01 in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

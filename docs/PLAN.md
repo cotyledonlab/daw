@@ -36,7 +36,15 @@ Scripts run outside the engine initially, using JSONL from any language. Later a
 - Offline stereo PCM16 rendering, 0.001–60 seconds, clipping report, fresh output files only.
 - Python client, tests, CI definition, protocol documentation.
 
-See [PROTOCOL.md](PROTOCOL.md) for the exact contract. No live audio, plugins, transport, clips, GUI, or external runtimes are implemented yet.
+See [PROTOCOL.md](PROTOCOL.md) for the exact contract. No live audio, plugins, transport, clips, or external runtimes are implemented yet.
+
+## S1: minimal GUI brought forward
+
+The browser interface in `gui/` provides track add/remove, sine frequency/gain editing, sample rate, session JSON downloads/imports, and offline WAV downloads. A Python standard-library loopback bridge owns one Rust JSONL subprocess. Rust remains the source of validation and rendered audio. There is no GUI framework build or additional package dependency.
+
+Edits are drafts until applied; save/render apply them before proceeding. Invalid edits preserve the engine session. This slice deliberately does not add live transport, plugin controls, or a fake timeline. T13 still owns the later timeline UI, render jobs, and subscriptions. Use one browser editing window until T02 adds revision-based conflict handling.
+
+Verified on macOS: track creation/edit/apply, invalid and blank frequency feedback, session download/import, and a downloaded two-second stereo PCM16 WAV at 48 kHz. The 390-pixel layout has no horizontal overflow. Seven bridge integration tests and eleven Rust tests pass. Browser automation stalled on the native file chooser before eventually completing the import; the loaded session was confirmed in the interface. The GUI remains an offline editor with synchronous rendering.
 
 ## Working method
 

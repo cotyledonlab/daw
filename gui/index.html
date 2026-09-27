@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DAW — Offline studio</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="DAW offline studio home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span class="brand-name">DAW</span>
+      </a>
+      <div class="session-meta">
+        <span class="offline-badge"><span class="status-dot"></span>Offline studio</span>
+        <span class="session-name">Untitled session</span>
+      </div>
+      <div class="top-actions">
+        <button class="button button-quiet" id="load-button" type="button">Load session</button>
+        <button class="button button-quiet" id="save-button" type="button">Save session</button>
+        <input id="session-file" type="file" accept="application/json,.json" hidden>
+      </div>
+    </header>
+
+    <main>
+      <section class="workspace-head" aria-labelledby="workspace-title">
+        <div>
+          <p class="eyebrow">Session workspace</p>
+          <h1 id="workspace-title">Track editor</h1>
+          <p class="intro">Shape a session from simple sine tone tracks, then render it to a WAV file.</p>
+        </div>
+        <div class="sample-rate-wrap">
+          <label for="sample-rate">Sample rate</label>
+          <div class="select-wrap">
+            <select id="sample-rate" aria-describedby="sample-rate-help">
+              <option value="44100">44.1 kHz</option>
+              <option value="48000">48 kHz</option>
+              <option value="88200">88.2 kHz</option>
+              <option value="96000">96 kHz</option>
+              <option value="192000">192 kHz</option>
+            </select>
+            <span class="chevron" aria-hidden="true"></span>
+          </div>
+          <span id="sample-rate-help" class="sr-only">Choose the session sample rate, between 8,000 and 192,000 hertz.</span>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Session actions">
+        <div class="toolbar-left">
+          <span class="track-count" id="track-count">0 tracks</span>
+          <span class="save-state" id="save-state" aria-live="polite"><span class="state-dot"></span><span id="save-state-text">All changes applied</span></span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="button button-quiet apply-button" id="apply-button" type="button" disabled>Apply changes</button>
+          <button class="button button-primary" id="add-track-button" type="button"><span class="plus" aria-hidden="true">+</span> Add sine track</button>
+        </div>
+      </section>
+
+      <section id="tracks" class="tracks" aria-label="Sine tracks"></section>
+
+      <section id="empty-state" class="empty-state" aria-labelledby="empty-title" hidden>
+        <div class="empty-icon" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+        <p class="eyebrow">A clean slate</p>
+        <h2 id="empty-title">Your session is empty</h2>
+        <p>Add a sine track to begin building your sound. An empty session renders silence.</p>
+        <button class="button button-primary" id="empty-add-button" type="button"><span class="plus" aria-hidden="true">+</span> Add your first track</button>
+      </section>
+
+      <section class="render-panel" aria-labelledby="render-heading">
+        <div class="render-copy">
+          <div class="render-icon" aria-hidden="true"><span></span></div>
+          <div>
+            <h2 id="render-heading">Render audio</h2>
+            <p>Export the current session as a stereo WAV file.</p>
+          </div>
+        </div>
+        <div class="render-controls">
+          <div class="duration-field">
+            <label for="duration">Duration</label>
+          <div class="duration-input"><input id="duration" type="number" value="2" min="0.001" max="60" step="any" inputmode="decimal"><span>sec</span></div>
+          </div>
+          <button class="button button-render" id="render-button" type="button"><span class="render-symbol" aria-hidden="true">↗</span> Render WAV</button>
+        </div>
+      </section>
+
+      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+    </main>
+
+    <footer class="footer"><span>Offline rendering</span><span class="footer-sep">·</span><span>No live playback or plugin hosting</span></footer>
+  </div>
+  <!-- DAW_CONFIG -->
+  <script src="/app.js" defer></script>
+</body>
+</html>
