@@ -1,5 +1,6 @@
 //! Counts heap activity on this test thread only; engine preparation is excluded.
 use daw::{
+    audio_buffer::PlaybackBuffer,
     engine::Engine,
     session::{Device, Session, Track},
 };
@@ -12,6 +13,31 @@ struct CountedAllocator;
 thread_local! {
     static WATCH: Cell<bool> = const { Cell::new(false) };
     static OPERATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[test]
+fn device_buffer_adapter_does_not_allocate_or_free() {
+    let session = Session {
+        tracks: vec![Track {
+            id: "tone".into(),
+            device: Device::Sine {
+                frequency_hz: 440.0,
+                gain: 0.1,
+            },
+        }],
+        ..Session::default()
+    };
+    let mut playback = PlaybackBuffer::prepare(&session, 44_100, 2, 1.0, 0.25).unwrap();
+    let mut output = [0.0_f32; 1024];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    for _ in 0..100 {
+        let _ = std::hint::black_box(playback.fill(&mut output, |x| x as f32));
+    }
+    WATCH.set(false);
+    assert_eq!(OPERATIONS.get(), 0);
+    assert_eq!(playback.remaining_frames(), 0);
+    assert!(output.iter().all(|&sample| sample == 0.0));
 }
 fn count() {
     if WATCH.try_with(Cell::get).unwrap_or(false) {

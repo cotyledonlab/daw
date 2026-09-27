@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, provide native/plugin playback, record, or sequence clips. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, record, or sequence clips. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
 
 ## Run
 
@@ -39,6 +39,16 @@ Live sine playback uses Web Audio at the browser/device sample rate. It audition
 
 This is built-in sine playback, not the native audio engine or plugin host. The headless Rust capabilities correctly continue to report `live_audio: false`. There is no timeline or scheduled transport yet.
 
+## Native playback spike (macOS)
+
+```sh
+cargo build --locked --features native-audio
+target/debug/daw devices
+target/debug/daw play path/to/session.json 2 0.25
+```
+
+This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. The browser GUI still uses its own player; native controls are not connected to it yet. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
+
 ## Develop
 
 ```sh
@@ -53,4 +63,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes session inspection/replacement and temporary WAV downloads only, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T03 is complete. Continue native playback with T04; T01 can proceed independently in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T03 and the T04 CLI spike are complete. Continue native transport/GUI integration with T04b; T01 can proceed independently in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

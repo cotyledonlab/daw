@@ -3,9 +3,16 @@ use std::io::{self, BufRead, Write};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "devices" || a == "play") {
+        if let Err(error) = native_command(&args) {
+            eprintln!("daw: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "daw serve\nRead one versioned JSON request per line on stdin; write one response per line to stdout.\nSee docs/PROTOCOL.md and examples/demo.py. File paths are relative to the working directory."
+            "daw serve\ndaw devices\ndaw play SESSION.json SECONDS [VOLUME]\nNative devices/play require macOS and --features native-audio. Volume defaults to 0.25.\nRead one versioned JSON request per line on stdin in serve mode.\nSee docs/PROTOCOL.md and examples/demo.py. Paths are relative to the working directory."
         );
         return;
     }
@@ -19,6 +26,44 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+fn native_command(args: &[String]) -> Result<(), String> {
+    use std::io::Read;
+    let result = match args[0].as_str() {
+        "devices" if args.len() == 1 => daw::audio::devices()?,
+        "play" if args.len() == 3 || args.len() == 4 => {
+            let seconds = args[2].parse::<f64>().map_err(|_| "invalid seconds")?;
+            let volume = args
+                .get(3)
+                .map(|v| v.parse::<f64>())
+                .transpose()
+                .map_err(|_| "invalid volume")?
+                .unwrap_or(0.25);
+            let mut bytes = Vec::new();
+            let file = std::fs::File::open(&args[1]).map_err(|e| e.to_string())?;
+            if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+                return Err("session must be a regular JSON file".into());
+            }
+            file.take(MAX_MESSAGE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > MAX_MESSAGE_BYTES {
+                return Err("session exceeds 1 MiB".into());
+            }
+            let session = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            daw::audio::play(&session, seconds, volume)?
+        }
+        _ => return Err("usage: daw devices | daw play SESSION.json SECONDS [VOLUME]".into()),
+    };
+    println!("{result}");
+    Ok(())
+}
+
+#[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+fn native_command(_: &[String]) -> Result<(), String> {
+    Err("native playback requires macOS and a build with --features native-audio".into())
 }
 
 fn serve() -> io::Result<()> {

@@ -1,6 +1,6 @@
 # Working on DAW
 
-Read README.md, docs/PROTOCOL.md, and the selected ticket in docs/PLAN.md before editing. The current product has a browser GUI with live sine audition and Rust WAV export, not native/plugin playback. Keep that distinction in capabilities and user-facing documentation.
+Read README.md, docs/PROTOCOL.md, and the selected ticket in docs/PLAN.md before editing. The current product has a browser GUI with live sine audition and Rust WAV export, plus an optional macOS native playback CLI; plugin hosting is not implemented. Keep that distinction in capabilities and user-facing documentation.
 
 - Implement one bounded ticket per logical commit. Use `type(scope): description`, stage only the task's files, and push working states when authentication is available. Use a `codex/` branch for risky changes.
 - Prefer GPT-6 Luna for bounded examples, tests, documentation, and straightforward commands. Parallelize independent files when useful. One agent owns integration and shared file edits. Native hosting, real-time concurrency, and schema design need a stronger model's review.
@@ -12,3 +12,5 @@ Read README.md, docs/PROTOCOL.md, and the selected ticket in docs/PLAN.md before
 - For live-player changes, run `node --test gui/test_live.cjs`. Browser audition is separate from native engine capabilities; do not claim live plugin support.
 - For GUI changes, run `python3 -m unittest gui.test_server` and exercise the browser against the real Rust engine. The Python bridge requires Python 3.10+ and loopback socket access. Keep HTTP file access constrained to browser uploads/downloads, preserve per-launch token/host/origin checks, and keep the Rust model authoritative.
 - Update ticket status, protocol examples, and limitations with the change. Record unverified platform behavior honestly. Routine reversible implementation needs no extra approval.
+
+- For native-audio changes on macOS, also run `cargo clippy --locked --features native-audio --all-targets -- -D warnings` and `cargo test --locked --features native-audio`. Hardware smoke tests require host audio access; keep tones quiet and bounded. Record callback evidence separately from acoustic verification.
