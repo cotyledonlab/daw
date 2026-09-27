@@ -96,6 +96,8 @@ The GUI uses a 60-second native snapshot, locks session edits while active, and 
 {"protocol_version":1,"id":"stop","method":"transport.stop"}
 ```
 
+The [timeline contract](decisions/timeline.md) describes a future schema v2. Its fixtures are design-only and cannot be loaded by the current engine; capabilities continue to advertise schema v1 only.
+
 ## Session schema v1
 
 ```json

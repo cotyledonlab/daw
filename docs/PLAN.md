@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T02, T03, T04, and T04b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, T04b, and the T05 design ticket are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -102,17 +102,19 @@ Add an owned stream with explicit inspect/play/pause/stop commands and a GUI out
 
 Implemented six JSONL transport commands, an eight-slot owner-thread queue, callback-observed state/peak metering, and a browser/native output selector. Native play applies a validated session snapshot; track edits are locked until stopped. Pause preserves the frame cursor; wall time including pauses remains bounded to 60 seconds. Stop/restart, volume, automatic completion, and callback-driven playing/paused states were verified against MacBook Air Speakers. The GUI was exercised against the real engine. Portable and native Rust checks, bridge tests, browser-player tests, and the scripting demo pass. Device disconnect/hot-swap remain unverified; there is no native live graph editing.
 
-### T05: timeline contract
+### T05: timeline contract (complete)
 
 **Depends on:** T02, T03. **Owner:** stronger model for design, Luna for fixtures. **Files:** proposed `docs/decisions/timeline.md`, `examples/sessions/`.
 
 Specify integer sample positions, constant tempo conversion, clip lengths, stable event order, loops, automation timing, and migration from v1. Acceptance: fixtures for adjacent clips, simultaneous notes, a loop boundary, and tempo conversion include expected frames. Review before implementing T06/T07. No tempo maps or stretching.
 
+The [timeline contract](decisions/timeline.md) defines session-rate integer frames, exact constant-tempo placement, half-open clips, note lifetimes, stable ordering, loop/seek behavior, and explicit v1 upgrade rules. Four design-only fixture cases pass `python3 examples/check_timeline_contract.py`; these are reference arithmetic/event checks, not production audio acceptance. The proposed v2 session remains unsupported until T06 implements it.
+
 ### T06: note sequencing
 
 **Depends on:** T05. **Owner:** Luna. **Files:** `src/session.rs`, `src/engine.rs`, `src/render.rs`, `tests/timeline.rs`.
 
-Implement note sequences, sample-offset events, a bounded voice count, note-off behavior, and short attack/release envelopes. Acceptance: note timing is frame-accurate, voice limits hold, block size does not change output, and sessions round-trip. No hardware MIDI or piano roll.
+Follow the bounded commits and exact envelope/voice limits in [the timeline contract](decisions/timeline.md). Implement v2 alongside unchanged v1 behavior, then note sequences, sample-offset events, a bounded voice count, note-off behavior, and short attack/release envelopes. Acceptance: note timing is frame-accurate, voice limits hold, block size does not change output, and sessions round-trip. No hardware MIDI or piano roll.
 
 ### T07: audio clips and transport
 
@@ -158,4 +160,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T02 is complete. Design T05 next: integer sample positions, constant-tempo conversion, clips, loops, automation ordering, and schema migration with exact-frame fixtures. Review the contract before delegating T06 implementation. Keep native snapshot semantics until an explicit live-edit design is tested. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T05 is complete. Begin T06 with dual-schema models/validation and explicit v1 upgrade fixtures, then prepared note scheduling and offline audio tests. Use the bounded commits in the timeline contract; reject unsupported v2 rendering/playback in intermediate states and protect the existing browser editor. Native v2 playback follows rate-matched callback verification. Keep native snapshot semantics. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
