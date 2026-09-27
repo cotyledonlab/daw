@@ -64,7 +64,11 @@ impl PlaybackBuffer {
             self.engine.render_block(&mut block[..count]);
             for (index, frame) in block[..count].iter().enumerate() {
                 let destination = &mut output[(offset + index) * self.channels..][..self.channels];
-                destination[0] = convert(frame[0] * self.volume);
+                destination[0] = convert(if self.channels == 1 {
+                    (frame[0] + frame[1]) * 0.5 * self.volume
+                } else {
+                    frame[0] * self.volume
+                });
                 if self.channels >= 2 {
                     destination[1] = convert(frame[1] * self.volume);
                 }

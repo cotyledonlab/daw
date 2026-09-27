@@ -1,6 +1,6 @@
 # Timeline contract
 
-Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07 adds audio and seek/loop transport; T08 adds automation. None of those capabilities should be advertised before their working implementation lands.
+Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07a adds audio clips; T07b adds seek/loop transport; T08 adds automation. None of those capabilities should be advertised before their working implementation lands.
 
 ## Positions and tempo
 
@@ -56,7 +56,7 @@ Clip start is relative to the session; note start is relative to its clip. Note 
 
 Track IDs remain unique within the session; clip IDs are unique within a track; note IDs are unique within a clip. Every ID is 1–128 UTF-8 bytes. T06 limits: 64 tracks, 1,024 note clips total, 16,384 notes total, and 64 simultaneous voices across the session, including release tails. Validation computes peak overlap of voice lifetimes and rejects excess polyphony rather than stealing voices; this must happen before session commit as well as preparation. A continuous track consumes one voice slot. Validate before publishing any replacement. Keep the 1 MiB request/session-file bound; it may limit content before the item caps do.
 
-T06 does not accept audio clips, loop fields, automation fields, or new timeline transport commands. It exposes only working note rendering and its actual validation limits in capabilities. Native playback is enabled only at the matching session rate, after callback preparation and lifecycle verification. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
+T06 originally implemented notes only; T07a now supports the audio clips described in [the asset contract](audio-assets.md). Loop fields, automation fields, and new timeline transport commands remain unsupported. It exposes only working note rendering and its actual validation limits in capabilities. Native playback is enabled only at the matching session rate, after callback preparation and lifecycle verification. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
 
 ## Note envelope and clip ends
 
@@ -91,7 +91,7 @@ Initial seek and loop wrap use no note chase: a note whose onset was before the 
 
 ## Audio and automation boundaries
 
-T07 audio clips have a session start, positive length, source offset, and gain. They own the same half-open interval as note clips. Source reads are `source_offset + (timeline_frame - clip_start)`; reject source ranges past the loaded file end. Overlaps sum and adjacent clips share no sample. Load PCM WAV assets fully before playback; sample-rate mismatches fail until resampling is implemented. Asset identity, project-relative paths, and missing-file errors require the T07 implementation decision; do not add nonworking audio descriptors in T06.
+T07 audio clips have a session start, positive length, source offset, and gain. They own the same half-open interval as note clips. Source reads are `source_offset + (timeline_frame - clip_start)`; reject source ranges past the loaded file end. Overlaps sum and adjacent clips share no sample. Load PCM WAV assets fully before playback; sample-rate mismatches fail until resampling is implemented. Asset identity, project-relative paths, and missing-file errors are defined by the implemented [T07a asset contract](audio-assets.md).
 
 T08 automation positions are absolute session frames, with one lane per target parameter. Points are strictly increasing; duplicate positions for a target fail validation. Before the first point use the saved parameter value; at a point apply its value before that frame's note-ons; after the last point hold its value. Initial interpolation is step/hold, not an unspecified smoothing curve. Seek/wrap evaluates the lane at the destination, including the latest preceding point, independently of callback size. Parameter target identity and schemas follow the second working processor interface in T08. No automation fields are accepted before then.
 

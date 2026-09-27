@@ -102,11 +102,19 @@ Schema v2 implements the note subset of the [timeline contract](decisions/timeli
 
 `capabilities.supported_session_schema_versions` is `[1,2]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
 
-Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips, seek, loops, and automation are not accepted yet.
+Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips are supported as described below; seek, loops, and automation are not accepted yet.
 
 `session.replace`, `session.load`, and whole-track batches validate notes and peak polyphony before stopping playback or committing a new revision. `session.save` preserves the selected schema. The explicit upgrade example maps v1 tracks to continuous v2 tracks without changing their sound. In-place sample-rate editing is not exposed: a full replacement supplies a new arrangement and does not rescale any positions automatically.
 
 The separate `timeline-contract.json` fixtures remain design-only reference cases, including future loop behavior, and are not loadable sessions.
+
+## PCM audio clips in schema v2
+
+`devices` also lists `audio`, with gain metadata in `device_metadata.audio`. It requires a v2 sequenced track and audio clips shaped as `{ "kind":"audio", "id":"take", "start_frame":0, "length_frames":48000, "source_path":"assets/take.wav", "source_offset_frames":0, "gain":1 }`. Gain is finite 0–1. Note clips remain valid only on sine tracks. The combined note/audio/continuous voice limit is 64; the 1024 clip limit includes both clip kinds.
+
+`capabilities.audio_clips` advertises supported PCM formats/channels, rate matching, unique-file and byte limits, project-relative paths, and the lack of save-as outside the project. The [asset contract](decisions/audio-assets.md) defines decoding, mixing, preparation, and path behavior. A successful load sets the project root to the session file's canonical parent; replace/edit inherit the active root (initially process working directory). Runtime roots never appear in saved JSON. Audio-session save requires a destination in the same root and does not copy assets.
+
+Mutation validates final candidate assets before committing. A failed asset load leaves the session and revision unchanged. Render prepares assets before output creation; native preparation failures use `audio_error`. Assets are reloaded for each play/render snapshot. No disk I/O occurs during callback rendering.
 
 ## Session schema v1
 
@@ -139,6 +147,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `io_error` | File open/write/read/sync or WAV encoding failed |
 | `revision_conflict` | Expected revision does not match; inspect and reconcile before retrying |
 | `revision_exhausted` | The process revision counter cannot advance |
+| `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
 | `internal_error` | Unexpected session serialization failure |

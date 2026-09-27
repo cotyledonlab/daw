@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, record, or play audio clips. Schema-v2 sine note clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+It does **not yet host VST3 or Audio Units**, run SuperCollider/Csound/Pure Data, or record. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
 
 ## Run
 
@@ -37,7 +37,7 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless 
 
 Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply/save still validate and persist through Rust. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
 
-Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes at a matching device rate. Neither mode hosts plugins yet.
+Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate. Neither mode hosts plugins yet.
 
 ## Native playback (macOS)
 
@@ -59,7 +59,7 @@ target/debug/daw play examples/sessions/arpeggio.json 2 0.25
 
 The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
 
-The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Audio clips, seek, loops, and automation remain planned.
+The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Seek, loops, and automation remain planned.
 
 To preserve an existing sine session while explicitly upgrading its format:
 
@@ -68,6 +68,16 @@ python3 examples/upgrade_session.py old-session.json new-session.json
 ```
 
 This validates both versions, preserves continuous playback and track order, and refuses to overwrite the destination. Sessions are never silently upgraded on load.
+
+## PCM WAV clips
+
+```sh
+python3 examples/audio_clip_demo.py
+```
+
+This creates a project under ignored `output/`, with a stereo PCM WAV, two clips, a saved session, and a rendered mix. Play its printed session path with `daw play SESSION 1.5 0.25` using the native build.
+
+Assets use paths relative to the session file's folder. Only integer PCM16/24/32 mono/stereo WAVs at the session rate are supported. Files are preloaded, with 32 MiB per-file and 128 MiB decoded-session limits. Saving an audio session must stay in the same project folder; asset copying is not implemented. See [audio asset rules](docs/decisions/audio-assets.md) for the exact contract.
 
 ## Develop
 
@@ -83,4 +93,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T06 note sequencing is complete. The [timeline contract](docs/decisions/timeline.md) and checked reference fixtures guide T07 audio clips and transport in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T07a audio clips are complete. The [timeline contract](docs/decisions/timeline.md) guides T07b seek and loop transport in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

@@ -32,3 +32,6 @@ The timeline interval replayed by the transport. Its end is excluded; wrapping r
 
 **Listening volume**:
 The output level used for audition, independent of saved track gains and WAV exports.
+
+**Audio asset**:
+A source recording referenced by one or more audio clips. A clip selects a range from the asset without changing the recording.

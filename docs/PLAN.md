@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T02, T03, T04, T04b, the T05 design ticket, and T06 are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, T04b, the T05 design ticket, T06, and T07a are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -118,11 +118,19 @@ Follow the bounded commits and exact envelope/voice limits in [the timeline cont
 
 Implemented strict dual-schema sessions, exact tick conversion, a prepared onset schedule, fixed active voice storage, per-frame attack/release, clip-bounded tails, and stable sequenced mixing. Existing v1 and explicitly upgraded continuous sessions render identically. Native v2 playback requires equal device/session rates. Eight DSP tests, five schema tests, allocation instrumentation, portable/native suites, and ten bridge tests pass. A two-second arpeggio submitted 96000 frames at 48 kHz on MacBook Air Speakers with zero measured callback overruns; maximum observed render time was 195.042 microseconds for buffers up to 512 frames. This is callback evidence, not independent acoustic capture. GUI v2 editing is visibly blocked; no piano roll is claimed.
 
-### T07: audio clips and transport
+### T07a: PCM audio clips (complete)
 
 **Depends on:** T05, T06; T04 for live checks. **Owner:** separate Luna commits. **Files:** `src/session.rs`, `src/engine.rs`, `src/audio.rs`, `src/control.rs`, `tests/timeline.rs`.
 
-First add PCM WAV clips at the session rate, preloaded off the callback, with gain and offset. Then add play/stop/seek. Define project-relative assets and missing-file reporting. Acceptance: known impulse clips mix at exact offsets, unsupported formats/rates fail, seek/stop leave no sounding notes, and asset references survive reload. No resampling, recording, or compressed audio.
+Add PCM WAV clips at the session rate, preloaded off the callback, with gain and source offset. Define project-relative assets and missing-file reporting. Acceptance: impulse clips mix at exact offsets, unsupported formats/rates fail, asset failures preserve the active session, and references survive save/reload. No resampling, recording, compressed audio, seek, or loops in this slice.
+
+T07a implements [the asset contract](decisions/audio-assets.md): strict audio descriptors, bounded PCM decoding, immutable shared buffers, source offsets/gains, stereo mixing, and transactional asset validation. Exact impulse, malformed-input, persistence, and allocation checks cover the working adapter. Audio sessions save within their current project directory; copying assets is not implemented.
+
+### T07b: seek and loop transport
+
+**Depends on:** T07a. **Owner:** stronger model for lifecycle, Luna for fixtures. **Files:** `src/engine.rs`, `src/audio.rs`, `src/control.rs`, transport tests.
+
+Implement explicit seek and loop-region controls on prepared snapshots, following [the timeline contract](decisions/timeline.md). Acceptance: stop/seek/wrap clear voices, audio resumes from the correct source offset, loop end is excluded, output position remains monotonic, and callback boundaries do not affect samples. Keep preparation and file access off the callback. No recording or time stretching.
 
 ### T08: device chains and automation
 
@@ -162,4 +170,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T06 is complete. Start T07 with the audio-asset contract and bounded PCM WAV loading: project-relative paths, source frame ranges, size limits, and missing-file errors. Then implement prepared audio clips and impulse fixtures before seek/loop transport. Browser note editing remains a separate UI slice. Keep native snapshot semantics. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T07a is complete. Implement T07b seek and loops next using the prepared note/audio snapshots. Review callback command handoff before delegating implementation. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.

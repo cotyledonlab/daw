@@ -75,7 +75,9 @@ fn silence_clipping_and_render_cursor_are_preserved() {
 
     let mut loud = tone();
     loud.tracks[0].id = "tone-1".into();
-    let Device::Sine { gain, .. } = &mut loud.tracks[0].device;
+    let Device::Sine { gain, .. } = &mut loud.tracks[0].device else {
+        panic!("expected sine");
+    };
     *gain = 1.0;
     let track = loud.tracks[0].clone();
     let mut track = track;

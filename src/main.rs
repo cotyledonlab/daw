@@ -52,7 +52,16 @@ fn native_command(args: &[String]) -> Result<(), String> {
             if bytes.len() > MAX_MESSAGE_BYTES {
                 return Err("session exceeds 1 MiB".into());
             }
-            let session = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            let mut session: daw::session::Session =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            session.asset_root = Some(
+                std::path::Path::new(&args[1])
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .parent()
+                    .ok_or("session has no parent")?
+                    .to_path_buf(),
+            );
             daw::audio::play(&session, seconds, volume)?
         }
         _ => return Err("usage: daw devices | daw play SESSION.json SECONDS [VOLUME]".into()),

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const SCHEMA_VERSION_2: u32 = 2;
@@ -36,6 +36,8 @@ pub struct Session {
     )]
     pub tempo_milli_bpm: Option<u32>,
     pub tracks: Vec<Track>,
+    #[serde(skip)]
+    pub asset_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -54,7 +56,7 @@ pub struct Track {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_nonnull"
     )]
-    pub clips: Option<Vec<NoteClip>>,
+    pub clips: Option<Vec<Clip>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +70,53 @@ pub enum TrackMode {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Device {
     Sine { frequency_hz: f64, gain: f64 },
+    Audio { gain: f64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Clip {
+    Notes(NoteClip),
+    Audio(AudioClip),
+}
+
+impl Clip {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Notes(c) => &c.id,
+            Self::Audio(c) => &c.id,
+        }
+    }
+    pub fn start_frame(&self) -> u64 {
+        match self {
+            Self::Notes(c) => c.start_frame,
+            Self::Audio(c) => c.start_frame,
+        }
+    }
+    pub fn length_frames(&self) -> u64 {
+        match self {
+            Self::Notes(c) => c.length_frames,
+            Self::Audio(c) => c.length_frames,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioClipKind {
+    Audio,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioClip {
+    pub kind: AudioClipKind,
+    pub id: String,
+    pub start_frame: u64,
+    pub length_frames: u64,
+    pub source_path: String,
+    pub source_offset_frames: u64,
+    pub gain: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -103,6 +152,7 @@ impl Default for Session {
             sample_rate: DEFAULT_SAMPLE_RATE,
             tempo_milli_bpm: None,
             tracks: vec![],
+            asset_root: None,
         }
     }
 }
@@ -215,6 +265,14 @@ impl Session {
                         return Err("gain must be finite and between 0 and 1".into());
                     }
                 }
+                Device::Audio { gain } => {
+                    if !gain.is_finite() || !(MIN_GAIN..=MAX_GAIN).contains(&gain) {
+                        return Err("gain must be finite and between 0 and 1".into());
+                    }
+                    if self.schema_version == SCHEMA_VERSION {
+                        return Err("schema_version 1 does not support audio devices".into());
+                    }
+                }
             }
             if self.schema_version == SCHEMA_VERSION {
                 continue;
@@ -228,6 +286,9 @@ impl Session {
                 .ok_or_else(|| "schema_version 2 requires track clips".to_string())?;
             match mode {
                 TrackMode::Continuous => {
+                    if !matches!(&track.device, Device::Sine { .. }) {
+                        return Err("audio tracks require sequenced mode".into());
+                    }
                     continuous_voices += 1;
                     if !clips.is_empty() {
                         return Err("continuous tracks require empty clips".into());
@@ -243,12 +304,52 @@ impl Session {
             }
             let mut clip_ids = HashSet::new();
             for clip in clips {
-                if !valid_id(&clip.id) || !clip_ids.insert(&clip.id) {
+                if !valid_id(clip.id()) || !clip_ids.insert(clip.id()) {
                     return Err(
                         "clip IDs must be unique within a track and at most 128 UTF-8 bytes".into(),
                     );
                 }
-                let clip_end = checked_end(clip.start_frame, clip.length_frames, "clip")?;
+                let clip_end = checked_end(clip.start_frame(), clip.length_frames(), "clip")?;
+                match (clip, &track.device) {
+                    (Clip::Notes(_), Device::Sine { .. }) => {}
+                    (Clip::Audio(audio), Device::Audio { .. }) => {
+                        if audio.source_path.is_empty()
+                            || audio.source_path.len() > 4096
+                            || audio.source_path.contains('\\')
+                            || audio.source_path.contains(':')
+                            || std::path::Path::new(&audio.source_path)
+                                .components()
+                                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                        {
+                            return Err(
+                                "audio source_path must be a relative path with normal components"
+                                    .into(),
+                            );
+                        }
+                        if !audio.gain.is_finite() || !(MIN_GAIN..=MAX_GAIN).contains(&audio.gain) {
+                            return Err("audio clip gain must be finite and between 0 and 1".into());
+                        }
+                        let source_end = audio
+                            .source_offset_frames
+                            .checked_add(audio.length_frames)
+                            .ok_or_else(|| "audio source range overflows".to_string())?;
+                        if source_end > MAX_FRAME {
+                            return Err("audio source range exceeds MAX_FRAME".into());
+                        }
+                        lifetimes.push((audio.start_frame, 1));
+                        lifetimes.push((clip_end, -1));
+                    }
+                    _ => return Err(
+                        "notes clips require sine devices and audio clips require audio devices"
+                            .into(),
+                    ),
+                }
+                if let Clip::Audio(_) = clip {
+                    continue;
+                }
+                let Clip::Notes(clip) = clip else {
+                    unreachable!()
+                };
                 total_notes = total_notes
                     .checked_add(clip.notes.len())
                     .ok_or_else(|| "note count overflow".to_string())?;
@@ -323,5 +424,11 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    pub fn has_audio(&self) -> bool {
+        self.tracks
+            .iter()
+            .any(|track| matches!(&track.device, Device::Audio { .. }))
     }
 }

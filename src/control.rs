@@ -1,4 +1,6 @@
 use crate::{
+    assets,
+    engine::Engine,
     render,
     session::{self, Device, Session, Track},
 };
@@ -35,9 +37,16 @@ pub const METHODS: &[&str] = &[
 fn capabilities() -> Value {
     json!({
         "methods": METHODS,
-        "devices": ["sine"],
+        "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
+        "audio_clips": {
+            "schema_version": 2, "formats": ["wav_pcm16", "wav_pcm24", "wav_pcm32"],
+            "channels": [1, 2], "requires_matching_sample_rate": true,
+            "max_file_bytes": assets::MAX_FILE_BYTES, "max_decoded_bytes": assets::MAX_DECODED_BYTES,
+            "max_assets": assets::MAX_ASSETS, "paths": "session_directory_relative",
+            "save_outside_project": false
+        },
         "session_schema_version": session::SCHEMA_VERSION,
         "supported_session_schema_versions": [1, 2],
         "sequencing": {
@@ -73,7 +82,15 @@ fn capabilities() -> Value {
             "unknown_fields": "reject"
         },
         "device_metadata": {
+            "audio": {
+                "session_schema_versions": [2], "track_modes": ["sequenced"],
+                "description": "Preloaded PCM WAV clips on a sequenced v2 track.",
+                "parameters": {"gain": {"type":"number", "unit":"linear", "default":1.0,
+                    "minimum":0.0,"maximum":1.0,"finite":true,"required":true,
+                    "description":"Track amplitude multiplied by each audio clip gain."}}
+            },
             "sine": {
+                "session_schema_versions": [1, 2],
                 "description": "Sine oscillator mixed equally into left and right channels.",
                 "parameters": {
                     "frequency_hz": {
@@ -291,7 +308,7 @@ impl Controller {
                 Ok(json!({"revision": self.revision.to_string(), "session": self.session}))
             }
             "session.replace" => {
-                let replacement: ReplaceParams = params(value)?;
+                let mut replacement: ReplaceParams = params(value)?;
                 if let Some(expected) = replacement.expected_revision.as_deref() {
                     self.check_revision(expected)?;
                 }
@@ -299,6 +316,7 @@ impl Controller {
                     .session
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                replacement.session.asset_root = self.session.asset_root.clone();
                 self.commit_session(replacement.session)?;
                 Ok(json!(self.session))
             }
@@ -347,7 +365,16 @@ impl Controller {
                                 (Device::Sine { frequency_hz, .. }, Parameter::FrequencyHz) => {
                                     *frequency_hz = value
                                 }
-                                (Device::Sine { gain, .. }, Parameter::Gain) => *gain = value,
+                                (
+                                    Device::Sine { gain, .. } | Device::Audio { gain },
+                                    Parameter::Gain,
+                                ) => *gain = value,
+                                (Device::Audio { .. }, Parameter::FrequencyHz) => {
+                                    return Err(ControlError::new(
+                                        "invalid_params",
+                                        "audio tracks do not have frequency_hz",
+                                    ));
+                                }
                             }
                         }
                     }
@@ -360,6 +387,26 @@ impl Controller {
             }
             "session.save" => {
                 let p: PathParams = params(value)?;
+                if self.session.has_audio() {
+                    let parent = Path::new(&p.path)
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                    let destination_root = parent
+                        .canonicalize()
+                        .map_err(|e| ControlError::new("io_error", e))?;
+                    let source_root = self
+                        .session
+                        .asset_root
+                        .as_ref()
+                        .expect("committed asset root");
+                    if &destination_root != source_root {
+                        return Err(ControlError::new(
+                            "invalid_params",
+                            "save audio sessions inside their project directory; asset copying is not implemented",
+                        ));
+                    }
+                }
                 let bytes = serde_json::to_vec_pretty(&self.session)
                     .map_err(|e| ControlError::new("internal_error", e))?;
                 write_new(&p.path, |file| {
@@ -385,11 +432,22 @@ impl Controller {
                         "session file exceeds 1 MiB",
                     ));
                 }
-                let replacement: Session = serde_json::from_slice(&bytes)
+                let mut replacement: Session = serde_json::from_slice(&bytes)
                     .map_err(|e| ControlError::new("invalid_session", e))?;
                 replacement
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                let location = Path::new(&p.path)
+                    .canonicalize()
+                    .map_err(|e| ControlError::new("io_error", e))?;
+                replacement.asset_root = Some(
+                    location
+                        .parent()
+                        .ok_or_else(|| {
+                            ControlError::new("io_error", "session has no parent directory")
+                        })?
+                        .to_path_buf(),
+                );
                 self.commit_session(replacement)?;
                 Ok(json!(self.session))
             }
@@ -400,8 +458,10 @@ impl Controller {
                 self.session
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                let mut engine = Engine::prepare(&self.session)
+                    .map_err(|e| ControlError::new("asset_error", e))?;
                 let report = write_new(&p.path, |file| {
-                    render::render(&self.session, p.seconds, file)
+                    render::render_prepared(&mut engine, self.session.sample_rate, p.seconds, file)
                         .map_err(|e| ControlError::new("io_error", e))
                 })?;
                 Ok(json!(report))
@@ -448,10 +508,19 @@ impl Controller {
         Ok(())
     }
 
-    fn commit_session(&mut self, session: Session) -> Result<(), ControlError> {
+    fn commit_session(&mut self, mut session: Session) -> Result<(), ControlError> {
         let next_revision = self.revision.checked_add(1).ok_or_else(|| {
             ControlError::new("revision_exhausted", "session revision is exhausted")
         })?;
+        if session.asset_root.is_none() {
+            session.asset_root = Some(
+                std::env::current_dir()
+                    .map_err(|e| ControlError::new("io_error", e))?
+                    .canonicalize()
+                    .map_err(|e| ControlError::new("io_error", e))?,
+            );
+        }
+        assets::prepare(&session).map_err(|e| ControlError::new("asset_error", e))?;
         self.stop_transport()?;
         self.session = session;
         self.revision = next_revision;

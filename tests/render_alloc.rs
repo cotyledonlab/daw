@@ -127,3 +127,43 @@ fn sequenced_onsets_release_and_voice_reuse_do_not_allocate() {
     );
     assert_eq!(playback.remaining_frames(), 0);
 }
+
+#[test]
+fn preloaded_audio_clip_callbacks_do_not_allocate_or_free() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.wav");
+    let mut writer = hound::WavWriter::create(
+        &path,
+        hound::WavSpec {
+            channels: 2,
+            sample_rate: 8000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for _ in 0..400 {
+        writer.write_sample(1024_i16).unwrap();
+        writer.write_sample(-512_i16).unwrap();
+    }
+    writer.finalize().unwrap();
+    let mut session:Session=serde_json::from_value(serde_json::json!({
+        "schema_version":2,"sample_rate":8000,"tempo_milli_bpm":120000,
+        "tracks":[{"id":"a","mode":"sequenced","device":{"kind":"audio","gain":1},"clips":[
+            {"kind":"audio","id":"first","start_frame":1,"length_frames":100,"source_offset_frames":0,"source_path":"source.wav","gain":0.5},
+            {"kind":"audio","id":"second","start_frame":101,"length_frames":200,"source_offset_frames":100,"source_path":"source.wav","gain":0.5}
+        ]}]
+    })).unwrap();
+    session.asset_root = Some(dir.path().to_path_buf());
+    let mut playback = PlaybackBuffer::prepare(&session, 8000, 2, 0.1, 0.25).unwrap();
+    std::fs::remove_file(path).unwrap();
+    let mut output = [0.0; 34];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    for _ in 0..60 {
+        let _ = std::hint::black_box(playback.fill(&mut output, |x| x));
+    }
+    WATCH.set(false);
+    assert_eq!(OPERATIONS.get(), 0);
+    assert_eq!(playback.remaining_frames(), 0);
+}

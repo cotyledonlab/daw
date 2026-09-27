@@ -29,11 +29,21 @@ pub fn render<W: Write + Seek>(
     output: W,
 ) -> Result<RenderReport, String> {
     let mut engine = Engine::prepare(session)?;
+    render_prepared(&mut engine, session.sample_rate, seconds, output)
+}
+
+/// Encode an already prepared snapshot, so asset failures precede output creation.
+pub fn render_prepared<W: Write + Seek>(
+    engine: &mut Engine,
+    sample_rate: u32,
+    seconds: f64,
+    output: W,
+) -> Result<RenderReport, String> {
     validate_duration(seconds)?;
-    let frames = (seconds * session.sample_rate as f64).round() as u64;
+    let frames = (seconds * sample_rate as f64).round() as u64;
     let spec = hound::WavSpec {
         channels: 2,
-        sample_rate: session.sample_rate,
+        sample_rate,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
@@ -57,7 +67,7 @@ pub fn render<W: Write + Seek>(
     writer.finalize().map_err(|e| e.to_string())?;
     Ok(RenderReport {
         frames,
-        sample_rate: session.sample_rate,
+        sample_rate,
         channels: 2,
         clipped_frames,
     })

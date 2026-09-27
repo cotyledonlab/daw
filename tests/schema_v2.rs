@@ -1,6 +1,6 @@
 use daw::session::{
-    ClipKind, DEFAULT_TEMPO_MILLI_BPM, Device, MAX_FRAME, MAX_VOICES, Note, NoteClip, Session,
-    Track, TrackMode, envelope_frames, tick_to_frame,
+    Clip, ClipKind, DEFAULT_TEMPO_MILLI_BPM, Device, MAX_FRAME, MAX_VOICES, Note, NoteClip,
+    Session, Track, TrackMode, envelope_frames, tick_to_frame,
 };
 use serde_json::{Value, json};
 
@@ -22,7 +22,7 @@ fn track(mode: TrackMode, clips: Vec<NoteClip>) -> Track {
             gain: 0.5,
         },
         mode: Some(mode),
-        clips: Some(clips),
+        clips: Some(clips.into_iter().map(Clip::Notes).collect()),
     }
 }
 
@@ -42,6 +42,7 @@ fn v2(tracks: Vec<Track>) -> Session {
         sample_rate: 8_000,
         tempo_milli_bpm: Some(DEFAULT_TEMPO_MILLI_BPM),
         tracks,
+        asset_root: None,
     }
 }
 
@@ -57,6 +58,89 @@ fn v2_json() -> Value {
                     "frequency_hz":660.0,"velocity":0.8}]}]
         }]
     })
+}
+
+fn audio_track(mode: TrackMode, clips: Vec<daw::session::AudioClip>) -> Track {
+    Track {
+        id: "audio".into(),
+        device: Device::Audio { gain: 0.5 },
+        mode: Some(mode),
+        clips: Some(clips.into_iter().map(Clip::Audio).collect()),
+    }
+}
+
+fn audio_clip() -> daw::session::AudioClip {
+    daw::session::AudioClip {
+        kind: daw::session::AudioClipKind::Audio,
+        id: "a".into(),
+        start_frame: 0,
+        length_frames: 100,
+        source_path: "assets/voice.wav".into(),
+        source_offset_frames: 0,
+        gain: 1.0,
+    }
+}
+
+#[test]
+fn audio_schema_is_strict_and_counts_audio_lifetimes() {
+    v2(vec![audio_track(TrackMode::Sequenced, vec![audio_clip()])])
+        .validate()
+        .unwrap();
+    assert!(
+        v2(vec![audio_track(TrackMode::Continuous, vec![])])
+            .validate()
+            .is_err()
+    );
+    assert!(
+        v2(vec![track(
+            TrackMode::Sequenced,
+            vec![clip("n", 0, 2, vec![])]
+        )])
+        .validate()
+        .is_ok()
+    );
+    let mut wrong_device = audio_track(TrackMode::Sequenced, vec![audio_clip()]);
+    wrong_device.device = Device::Sine {
+        frequency_hz: 220.0,
+        gain: 0.5,
+    };
+    assert!(v2(vec![wrong_device]).validate().is_err());
+
+    let mut bad = audio_clip();
+    bad.source_path = "../secret.wav".into();
+    assert!(
+        v2(vec![audio_track(TrackMode::Sequenced, vec![bad])])
+            .validate()
+            .is_err()
+    );
+    let mut bad = audio_clip();
+    bad.gain = f64::NAN;
+    assert!(
+        v2(vec![audio_track(TrackMode::Sequenced, vec![bad])])
+            .validate()
+            .is_err()
+    );
+    let mut bad = audio_clip();
+    bad.source_offset_frames = MAX_FRAME;
+    assert!(
+        v2(vec![audio_track(TrackMode::Sequenced, vec![bad])])
+            .validate()
+            .is_err()
+    );
+
+    let mut legacy_audio = v2(vec![audio_track(TrackMode::Sequenced, vec![])]);
+    legacy_audio.schema_version = 1;
+    legacy_audio.tempo_milli_bpm = None;
+    legacy_audio.tracks[0].mode = None;
+    legacy_audio.tracks[0].clips = None;
+    assert!(legacy_audio.validate().is_err());
+    assert!(
+        serde_json::from_value::<Session>(json!({
+            "schema_version":2,"sample_rate":48000,"tempo_milli_bpm":120000,
+            "asset_root":"/tmp","tracks":[]
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -141,7 +225,10 @@ fn frame_and_item_boundaries_are_enforced() {
     )]);
     edge.validate().unwrap();
     if let Some(clips) = edge.tracks[0].clips.as_mut() {
-        clips[0].length_frames = 2;
+        let Clip::Notes(clip) = &mut clips[0] else {
+            panic!("expected notes")
+        };
+        clip.length_frames = 2;
     }
     assert!(edge.validate().is_err());
     let mut bad = v2(vec![track(
@@ -149,9 +236,13 @@ fn frame_and_item_boundaries_are_enforced() {
         vec![clip("c", 0, 10, vec![note("n", 0, 0)])],
     )]);
     assert!(bad.validate().is_err());
-    bad.tracks[0].clips.as_mut().unwrap()[0].notes[0] = note("n", 9, 2);
+    if let Clip::Notes(clip) = &mut bad.tracks[0].clips.as_mut().unwrap()[0] {
+        clip.notes[0] = note("n", 9, 2);
+    }
     assert!(bad.validate().is_err());
-    bad.tracks[0].clips.as_mut().unwrap()[0].notes[0].velocity = f64::NAN;
+    if let Clip::Notes(clip) = &mut bad.tracks[0].clips.as_mut().unwrap()[0] {
+        clip.notes[0].velocity = f64::NAN;
+    }
     assert!(bad.validate().is_err());
     let max_clips = (0..1024)
         .map(|i| clip(&format!("c{i}"), 0, 1, vec![]))
