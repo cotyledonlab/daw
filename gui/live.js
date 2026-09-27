@@ -77,6 +77,20 @@ class LivePlayer {
     if (this.context) this.master.gain.setTargetAtTime(value, this.context.currentTime, 0.01);
   }
 
+  async pause() {
+    const context = this.context;
+    if (!context) return false;
+    await context.suspend();
+    return this.context === context;
+  }
+
+  async resume() {
+    const context = this.context;
+    if (!context) return false;
+    await context.resume();
+    return this.context === context;
+  }
+
   level() {
     if (!this.context || this.context.state !== 'running') return 0;
     this.analyser.getFloatTimeDomainData(this.samples);

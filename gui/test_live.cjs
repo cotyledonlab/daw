@@ -99,7 +99,30 @@ class FakeAudioContext {
     this.closeCount += 1;
     return Promise.resolve();
   }
+
+  suspend() {
+    this.state = 'suspended';
+    return Promise.resolve();
+  }
 }
+
+test('pause retains voices and resume does not restart oscillators', async () => {
+  const context = new FakeAudioContext();
+  context.resume = () => { context.state = 'running'; return Promise.resolve(); };
+  const player = new LivePlayer(() => context);
+  await player.start(session(track('a', 440, 0.4)));
+  const voice = player.voices.get('a');
+  assert.equal(await player.pause(), true);
+  assert.equal(context.state, 'suspended');
+  assert.equal(player.level(), 0);
+  assert.equal(player.voices.get('a'), voice);
+  assert.equal(await player.resume(), true);
+  assert.equal(context.state, 'running');
+  assert.equal(voice.osc.startCount, 1);
+  assert.equal(context.closeCount, 0);
+  player.stop();
+  assert.equal(context.closeCount, 1);
+});
 
 function track(id, frequency_hz, gain) {
   return { id, device: { kind: 'sine', frequency_hz, gain } };

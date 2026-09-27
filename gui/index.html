@@ -51,7 +51,6 @@
       <section class="render-panel live-panel" aria-label="Live playback">
         <div>
           <button id="play-button" class="button button-primary" type="button">Play</button>
-          <button id="stop-button" class="button button-quiet" type="button" disabled>Stop</button>
           <span id="play-state" role="status" aria-live="polite">Stopped</span>
         </div>
         <div class="monitor-controls">
@@ -59,7 +58,7 @@
           <input id="monitor-volume" type="range" min="0" max="1" step="0.01" value="0.25">
           <meter id="output-level" min="0" max="1" value="0" aria-label="Live output level"></meter>
         </div>
-        <p class="live-help">Edits are heard immediately. Apply or save to keep them. Listening volume affects playback only.</p>
+        <p class="live-help">Click Play/Pause. Hold the button or press Escape to stop. Edits are heard live; apply or save to keep them. Listening volume affects playback only.</p>
       </section>
 
       <section class="toolbar" aria-label="Session actions">

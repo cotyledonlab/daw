@@ -22,14 +22,18 @@
   let starting = false;
   let playGeneration = 0;
   const playButton = $('#play-button');
-  const stopButton = $('#stop-button');
+  let paused = false;
+  let holdTimer = null;
+  let held = false;
   const playState = $('#play-state');
 
   function stopLive() {
     playGeneration += 1;
     starting = false;
+    paused = false;
     player.stop();
     playState.textContent = 'Stopped';
+    setNotice('Playback stopped.');
     $('#output-level').value = 0;
     syncStatus();
   }
@@ -47,7 +51,7 @@
   }
 
   async function playLive() {
-    if (starting || player.context || busy) return;
+    if (starting || (player.context && !paused) || busy) return;
     const error = validateSession(draft);
     if (error) { announceError(error); return; }
     if (!draft.tracks.length) { setNotice('Add a sine track, then press Play.'); return; }
@@ -62,9 +66,10 @@
       }
     }, 5000);
     try {
-      const started = await player.start(draft);
+      const started = paused ? await player.resume() : await player.start(draft);
       if (!started || generation !== playGeneration) return;
       starting = false;
+      paused = false;
       updateLive();
       syncStatus();
       if (player.context) {
@@ -81,7 +86,7 @@
 
   setInterval(() => {
     $('#output-level').value = player.level();
-    if (player.context && !starting && player.context.state !== 'running') {
+    if (player.context && !starting && !paused && player.context.state !== 'running') {
       stopLive();
       setNotice('Browser audio was interrupted. Press Play to resume.');
     }
@@ -104,7 +109,7 @@
   function setBusy(value) {
     busy = value;
     document.querySelectorAll('button, input, select').forEach((control) => {
-      if (control === fileInput || control === stopButton || control.id === 'monitor-volume') return;
+      if (control === fileInput || control === playButton || control.id === 'monitor-volume') return;
       control.disabled = value;
     });
     syncStatus();
@@ -121,8 +126,9 @@
     saveButton.disabled = busy;
     loadButton.disabled = busy;
     renderButton.disabled = busy;
-    playButton.disabled = busy || starting || Boolean(player.context);
-    stopButton.disabled = !starting && !player.context;
+    playButton.disabled = busy && !player.context && !starting;
+    playButton.textContent = starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
+    playButton.title = 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = busy || draft.tracks.length >= 64;
@@ -475,8 +481,45 @@
   }
 
   $('#add-track-button').addEventListener('click', addTrack);
-  playButton.addEventListener('click', () => { void playLive(); });
-  stopButton.addEventListener('click', stopLive);
+  async function toggleLive() {
+    if (starting) { stopLive(); return; }
+    if (!player.context || paused) { await playLive(); return; }
+    const generation = ++playGeneration;
+    starting = true;
+    syncStatus();
+    try {
+      const retained = await player.pause();
+      if (!retained || generation !== playGeneration) return;
+      paused = true;
+      starting = false;
+      playState.textContent = 'Paused';
+      setNotice('Playback paused. Press Play to resume, or hold the button to stop.');
+      $('#output-level').value = 0;
+      syncStatus();
+    } catch (error) {
+      if (generation === playGeneration) {
+        stopLive();
+        setNotice(`Could not pause audio. ${error.message}`, true);
+      }
+    }
+  }
+  playButton.addEventListener('click', () => {
+    if (held) { held = false; return; }
+    void toggleLive();
+  });
+  playButton.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    held = false;
+    playButton.setPointerCapture(event.pointerId);
+    holdTimer = setTimeout(() => {
+      held = true;
+      stopLive();
+    }, 600);
+  });
+  const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
+  playButton.addEventListener('pointerup', cancelHold);
+  playButton.addEventListener('pointercancel', cancelHold);
+  playButton.addEventListener('lostpointercapture', cancelHold);
   $('#monitor-volume').addEventListener('input', event => player.setVolume(Number(event.target.value)));
   window.addEventListener('pagehide', stopLive);
   document.addEventListener('keydown', event => {
