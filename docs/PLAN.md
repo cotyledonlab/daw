@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-All tickets below are pending; new module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T03 is complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery
 
@@ -76,11 +76,11 @@ Extend capabilities with parameter descriptions, units, defaults, limits, sessio
 
 Introduce a revision and one batch command for add/remove track and parameter edits. Require the expected revision; edit a copy, validate, then commit. Define replacement/load revision behavior and compatibility with v1 clients. Acceptance: stale revision conflicts, a failed middle edit preserves all state, and a successful batch advances revision once. No undo or concurrency yet.
 
-### T03: block renderer with persistent phase
+### T03: block renderer with persistent phase (complete)
 
 **Depends on:** S0. **Owner:** Luna; stronger-model review before live use. **Files:** `src/render.rs`, proposed `src/engine.rs`, `tests/render.rs`.
 
-Separate prepared sine state, sample-block rendering, and WAV encoding. Allocate before rendering; maintain oscillator phase and frame cursor across blocks. Acceptance: 4,800 frames rendered in different block sizes agree within one PCM16 step, phase never restarts at block boundaries, silence/clipping remain correct. Verify callback-path allocation before claiming real-time safety. No hardware dependency.
+Implemented `src/engine.rs` with validated preparation, preallocated sine voices, wrapped phase, a frame cursor, and caller-owned stereo buffers. WAV export uses 256-frame stack blocks. Tests verify exact output across uneven block sizes, analytical output within one PCM16 step, silence, clipping, cursor advancement, and invalid preparation. A thread-local allocator counter observed zero allocations, reallocations, or frees across 100 blocks with 64 voices. This establishes prepared block rendering, not audio-device deadline guarantees. No hardware dependency was added.
 
 ### T04: macOS playback spike
 
@@ -144,4 +144,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-Prioritize T03 then T04 for native playback. T01 can proceed independently with separate control-module ownership. Review T02/T05 before assigning implementation. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T03 is complete; prioritize T04 for native playback. T01 can proceed independently with separate control-module ownership. Review T02/T05 before assigning implementation. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
