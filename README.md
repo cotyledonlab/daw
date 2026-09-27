@@ -23,7 +23,7 @@ For the headless scripting demo:
 python3 examples/demo.py
 ```
 
-The demo starts `target/debug/daw serve`, inspects capabilities, constructs a sine track from the discovered parameter defaults, saves the session, and renders one second to a fresh directory under `output/`. It prints the resulting paths. On macOS, use `afplay <printed WAV path>` to listen at a comfortable volume.
+The demo starts `target/debug/daw serve`, inspects capabilities, constructs a sine track from the discovered parameter defaults, adds it using a revision-checked batch, saves the session, and renders one second to a fresh directory under `output/`. It prints the resulting paths. On macOS, use `afplay <printed WAV path>` to listen at a comfortable volume.
 
 Send commands from any language that can launch a child process and read/write JSON. No embedded scripting language or agent framework is required:
 
@@ -63,4 +63,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T01, T03, T04, and T04b are complete. Continue with T02 revision-checked edits in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T01–T04b are complete. Continue with the T05 timeline contract in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

@@ -31,12 +31,12 @@ def main():
             kind = capabilities["devices"][0]
             parameters = capabilities["device_metadata"][kind]["parameters"]
             device = {"kind": kind, **{name: info["default"] for name, info in parameters.items()}}
-            session = {
-                "schema_version": capabilities["session_schema_version"],
-                "sample_rate": capabilities["session"]["sample_rate"]["default"],
-                "tracks": [{"id": "demo", "device": device}],
-            }
-            call("session.replace", {"session": session})
+            track = {"id": "demo", "device": device}
+            snapshot = call("session.inspect", {})
+            call("session.edit", {
+                "expected_revision": snapshot["revision"],
+                "operations": [{"op": "add_track", "track": track}],
+            })
             call("session.save", {"path": str(directory / "session.json")})
             call("render", {"path": str(directory / "demo.wav"), "seconds": 1})
         finally:

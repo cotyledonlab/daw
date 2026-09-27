@@ -15,13 +15,43 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 | Method | Params | Result |
 | --- | --- | --- |
 | `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects the native macOS build; plugin hosting is false |
-| `session.get` | `{}` | Current session |
+| `session.get` | `{}` | Current session (legacy shape) |
+| `session.inspect` | `{}` | `{ "revision": "0", "session": <session> }` |
+| `session.edit` | `{ "expected_revision": "0", "operations": [...] }` | Updated revision and session |
 | `session.replace` | `{ "session": <session> }` | Validated replacement session |
 | `session.save` | `{ "path": "session.json" }` | `{ "path": "session.json" }` |
 | `session.load` | `{ "path": "session.json" }` | Validated loaded session |
 | `render` | `{ "path": "tone.wav", "seconds": 1.0 }` | `{ "frames": 48000, "sample_rate": 48000, "channels": 2, "clipped_frames": 0 }` |
 
-Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or concurrent editing yet. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
+Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or parallel command execution. Revision checks detect stale edits between serialized commands. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
+
+## Revision-checked edits
+
+Use `session.inspect` to read the session and its revision in one response. Revisions are opaque decimal strings to clients, starting at `"0"` in each engine process. They are not saved in session files, and must be discarded when reconnecting to a restarted engine. A revision is not a global session identity or a durable retry token.
+
+`session.edit` requires `expected_revision` and 1–128 `operations`. The supplied revision must exactly match the current token. A stale token returns `revision_conflict`; inspect again and reconcile the intended change rather than blindly retrying it with the newer token.
+
+Operations are applied in order to a copy, with session validation after each operation:
+
+| Operation | Fields besides `op` | Behavior |
+| --- | --- | --- |
+| `add_track` | `track` containing an existing schema-v1 track | Append a track; its ID must be unique |
+| `remove_track` | `track_id` | Remove an existing track |
+| `set_parameter` | `track_id`, `parameter`, `value` | Set `frequency_hz` or `gain` on an existing sine track |
+
+Unknown fields, operations, parameters, or missing targets return `invalid_params`. Invalid track/session values return `invalid_session`. Even an intermediate invalid state fails the entire batch; a later operation cannot repair it. No earlier operation becomes visible on failure. After all operations validate, the engine stops native playback and commits the session and next revision together. A failed validation or stale revision leaves playback alone. A native stop failure prevents the session commit.
+
+Every successful edit, replace, or load advances the revision exactly once, including identical replacements and batches whose final state is unchanged. Reads, saves, renders, and transport commands do not advance it. Errors never advance it. Exhausting the unsigned 64-bit counter returns `revision_exhausted` before playback or session mutation.
+
+`session.replace` and `session.load` accept an optional string `expected_revision`, checked before validation/file access. Without it they retain legacy unconditional behavior. They still return a bare session; use inspect afterward to obtain a fresh paired snapshot. `session.get`, saved JSON, and schema version 1 are unchanged. Explicit null, numeric revisions, and noncanonical strings such as `"01"` or `"+1"` are invalid. Clients sharing an engine should use checked writes consistently; the current browser editor still uses unconditional replacement and should remain in one editing window.
+
+```jsonl
+{"protocol_version":1,"id":"snapshot","method":"session.inspect"}
+{"protocol_version":1,"id":"edit","method":"session.edit","params":{"expected_revision":"0","operations":[{"op":"add_track","track":{"id":"lead","device":{"kind":"sine","frequency_hz":440,"gain":0.15}}},{"op":"set_parameter","track_id":"lead","parameter":"frequency_hz","value":660}]}}
+{"protocol_version":1,"id":"replace","method":"session.replace","params":{"expected_revision":"1","session":{"schema_version":1,"sample_rate":48000,"tracks":[]}}}
+```
+
+This example assumes a fresh engine. The edit returns revision `"1"`; the checked replacement advances it to `"2"`. `capabilities.editing` reports the operation names, `max_operations`, and `revision_type: "decimal_string"`. No sample-rate edits, undo, or native live graph updates are introduced by the batch command.
 
 ## Discovery metadata
 
@@ -95,6 +125,8 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `invalid_params` | Wrong or unknown params; malformed replacement shape; invalid duration |
 | `invalid_session` | Session validation or load parsing failed; session file too large |
 | `io_error` | File open/write/read/sync or WAV encoding failed |
+| `revision_conflict` | Expected revision does not match; inspect and reconcile before retrying |
+| `revision_exhausted` | The process revision counter cannot advance |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
 | `internal_error` | Unexpected session serialization failure |

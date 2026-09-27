@@ -1,6 +1,6 @@
 use crate::{
     render,
-    session::{self, Session},
+    session::{self, Device, Session, Track},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -12,10 +12,13 @@ use std::{
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_MESSAGE_BYTES: usize = 1_048_576;
+const MAX_EDIT_OPERATIONS: usize = 128;
 pub const METHODS: &[&str] = &[
     "capabilities",
     "session.get",
+    "session.inspect",
     "session.replace",
+    "session.edit",
     "session.save",
     "session.load",
     "render",
@@ -36,6 +39,11 @@ fn capabilities() -> Value {
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
         "session_schema_version": session::SCHEMA_VERSION,
+        "editing": {
+            "max_operations": MAX_EDIT_OPERATIONS,
+            "revision_type": "decimal_string",
+            "operations": ["add_track", "remove_track", "set_parameter"]
+        },
         "max_message_bytes": MAX_MESSAGE_BYTES,
         "render": {
             "format": "wav_pcm16", "channels": 2,
@@ -133,6 +141,7 @@ impl Response {
 #[derive(Default)]
 pub struct Controller {
     session: Session,
+    revision: u64,
     #[cfg(all(feature = "native-audio", target_os = "macos"))]
     transport: crate::audio::Transport,
 }
@@ -149,6 +158,52 @@ struct PathParams {
 #[serde(deny_unknown_fields)]
 struct ReplaceParams {
     session: Session,
+    #[serde(default, deserialize_with = "deserialize_expected_revision")]
+    expected_revision: Option<String>,
+}
+fn deserialize_expected_revision<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadParams {
+    path: String,
+    #[serde(default, deserialize_with = "deserialize_expected_revision")]
+    expected_revision: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditParams {
+    expected_revision: String,
+    operations: Vec<EditOperation>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum EditOperation {
+    AddTrack {
+        track: Track,
+    },
+    RemoveTrack {
+        track_id: String,
+    },
+    SetParameter {
+        track_id: String,
+        parameter: Parameter,
+        value: f64,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Parameter {
+    FrequencyHz,
+    Gain,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -221,15 +276,77 @@ impl Controller {
                 let _: EmptyParams = params(value)?;
                 Ok(json!(self.session))
             }
+            "session.inspect" => {
+                let _: EmptyParams = params(value)?;
+                Ok(json!({"revision": self.revision.to_string(), "session": self.session}))
+            }
             "session.replace" => {
                 let replacement: ReplaceParams = params(value)?;
+                if let Some(expected) = replacement.expected_revision.as_deref() {
+                    self.check_revision(expected)?;
+                }
                 replacement
                     .session
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
-                self.stop_transport()?;
-                self.session = replacement.session;
+                self.commit_session(replacement.session)?;
                 Ok(json!(self.session))
+            }
+            "session.edit" => {
+                let edit: EditParams = params(value)?;
+                self.check_revision(&edit.expected_revision)?;
+                if edit.operations.is_empty() || edit.operations.len() > MAX_EDIT_OPERATIONS {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "operations must contain 1..128 items",
+                    ));
+                }
+                let mut candidate = self.session.clone();
+                for operation in edit.operations {
+                    match operation {
+                        EditOperation::AddTrack { track } => candidate.tracks.push(track),
+                        EditOperation::RemoveTrack { track_id } => {
+                            let Some(index) = candidate
+                                .tracks
+                                .iter()
+                                .position(|track| track.id == track_id)
+                            else {
+                                return Err(ControlError::new(
+                                    "invalid_params",
+                                    format!("track not found: {track_id}"),
+                                ));
+                            };
+                            candidate.tracks.remove(index);
+                        }
+                        EditOperation::SetParameter {
+                            track_id,
+                            parameter,
+                            value,
+                        } => {
+                            let Some(track) = candidate
+                                .tracks
+                                .iter_mut()
+                                .find(|track| track.id == track_id)
+                            else {
+                                return Err(ControlError::new(
+                                    "invalid_params",
+                                    format!("track not found: {track_id}"),
+                                ));
+                            };
+                            match (&mut track.device, parameter) {
+                                (Device::Sine { frequency_hz, .. }, Parameter::FrequencyHz) => {
+                                    *frequency_hz = value
+                                }
+                                (Device::Sine { gain, .. }, Parameter::Gain) => *gain = value,
+                            }
+                        }
+                    }
+                    candidate
+                        .validate()
+                        .map_err(|e| ControlError::new("invalid_session", e))?;
+                }
+                self.commit_session(candidate)?;
+                Ok(json!({"revision": self.revision.to_string(), "session": self.session}))
             }
             "session.save" => {
                 let p: PathParams = params(value)?;
@@ -243,7 +360,10 @@ impl Controller {
                 Ok(json!({ "path": p.path }))
             }
             "session.load" => {
-                let p: PathParams = params(value)?;
+                let p: LoadParams = params(value)?;
+                if let Some(expected) = p.expected_revision.as_deref() {
+                    self.check_revision(expected)?;
+                }
                 let file = File::open(&p.path).map_err(|e| ControlError::new("io_error", e))?;
                 let mut bytes = Vec::new();
                 file.take(MAX_MESSAGE_BYTES as u64 + 1)
@@ -260,8 +380,7 @@ impl Controller {
                 replacement
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
-                self.stop_transport()?;
-                self.session = replacement;
+                self.commit_session(replacement)?;
                 Ok(json!(self.session))
             }
             "render" => {
@@ -291,6 +410,41 @@ impl Controller {
         self.transport
             .stop()
             .map_err(|e| ControlError::new("audio_error", e))?;
+        Ok(())
+    }
+
+    fn check_revision(&self, expected: &str) -> Result<(), ControlError> {
+        let parsed = expected.parse::<u64>().map_err(|_| {
+            ControlError::new(
+                "invalid_params",
+                "expected_revision must be a canonical decimal u64 string",
+            )
+        })?;
+        if parsed.to_string() != expected {
+            return Err(ControlError::new(
+                "invalid_params",
+                "expected_revision must be a canonical decimal u64 string",
+            ));
+        }
+        if parsed != self.revision {
+            return Err(ControlError::new(
+                "revision_conflict",
+                format!(
+                    "expected revision {expected}, current revision is {}",
+                    self.revision
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn commit_session(&mut self, session: Session) -> Result<(), ControlError> {
+        let next_revision = self.revision.checked_add(1).ok_or_else(|| {
+            ControlError::new("revision_exhausted", "session revision is exhausted")
+        })?;
+        self.stop_transport()?;
+        self.session = session;
+        self.revision = next_revision;
         Ok(())
     }
 
@@ -367,4 +521,26 @@ fn write_new<T>(
         let _ = std::fs::remove_file(path);
     }
     result
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_revision_rejects_commit_without_changing_session() {
+        let mut controller = Controller {
+            revision: u64::MAX,
+            ..Controller::default()
+        };
+        let original = controller.session.clone();
+        let replacement = Session {
+            sample_rate: 44_100,
+            ..Session::default()
+        };
+        let error = controller.commit_session(replacement).unwrap_err();
+        assert_eq!(error.code, "revision_exhausted");
+        assert_eq!(controller.revision, u64::MAX);
+        assert_eq!(controller.session, original);
+    }
 }

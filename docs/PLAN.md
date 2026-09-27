@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T03, T04, and T04b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, and T04b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -72,11 +72,13 @@ Extend capabilities with parameter descriptions, units, defaults, limits, sessio
 
 Implemented additive session limits, device parameter descriptions/defaults/units, a structured rate-dependent Nyquist bound, file behavior, and the minimum render duration. Validation and discovery share rate, gain, ID, track-count, and duration constants. The Python demo constructs its device from metadata. Boundary tests exercise metadata against the authoritative validator.
 
-### T02: revision-checked atomic edits
+### T02: revision-checked atomic edits (complete)
 
 **Depends on:** T01 and stronger-model protocol review. **Owner:** Luna after review. **Files:** `src/control.rs`, `tests/control.rs`, `docs/PROTOCOL.md`.
 
 Introduce a revision and one batch command for add/remove track and parameter edits. Require the expected revision; edit a copy, validate, then commit. Define replacement/load revision behavior and compatibility with v1 clients. Acceptance: stale revision conflicts, a failed middle edit preserves all state, and a successful batch advances revision once. No undo or concurrency yet.
+
+Implemented `session.inspect` and `session.edit` with decimal-string process revisions, 1–128 sequential validated operations, and one commit per successful batch. Replace/load support optional revision guards while preserving legacy response shapes. Session files do not persist revisions. The Python demo uses a checked add-track batch. Five integration tests and a revision-exhaustion unit test pass, along with portable/native lint and test suites. A silent CoreAudio check confirmed rejected/stale edits preserve playback and a successful batch stops it before committing. Browser editing remains unconditional; do not claim cross-tab conflict protection until a separate GUI migration.
 
 ### T03: block renderer with persistent phase (complete)
 
@@ -156,4 +158,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T01 and T04b are complete. Review the T02 revision-checked edit contract next, then assign its implementation to Luna. Keep native snapshot semantics until an explicit live-edit design is tested. T05 follows T02. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T02 is complete. Design T05 next: integer sample positions, constant-tempo conversion, clips, loops, automation ordering, and schema migration with exact-frame fixtures. Review the contract before delegating T06 implementation. Keep native snapshot semantics until an explicit live-edit design is tested. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
