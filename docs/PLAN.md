@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T02, T03, T04, T04b, the T05 design ticket, T06, and T07a are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, T04b, the T05 design ticket, T06, T07a, and T07b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -126,11 +126,13 @@ Add PCM WAV clips at the session rate, preloaded off the callback, with gain and
 
 T07a implements [the asset contract](decisions/audio-assets.md): strict audio descriptors, bounded PCM decoding, immutable shared buffers, source offsets/gains, stereo mixing, and transactional asset validation. Exact impulse, malformed-input, persistence, and allocation checks cover the working adapter. Audio sessions save within their current project directory; copying assets is not implemented.
 
-### T07b: seek and loop transport
+### T07b: seek and loop transport (complete)
 
 **Depends on:** T07a. **Owner:** stronger model for lifecycle, Luna for fixtures. **Files:** `src/engine.rs`, `src/audio.rs`, `src/control.rs`, transport tests.
 
 Implement explicit seek and loop-region controls on prepared snapshots, following [the timeline contract](decisions/timeline.md). Acceptance: stop/seek/wrap clear voices, audio resumes from the correct source offset, loop end is excluded, output position remains monotonic, and callback boundaries do not affect samples. Keep preparation and file access off the callback. No recording or time stretching.
+
+Implemented native JSONL seek/loop controls with a single pending callback command, bounded scheduling resets, independent timeline/output positions, and temporary loop regions. Portable tests cover source offsets, no note chase, loop boundaries, uneven blocks, duration limits, and allocation-free resets. Native callback checks cover paused seeks, looping, disabling loops, monotonic submitted frames, unchanged session revision, stop/restart, and automatic release. See [transport validation](decisions/seek-loop.md). Browser controls remain unchanged.
 
 ### T08: device chains and automation
 
@@ -170,4 +172,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T07a is complete. Implement T07b seek and loops next using the prepared note/audio snapshots. Review callback command handoff before delegating implementation. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T07b is complete. Start T08 by implementing a concrete gain effect and reviewing its preparation, event, state, and latency requirements before extracting a shared processor interface. Delegate independent fixtures/tests once that interface is stable. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.

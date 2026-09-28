@@ -59,7 +59,7 @@ target/debug/daw play examples/sessions/arpeggio.json 2 0.25
 
 The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
 
-The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Seek, loops, and automation remain planned.
+The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Native seek and loops are available through JSONL; automation remains planned.
 
 To preserve an existing sine session while explicitly upgrading its format:
 
@@ -68,6 +68,14 @@ python3 examples/upgrade_session.py old-session.json new-session.json
 ```
 
 This validates both versions, preserves continuous playback and track order, and refuses to overwrite the destination. Sessions are never silently upgraded on load.
+
+## Native seeking and looping
+
+With the native build, run `python3 examples/transport_demo.py` for a silent hardware check of pause, seek, loop, resume, and stream release. An optional session path tests a PCM clip project instead.
+
+Scripts can issue `transport.seek` with `{"frame":1800}` and `transport.loop` with `{"region":{"start_frame":1200,"end_frame":2400}}` while native playback is active or paused. Send `{"region":null}` to disable looping. Poll `timeline_command_pending` until false before sending the next timeline command. Positions use the reported native sample rate. See the [protocol](docs/PROTOCOL.md) for limits and acknowledgments.
+
+Loops and seeks clear note voices without retriggering notes that began before the destination; audio clips resume at their corresponding source offset. Discontinuities can click. Live loop settings are temporary, do not change WAV exports, and do not extend the 60-second playback limit. The browser has no seek or loop controls yet.
 
 ## PCM WAV clips
 
@@ -93,4 +101,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T07a audio clips are complete. The [timeline contract](docs/decisions/timeline.md) guides T07b seek and loop transport in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T07b seek and loop transport is complete. The next ticket is T08 device chains and automation in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

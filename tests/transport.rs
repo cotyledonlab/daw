@@ -32,6 +32,135 @@ fn session(track_id: &str) -> Value {
     })
 }
 
+const MAX_FRAME: u64 = 9_007_199_254_740_991;
+
+fn inspected(controller: &mut Controller, id: &str) -> Value {
+    ok(&request(controller, id, "session.inspect", json!({}))).clone()
+}
+
+#[test]
+fn seek_and_loop_are_discoverable_in_every_build() {
+    let mut controller = Controller::default();
+    let capabilities = request(&mut controller, "capabilities", "capabilities", json!({}));
+    let methods = ok(&capabilities)["methods"].as_array().unwrap();
+    for method in ["transport.seek", "transport.loop"] {
+        assert!(methods.iter().any(|value| value == method), "{method}");
+    }
+}
+
+#[test]
+fn seek_and_loop_params_are_strict_and_invalid_values_preserve_session_and_revision() {
+    let mut controller = Controller::default();
+    ok(&request(
+        &mut controller,
+        "set",
+        "session.replace",
+        json!({"session":session("original")}),
+    ));
+    let before = inspected(&mut controller, "before");
+
+    let invalid = [
+        ("seek-missing", "transport.seek", json!({})),
+        ("seek-negative", "transport.seek", json!({"frame":-1})),
+        ("seek-float", "transport.seek", json!({"frame":1.5})),
+        (
+            "seek-too-large",
+            "transport.seek",
+            json!({"frame":MAX_FRAME+1}),
+        ),
+        (
+            "seek-extra",
+            "transport.seek",
+            json!({"frame":0,"extra":true}),
+        ),
+        ("loop-missing", "transport.loop", json!({})),
+        ("loop-null-param", "transport.loop", json!(null)),
+        (
+            "loop-region-missing",
+            "transport.loop",
+            json!({"region":{}}),
+        ),
+        (
+            "loop-start-missing",
+            "transport.loop",
+            json!({"region":{"end_frame":10}}),
+        ),
+        (
+            "loop-end-missing",
+            "transport.loop",
+            json!({"region":{"start_frame":0}}),
+        ),
+        (
+            "loop-negative",
+            "transport.loop",
+            json!({"region":{"start_frame":-1,"end_frame":10}}),
+        ),
+        (
+            "loop-float",
+            "transport.loop",
+            json!({"region":{"start_frame":0,"end_frame":1.5}}),
+        ),
+        (
+            "loop-empty",
+            "transport.loop",
+            json!({"region":{"start_frame":4,"end_frame":4}}),
+        ),
+        (
+            "loop-reversed",
+            "transport.loop",
+            json!({"region":{"start_frame":5,"end_frame":4}}),
+        ),
+        (
+            "loop-too-large",
+            "transport.loop",
+            json!({"region":{"start_frame":0,"end_frame":MAX_FRAME+1}}),
+        ),
+        (
+            "loop-extra-inner",
+            "transport.loop",
+            json!({"region":{"start_frame":0,"end_frame":10,"extra":true}}),
+        ),
+        (
+            "loop-extra-outer",
+            "transport.loop",
+            json!({"region":null,"extra":true}),
+        ),
+    ];
+    for (id, method, params) in invalid {
+        let response = request(&mut controller, id, method, params);
+        assert_eq!(error_code(&response), "invalid_params", "{id}: {response}");
+        assert_eq!(response["id"], id);
+    }
+
+    let after = inspected(&mut controller, "after");
+    assert_eq!(after, before);
+}
+
+#[test]
+fn valid_seek_and_loop_controls_are_recognized_while_stopped() {
+    let mut controller = Controller::default();
+    for (id, method, params) in [
+        ("seek-zero", "transport.seek", json!({"frame":0})),
+        ("seek-max", "transport.seek", json!({"frame":MAX_FRAME})),
+        ("loop-disable", "transport.loop", json!({"region":null})),
+        (
+            "loop-enable",
+            "transport.loop",
+            json!({"region":{"start_frame":0,"end_frame":MAX_FRAME}}),
+        ),
+    ] {
+        let response = request(&mut controller, id, method, params);
+        let expected = if cfg!(all(feature = "native-audio", target_os = "macos")) {
+            "audio_error"
+        } else {
+            "audio_unavailable"
+        };
+        assert_eq!(error_code(&response), expected, "{id}: {response}");
+    }
+    let status = request(&mut controller, "status", "transport.status", json!({}));
+    assert_eq!(ok(&status)["state"], "stopped");
+}
+
 #[test]
 fn stopped_status_and_stop_are_idempotent() {
     let mut controller = Controller::default();

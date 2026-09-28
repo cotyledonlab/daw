@@ -78,10 +78,18 @@ Build with `--features native-audio` on macOS. `capabilities.live_audio` means t
 | `transport.resume` | `{}` | Snapshot after requesting continued playback |
 | `transport.stop` | `{}` | Stopped snapshot after stream release; idempotent |
 | `transport.volume` | `{ "volume": 0.25 }` | Snapshot after updating monitor volume; no-op while stopped |
+| `transport.seek` | `{ "frame": 12345 }` | Snapshot after requesting a timeline seek |
+| `transport.loop` | `{ "region": null }` or `{ "region": { "start_frame": 0, "end_frame": 48000 } }` | Snapshot after setting or clearing the loop region |
 
 Both play fields are required: seconds is 0.001–60 and volume is 0–1. Playback uses the default output device and a prepared copy of the session at its device rate. Play while active fails; stop first. Pause/resume while stopped fail. Volume changes are applied at callback boundaries without smoothing and do not affect saved sessions or WAV exports.
 
-Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a callback transition is pending), `playing`, `paused`, or `error`. Active snapshots also contain `device`, `sample_rate`, `submitted_frames`, and `volume`. Error snapshots contain diagnostic `error` text. `level` is the latest callback peak after monitor volume. Playing/paused states reflect callback observation, not just command dispatch. Poll status to observe transitions and later device errors. Submitted frames count DSP output, not acoustic delivery.
+`transport.seek` and `transport.loop` are recognized in every build. On a native macOS build they require active playback; paused playback counts as active. A valid request while stopped returns `audio_error`. Builds without native playback return `audio_unavailable` for valid requests. Seek requires exactly an integer `frame` from 0 through `MAX_FRAME` (9007199254740991). Loop requires exactly a `region` field: `null` clears looping, or an object with exactly integer `start_frame` and `end_frame` fields where `0 <= start_frame < end_frame <= MAX_FRAME`. Missing, extra, non-integer, or out-of-range fields return `invalid_params`.
+
+The native timeline command handoff has one pending slot. A successful seek/loop response means the request was accepted and may still be pending application by the audio callback. Poll `transport.status` until `timeline_command_pending` is `false` before issuing another seek or loop request. Issuing either while the slot is occupied returns `audio_error` and leaves the current request unchanged. The requested loop region is reported as `loop_region`; it can therefore reflect the accepted request before the callback applies it. `timeline_frame` is the current timeline position in frames at the native `sample_rate` (v2 playback requires the session rate to match the device rate). `submitted_frames` remains a monotonic count of submitted DSP output. These fields are separate telemetry and are not guaranteed to describe the same instant.
+
+Once a seek is applied, `timeline_frame` reports its destination while paused, and playback resumes from that position. At or after an enabled loop's exclusive `end_frame`, playback wraps to `start_frame` before rendering the next sample. Seek and wrap clear note voices without chasing notes that began before the destination. They reset continuous oscillator phase and resume audio clips at the corresponding source offset. These discontinuities may click. The initial lead-in before the first loop boundary plays once. Loop settings are temporary transport state and are cleared by stop or restart. The play `seconds` limit is unchanged, including time spent paused. Offline WAV rendering starts at frame zero and ignores live transport loops.
+
+Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a callback transition is pending), `playing`, `paused`, or `error`. Active snapshots also contain `device`, `sample_rate`, `submitted_frames`, `timeline_frame`, `timeline_command_pending`, `loop_region`, and `volume`. Callback diagnostics are `callbacks`, `max_render_microseconds`, and `callbacks_over_buffer_budget`. Error snapshots contain diagnostic `error` text. `level` is the latest callback peak after monitor volume. Playing/paused states reflect callback observation, not just command dispatch. Poll status to observe transitions and later device errors. Submitted frames count DSP output, not acoustic delivery.
 
 Playback ends at either the requested frame count or the wall-time deadline, including pauses, followed by a short bounded buffer drain. The owner checks deadlines without needing status requests. Stop releases the stream before acknowledgment; EOF terminates the engine and releases process resources. The control queue holds at most eight messages and commands time out after ten seconds; a timed-out command has an uncertain result, so restart the engine before relying on playback state. Audio callbacks use atomics and never wait on the command queue. Default device selection and host permissions remain platform limitations.
 
@@ -93,8 +101,13 @@ The GUI uses a 60-second native snapshot, locks session edits while active, and 
 {"protocol_version":1,"id":"pause","method":"transport.pause"}
 {"protocol_version":1,"id":"resume","method":"transport.resume"}
 {"protocol_version":1,"id":"quiet","method":"transport.volume","params":{"volume":0.1}}
+{"protocol_version":1,"id":"seek","method":"transport.seek","params":{"frame":24000}}
+{"protocol_version":1,"id":"loop","method":"transport.loop","params":{"region":{"start_frame":0,"end_frame":48000}}}
+{"protocol_version":1,"id":"timeline","method":"transport.status"}
 {"protocol_version":1,"id":"stop","method":"transport.stop"}
 ```
+
+The example commands must be sent interactively: poll status until `timeline_command_pending` is false between seek and loop. If playback stops or fails before acknowledgment, start a new playback before issuing further timeline commands. [The transport demo](../examples/transport_demo.py) implements this polling.
 
 ## Session schema v2
 
@@ -102,11 +115,11 @@ Schema v2 implements the note subset of the [timeline contract](decisions/timeli
 
 `capabilities.supported_session_schema_versions` is `[1,2]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
 
-Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips are supported as described below; seek, loops, and automation are not accepted yet.
+Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips and native seek/loop controls are supported as described above; automation is not implemented.
 
 `session.replace`, `session.load`, and whole-track batches validate notes and peak polyphony before stopping playback or committing a new revision. `session.save` preserves the selected schema. The explicit upgrade example maps v1 tracks to continuous v2 tracks without changing their sound. In-place sample-rate editing is not exposed: a full replacement supplies a new arrangement and does not rescale any positions automatically.
 
-The separate `timeline-contract.json` fixtures remain design-only reference cases, including future loop behavior, and are not loadable sessions.
+The separate `timeline-contract.json` fixtures remain design-only reference cases and are not loadable sessions.
 
 ## PCM audio clips in schema v2
 

@@ -30,6 +30,8 @@ pub const METHODS: &[&str] = &[
     "transport.resume",
     "transport.stop",
     "transport.volume",
+    "transport.seek",
+    "transport.loop",
 ];
 
 // Discovery is additive to protocol v1. Defaults are construction suggestions;
@@ -40,6 +42,7 @@ fn capabilities() -> Value {
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
+        "timeline_transport": {"native_only": true, "max_frame": session::MAX_FRAME, "note_chase": false, "persisted": false},
         "audio_clips": {
             "schema_version": 2, "formats": ["wav_pcm16", "wav_pcm24", "wav_pcm32"],
             "channels": [1, 2], "requires_matching_sample_rate": true,
@@ -244,6 +247,28 @@ struct RenderParams {
 struct PlayParams {
     seconds: f64,
     volume: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SeekParams {
+    frame: u64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopRegion {
+    start_frame: u64,
+    end_frame: u64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopParams {
+    #[serde(deserialize_with = "deserialize_region")]
+    region: Option<LoopRegion>,
+}
+fn deserialize_region<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<LoopRegion>, D::Error> {
+    Option::deserialize(d)
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -467,7 +492,9 @@ impl Controller {
                 Ok(json!(report))
             }
             "transport.status" | "transport.play" | "transport.pause" | "transport.resume"
-            | "transport.stop" | "transport.volume" => self.transport_command(method, value),
+            | "transport.stop" | "transport.volume" | "transport.seek" | "transport.loop" => {
+                self.transport_command(method, value)
+            }
             _ => Err(ControlError::new(
                 "unknown_method",
                 format!("unknown method: {method}"),
@@ -528,6 +555,8 @@ impl Controller {
     }
 
     fn transport_command(&mut self, method: &str, value: Value) -> Result<Value, ControlError> {
+        let mut frame = 0;
+        let mut region = None;
         let mut seconds = 0.0;
         let mut volume = 0.25;
         match method {
@@ -537,6 +566,26 @@ impl Controller {
                 volume = p.volume;
                 render::validate_duration(seconds)
                     .map_err(|e| ControlError::new("invalid_params", e))?;
+            }
+            "transport.seek" => {
+                frame = params::<SeekParams>(value)?.frame;
+                if frame > session::MAX_FRAME {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "frame exceeds timeline limit",
+                    ));
+                }
+            }
+            "transport.loop" => {
+                region = params::<LoopParams>(value)?
+                    .region
+                    .map(|r| (r.start_frame, r.end_frame));
+                if region.is_some_and(|(start, end)| start >= end || end > session::MAX_FRAME) {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "loop requires start < end <= timeline limit",
+                    ));
+                }
             }
             "transport.volume" => {
                 volume = params::<VolumeParams>(value)?.volume;
@@ -559,13 +608,15 @@ impl Controller {
                 "transport.resume" => self.transport.resume(),
                 "transport.stop" => self.transport.stop(),
                 "transport.volume" => self.transport.volume(volume),
+                "transport.seek" => self.transport.seek(frame),
+                "transport.loop" => self.transport.set_loop(region),
                 _ => self.transport.status(),
             };
             result.map_err(|e| ControlError::new("audio_error", e))
         }
         #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
         {
-            let _ = seconds;
+            let _ = (seconds, frame, region);
             if matches!(method, "transport.status" | "transport.stop") {
                 Ok(json!({"state":"stopped","level":0}))
             } else {

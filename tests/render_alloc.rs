@@ -89,6 +89,8 @@ fn prepared_render_blocks_do_not_allocate_or_free() {
     OPERATIONS.set(0);
     WATCH.set(true);
     for _ in 0..100 {
+        engine.seek(5).unwrap();
+        engine.set_loop(Some((3, 7))).unwrap();
         std::hint::black_box(engine.render_block(&mut output));
     }
     WATCH.set(false);
@@ -117,6 +119,8 @@ fn sequenced_onsets_release_and_voice_reuse_do_not_allocate() {
     OPERATIONS.set(0);
     WATCH.set(true);
     for _ in 0..60 {
+        playback.seek(80).unwrap();
+        playback.set_loop(Some((70, 90))).unwrap();
         let _ = std::hint::black_box(playback.fill(&mut output, |x| x));
     }
     WATCH.set(false);
@@ -161,6 +165,8 @@ fn preloaded_audio_clip_callbacks_do_not_allocate_or_free() {
     OPERATIONS.set(0);
     WATCH.set(true);
     for _ in 0..60 {
+        playback.seek(80).unwrap();
+        playback.set_loop(Some((70, 90))).unwrap();
         let _ = std::hint::black_box(playback.fill(&mut output, |x| x));
     }
     WATCH.set(false);

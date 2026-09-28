@@ -1,7 +1,7 @@
 //! Prepared sine and note rendering. All scheduling storage is allocated before playback.
 use crate::{
     assets::{self, PreparedAudioClip},
-    session::{Clip, Device, MAX_VOICES, Session, TrackMode, envelope_frames},
+    session::{Clip, Device, MAX_FRAME, MAX_VOICES, Session, TrackMode, envelope_frames},
 };
 use std::f64::consts::TAU;
 
@@ -44,6 +44,8 @@ pub struct Engine {
     active_count: usize,
     envelope: f64,
     frame_position: u64,
+    output_position: u64,
+    loop_region: Option<(u64, u64)>,
 }
 
 impl Engine {
@@ -107,11 +109,62 @@ impl Engine {
             active_count: 0,
             envelope: envelope as f64,
             frame_position: 0,
+            output_position: 0,
+            loop_region: None,
         })
     }
 
     pub fn frame_position(&self) -> u64 {
         self.frame_position
+    }
+
+    /// Number of frames emitted since preparation. Timeline jumps do not affect it.
+    pub fn output_position(&self) -> u64 {
+        self.output_position
+    }
+
+    /// Move the timeline without chasing notes. Audio clips covering the destination
+    /// become active at their corresponding source offsets.
+    pub fn seek(&mut self, frame: u64) -> Result<(), String> {
+        if frame > MAX_FRAME {
+            return Err("seek frame exceeds MAX_FRAME".into());
+        }
+        self.frame_position = frame;
+        self.reset_schedules(frame);
+        Ok(())
+    }
+
+    pub fn set_loop(&mut self, region: Option<(u64, u64)>) -> Result<(), String> {
+        if let Some((start, end)) = region {
+            if start > MAX_FRAME || end > MAX_FRAME || end <= start {
+                return Err("loop must satisfy 0 <= start < end <= MAX_FRAME".into());
+            }
+        }
+        self.loop_region = region;
+        Ok(())
+    }
+
+    /// Clear active state and position cursors for a discontinuity. Note starts before
+    /// the destination are intentionally skipped; audio clips spanning it are retained.
+    fn reset_schedules(&mut self, frame: u64) {
+        self.active_count = 0;
+        for voice in &mut self.voices {
+            voice.phase = 0.0;
+        }
+        self.next_start = self
+            .starts
+            .partition_point(|&index| self.notes[index].start < frame);
+        self.audio_count = 0;
+        for (index, clip) in self.audio.iter().enumerate() {
+            if clip.start <= frame && frame < clip.end {
+                // Prepared audio identity order is the vector index order.
+                self.active_audio[self.audio_count] = index;
+                self.audio_count += 1;
+            }
+        }
+        self.next_audio = self
+            .audio_starts
+            .partition_point(|&index| self.audio[index].start <= frame);
     }
 
     /// Retire ended voices and insert this frame's starts into the fixed active list.
@@ -171,6 +224,12 @@ impl Engine {
     pub fn render_block(&mut self, output: &mut [[f64; 2]]) -> u64 {
         let mut clipped_frames = 0;
         for frame in output {
+            if let Some((start, end)) = self.loop_region {
+                if self.frame_position >= end {
+                    self.frame_position = start;
+                    self.reset_schedules(start);
+                }
+            }
             self.update_notes();
             self.update_audio();
             let mut mixed = 0.0;
@@ -208,6 +267,7 @@ impl Engine {
             }
             *frame = [stereo[0].clamp(-1.0, 1.0), stereo[1].clamp(-1.0, 1.0)];
             self.frame_position = self.frame_position.saturating_add(1);
+            self.output_position = self.output_position.saturating_add(1);
         }
         clipped_frames
     }

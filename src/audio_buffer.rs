@@ -46,6 +46,22 @@ impl PlaybackBuffer {
         self.remaining
     }
 
+    pub fn frame_position(&self) -> u64 {
+        self.engine.frame_position()
+    }
+
+    pub fn output_position(&self) -> u64 {
+        self.engine.output_position()
+    }
+
+    pub fn seek(&mut self, frame: u64) -> Result<(), String> {
+        self.engine.seek(frame)
+    }
+
+    pub fn set_loop(&mut self, region: Option<(u64, u64)>) -> Result<(), String> {
+        self.engine.set_loop(region)
+    }
+
     /// Fill all samples, including silence after the duration and on malformed buffers.
     /// The conversion function must be allocation-free and map zero to sample equilibrium.
     pub fn fill<T: Copy>(

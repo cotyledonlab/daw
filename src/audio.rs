@@ -8,7 +8,10 @@ use serde_json::{Value, json};
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering::Relaxed},
+        atomic::{
+            AtomicBool, AtomicU8, AtomicU64,
+            Ordering::{Acquire, Relaxed, Release},
+        },
     },
     time::{Duration, Instant},
 };
@@ -26,6 +29,12 @@ struct Stats {
     observed: AtomicU8,
     volume: AtomicU64,
     level: AtomicU64,
+    // Single owner producer, single callback consumer. Payload may only be
+    // overwritten after the callback releases the occupied slot.
+    command: AtomicU8,
+    command_start: AtomicU64,
+    command_end: AtomicU64,
+    timeline: AtomicU64,
 }
 
 pub fn devices() -> Result<Value, String> {
@@ -121,6 +130,26 @@ fn stream<T: SizedSample + FromSample<f64>>(
                     stats.level.store(0, Relaxed);
                     return;
                 }
+                let command = stats.command.load(Acquire);
+                if command != 0 {
+                    let start = stats.command_start.load(Relaxed);
+                    let end = stats.command_end.load(Relaxed);
+                    // The owner validated all values before publishing. Successful
+                    // engine operations use only fixed storage and scalar state.
+                    let result = match command {
+                        1 => renderer.seek(start),
+                        2 => renderer.set_loop(Some((start, end))),
+                        _ => renderer.set_loop(None),
+                    };
+                    if result.is_err() {
+                        stats.error.store(true, Relaxed);
+                        output.fill(T::EQUILIBRIUM);
+                        stats.command.store(0, Release);
+                        return;
+                    }
+                    stats.timeline.store(renderer.frame_position(), Relaxed);
+                    stats.command.store(0, Release);
+                }
                 if stats.paused.load(Relaxed) {
                     output.fill(T::EQUILIBRIUM);
                     stats.observed.store(2, Relaxed);
@@ -138,6 +167,7 @@ fn stream<T: SizedSample + FromSample<f64>>(
                 }) {
                     Ok(rendered) => {
                         stats.frames.fetch_add(rendered, Relaxed);
+                        stats.timeline.store(renderer.frame_position(), Relaxed);
                     }
                     Err(_) => {
                         stats.error.store(true, Relaxed);
@@ -176,6 +206,8 @@ enum Action {
     Resume,
     Stop,
     Volume(f64),
+    Seek(u64),
+    Loop(Option<(u64, u64)>),
     Status,
 }
 struct Envelope {
@@ -189,6 +221,7 @@ struct Active {
     rate: u32,
     deadline: Instant,
     drain: Option<Instant>,
+    loop_region: Option<(u64, u64)>,
 }
 impl Active {
     fn start(session: &Session, seconds: f64, volume: f64) -> Result<Self, String> {
@@ -226,9 +259,11 @@ impl Active {
             rate: config.sample_rate.0,
             deadline: Instant::now() + Duration::from_secs_f64(seconds),
             drain: None,
+            loop_region: None,
         })
     }
     fn snapshot(&self) -> Value {
+        let pending = self.stats.command.load(Acquire) != 0;
         let observed = self.stats.observed.load(Relaxed);
         let paused = self.stats.paused.load(Relaxed);
         let state = match (paused, observed) {
@@ -239,6 +274,12 @@ impl Active {
         json!({"state":state,"device":self.device,"sample_rate":self.rate,
             "level":f64::from_bits(self.stats.level.load(Relaxed)),
             "submitted_frames":self.stats.frames.load(Relaxed),
+            "timeline_frame":self.stats.timeline.load(Relaxed),
+            "callbacks":self.stats.calls.load(Relaxed),
+            "max_render_microseconds":self.stats.max_ns.load(Relaxed) as f64 / 1000.0,
+            "callbacks_over_buffer_budget":self.stats.over_budget.load(Relaxed),
+            "timeline_command_pending":pending,
+            "loop_region":self.loop_region.map(|(start,end)| json!({"start_frame":start,"end_frame":end})),
             "volume":f64::from_bits(self.stats.volume.load(Relaxed))})
     }
 }
@@ -277,6 +318,18 @@ impl Transport {
         crate::render::validate_duration(seconds)?;
         validate_volume(volume)?;
         self.request(Action::Play(session.clone(), seconds, volume))
+    }
+    pub fn seek(&mut self, frame: u64) -> Result<Value, String> {
+        if frame > crate::session::MAX_FRAME {
+            return Err("frame exceeds timeline limit".into());
+        }
+        self.request(Action::Seek(frame))
+    }
+    pub fn set_loop(&mut self, region: Option<(u64, u64)>) -> Result<Value, String> {
+        if region.is_some_and(|(start, end)| start >= end || end > crate::session::MAX_FRAME) {
+            return Err("invalid loop region".into());
+        }
+        self.request(Action::Loop(region))
     }
     pub fn pause(&mut self) -> Result<Value, String> {
         self.request(Action::Pause)
@@ -344,6 +397,26 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                         .stats
                         .paused
                         .store(matches!(envelope.action, Action::Pause), Relaxed);
+                }
+                Action::Seek(_) | Action::Loop(_) => {
+                    let current = active.as_mut().ok_or("native playback is stopped")?;
+                    if current.stats.done.load(Relaxed) || current.drain.is_some() {
+                        return Err("native playback is finishing".into());
+                    }
+                    if current.stats.command.load(Acquire) != 0 {
+                        return Err("timeline command pending; poll status before retrying".into());
+                    }
+                    let (tag, start, end) = match envelope.action {
+                        Action::Seek(frame) => (1, frame, 0),
+                        Action::Loop(region) => {
+                            current.loop_region = region;
+                            region.map_or((3, 0, 0), |(start, end)| (2, start, end))
+                        }
+                        _ => unreachable!(),
+                    };
+                    current.stats.command_start.store(start, Relaxed);
+                    current.stats.command_end.store(end, Relaxed);
+                    current.stats.command.store(tag, Release);
                 }
                 Action::Volume(volume) => {
                     if let Some(current) = active.as_ref() {
