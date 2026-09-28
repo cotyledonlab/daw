@@ -9,6 +9,7 @@ fn tone() -> Session {
         tracks: vec![Track {
             mode: None,
             clips: None,
+            effects: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,

@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T02, T03, T04, T04b, the T05 design ticket, T06, T07a, and T07b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, T04b, the T05 design ticket, T06, T07a, T07b, and T08a are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -134,15 +134,21 @@ Implement explicit seek and loop-region controls on prepared snapshots, followin
 
 Implemented native JSONL seek/loop controls with a single pending callback command, bounded scheduling resets, independent timeline/output positions, and temporary loop regions. Portable tests cover source offsets, no note chase, loop boundaries, uneven blocks, duration limits, and allocation-free resets. Native callback checks cover paused seeks, looping, disabling loops, monotonic submitted frames, unchanged session revision, stop/restart, and automatic release. See [transport validation](decisions/seek-loop.md). Browser controls remain unchanged.
 
-### T08: device chains and automation
+### T08a: serial track gain effects (complete)
 
-**Depends on:** T06. **Owner:** stronger-model interface review, Luna implementation. **Files:** `src/session.rs`, `src/engine.rs`, `src/control.rs`, `tests/devices.rs`.
+**Depends on:** T07b. **Owner:** stronger-model interface review, Luna fixtures. **Files:** `src/session.rs`, `src/engine.rs`, `src/control.rs`, `tests/effects.rs`.
 
-Add a gain effect as the second concrete processor, then extract their shared interface. Define preparation, audio/events, parameters, state, and latency. Add serial chains and bounded automation with smoothing. Acceptance: expected sine/gain output, block-independent automation, bypass/state round trips, and no callback allocations during edits. No arbitrary cycles, sends, or sidechains.
+Schema v3 adds required per-track effect arrays with bounded serial gain processors and bypass. Each track sums into an unclipped stereo frame before effects; the master clips once after mixing tracks. Schema v1/v2 retain their previous path. Tests cover analytical gain, source/effect clipping order, stereo preservation, strict schema validation, persistence, seek/loops, and callback allocations. The [effect contract](decisions/track-effects.md) records the concrete processing interface and the remaining design work.
+
+### T08b: parameter automation and processor interface
+
+**Depends on:** T08a. **Owner:** stronger-model interface and callback review, Luna tests/examples.
+
+Implement bounded, persisted effect-gain lanes after specifying target identity, point limits, interpolation/smoothing semantics, and seek/wrap reconstruction. Derive the shared processing interface from the working source/effect requirements; do not invent unsupported buses or commands. Follow step/hold timeline semantics unless smoothing is explicitly represented and tested. Acceptance: block-independent samples, saved state and bypass, exact seek/loop values, invalid-edit rollback, and no callback allocation. Keep snapshot replacement until an explicit live parameter handoff is implemented. No arbitrary cycles, sends, or sidechains.
 
 ### T09: VST3 host proof of concept
 
-**Depends on:** T08; research may start earlier. **Owner:** stronger model, Luna fixtures/docs. **Files:** proposed `native/`, `src/hosting/`, `docs/decisions/plugin-hosting.md`.
+**Depends on:** T08b; research may start earlier. **Owner:** stronger model, Luna fixtures/docs. **Files:** proposed `native/`, `src/hosting/`, `docs/decisions/plugin-hosting.md`.
 
 Compare official SDK plus thin C++ shim against maintained Rust bindings using one known test plugin. Choose from working lifecycle coverage. Scan in a child process with timeouts. Implement buses, buffers, events, automation, state, and teardown before editors. Acceptance: discover/load/process/automate/save/restore one plugin; scanner failure cannot kill the controller. Document playback isolation honestly and verify pinned SDK notices. No blanket compatibility claim.
 
@@ -154,22 +160,22 @@ Start with desktop Audio Units: discovery, instantiation, formats, resources, ca
 
 ### T11: SuperCollider jobs and control
 
-**Depends on:** S0 for offline spike; T08 for track integration. **Owner:** Luna process harness, stronger-model audio-routing review. **Files:** proposed `src/runtimes/supercollider.rs`, runtime tests, example score.
+**Depends on:** S0 for offline spike; T08b for track integration. **Owner:** Luna process harness, stronger-model audio-routing review. **Files:** proposed `src/runtimes/supercollider.rs`, runtime tests, example score.
 
 First launch a configured `scsynth` with a prepared NRT score, fresh WAV path, argument arrays, timeout, and captured errors. Then add owned child-process OSC with completion handling. Never use a shell or terminate unrelated servers. Acceptance: installed engine renders a fixture, missing executable/timeout errors work, interactive create/free is acknowledged. Live audio transport needs separate measured design; OSC success alone is not track integration.
 
 ### T12: Csound and Pure Data adapters
 
-**Depends on:** T11 job conventions; T08 for embedded devices. **Owner:** Luna offline harnesses, stronger model FFI. **Files:** proposed `src/runtimes/csound.rs`, `src/runtimes/pd.rs`, separate tests.
+**Depends on:** T11 job conventions; T08b for embedded devices. **Owner:** Luna offline harnesses, stronger model FFI. **Files:** proposed `src/runtimes/csound.rs`, `src/runtimes/pd.rs`, separate tests.
 
 Use separate commits. Start Csound with CLI rendering, then assess libcsound blocks. Spike libpd with one patch, explicit search paths, controlled externals, block sizes, and thread ownership. Acceptance for each: known audio fixture, state/parameters, missing-runtime errors, cleanup, capability flag, and preserved dependency notices. Do not claim arbitrary externals/opcodes work. No general sandbox.
 
 ### T13: agent jobs and thin UI
 
-**Depends on:** T02, T07, T08, one native plugin, one runtime device. **Owner:** separate Luna tasks after interface review.
+**Depends on:** T02, T07b, T08b, one native plugin, one runtime device. **Owner:** separate Luna tasks after interface review.
 
 First add cancellable render jobs with progress and subscriptions. Then build minimal track/clip/device/transport/meter views through the same commands. Optional MCP translates discovery, inspect, edit, and jobs without another session model. Acceptance: Python creates/edits/saves/reloads/renders the arrangement shown by the UI, failed edits preserve state, and cancellation cleans output. Defer a visual patch editor and elaborate mixer.
 
 ## Next starting point
 
-T07b is complete. Start T08 by implementing a concrete gain effect and reviewing its preparation, event, state, and latency requirements before extracting a shared processor interface. Delegate independent fixtures/tests once that interface is stable. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T08a is complete. Start T08b with effect-gain automation targeted by track/effect ID. Specify bounded lanes, step/hold versus explicit smoothing, and seek/wrap reconstruction before implementation; then delegate fixtures/tests. The existing gain chain is snapshot-based and zero-latency. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.

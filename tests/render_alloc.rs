@@ -21,6 +21,7 @@ fn device_buffer_adapter_does_not_allocate_or_free() {
         tracks: vec![Track {
             mode: None,
             clips: None,
+            effects: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,
@@ -75,6 +76,7 @@ fn prepared_render_blocks_do_not_allocate_or_free() {
             .map(|i| Track {
                 mode: None,
                 clips: None,
+                effects: None,
                 id: i.to_string(),
                 device: Device::Sine {
                     frequency_hz: 100.0 + i as f64,
@@ -172,4 +174,35 @@ fn preloaded_audio_clip_callbacks_do_not_allocate_or_free() {
     WATCH.set(false);
     assert_eq!(OPERATIONS.get(), 0);
     assert_eq!(playback.remaining_frames(), 0);
+}
+
+#[test]
+fn full_gain_chains_do_not_allocate_during_render_seek_or_loop() {
+    let tracks: Vec<_> = (0..64)
+        .map(|i| {
+            serde_json::json!({
+                "id":format!("t{i}"), "mode":"continuous", "clips":[],
+                "device":{"kind":"sine","frequency_hz":100.0+i as f64,"gain":0.01},
+                "effects":(0..16).map(|j| serde_json::json!({
+                    "kind":"gain","id":format!("g{j}"),"gain":0.9,"bypass":false
+                })).collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "schema_version":3,"sample_rate":8000,"tempo_milli_bpm":120000,"tracks":tracks
+    }))
+    .unwrap();
+    let mut engine = Engine::prepare(&session).unwrap();
+    let mut output = [[0.0; 2]; 33];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    engine.set_loop(Some((1, 17))).unwrap();
+    for _ in 0..20 {
+        engine.seek(10).unwrap();
+        engine.render_block(&mut output);
+    }
+    WATCH.set(false);
+    assert_eq!(OPERATIONS.get(), 0);
+    assert!(output.iter().any(|frame| frame[0] != 0.0));
 }

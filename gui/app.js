@@ -220,7 +220,7 @@
     const dirty = isDirty();
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
-    text.textContent = unsupportedSession ? 'Note session · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
+    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
     const locked = nativeLocked();
     applyButton.disabled = unsupportedSession || busy || locked || !dirty;
     saveButton.disabled = unsupportedSession || busy || locked;
@@ -641,12 +641,12 @@
       const response = await request('/api/session', { method: 'GET' });
       const result = await response.json();
       const session = result.session || result;
-      if (session && session.schema_version === 2) {
+      if (session && (session.schema_version === 2 || session.schema_version === 3)) {
         unsupportedSession = true;
         emptyEl.hidden = true;
         $('#track-count').textContent = `${session.tracks.length} ${session.tracks.length === 1 ? "track" : "tracks"} · read-only`;
         selectSampleRate(session.sample_rate);
-        setNotice('This session uses the note-session format. Use the scripting interface; this editor supports continuous sine sessions only.', true);
+        setNotice('This session uses a timeline or effect format. Use the scripting interface; this editor supports continuous sine sessions only.', true);
         return;
       }
       const validation = validateSession(session);

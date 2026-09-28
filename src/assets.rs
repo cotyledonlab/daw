@@ -12,6 +12,7 @@ pub const MAX_ASSETS: usize = 128;
 
 #[derive(Debug)]
 pub struct PreparedAudioClip {
+    pub track_index: usize,
     pub start: u64,
     pub end: u64,
     pub source_offset: usize,
@@ -20,6 +21,7 @@ pub struct PreparedAudioClip {
 }
 
 struct AudioReference<'a> {
+    track_index: usize,
     track_id: &'a str,
     clip_id: &'a str,
     start: u64,
@@ -32,7 +34,7 @@ struct AudioReference<'a> {
 pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
     session.validate()?;
     let mut references = Vec::new();
-    for track in &session.tracks {
+    for (track_index, track) in session.tracks.iter().enumerate() {
         let Device::Audio { gain: track_gain } = &track.device else {
             continue;
         };
@@ -41,6 +43,7 @@ pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
                 continue;
             };
             references.push(AudioReference {
+                track_index,
                 track_id: &track.id,
                 clip_id: &audio.id,
                 start: audio.start_frame,
@@ -131,6 +134,7 @@ pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
             .checked_add(reference.length)
             .ok_or_else(|| format!("audio clip {} timeline end overflows", reference.clip_id))?;
         prepared.push(PreparedAudioClip {
+            track_index: reference.track_index,
             start: reference.start,
             end,
             source_offset,

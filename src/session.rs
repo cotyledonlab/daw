@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const SCHEMA_VERSION_2: u32 = 2;
+pub const SCHEMA_VERSION_3: u32 = 3;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -13,6 +14,8 @@ pub const MAX_GAIN: f64 = 1.0;
 pub const MAX_FRAME: u64 = 9_007_199_254_740_991;
 pub const MAX_CLIPS: usize = 1_024;
 pub const MAX_NOTES: usize = 16_384;
+pub const MAX_EFFECTS_PER_TRACK: usize = 16;
+pub const MAX_EFFECT_GAIN: f64 = 4.0;
 pub const MAX_VOICES: usize = 64;
 pub const DEFAULT_TEMPO_MILLI_BPM: u32 = 120_000;
 
@@ -57,6 +60,26 @@ pub struct Track {
         deserialize_with = "deserialize_nonnull"
     )]
     pub clips: Option<Vec<Clip>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nonnull"
+    )]
+    pub effects: Option<Vec<Effect>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Effect {
+    Gain { id: String, gain: f64, bypass: bool },
+}
+
+impl Effect {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Gain { id, .. } => id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -212,9 +235,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_2).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_3).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1 or 2",
+                "unsupported schema_version {}; expected 1, 2, or 3",
                 self.schema_version
             ));
         }
@@ -229,17 +252,18 @@ impl Session {
                 || self
                     .tracks
                     .iter()
-                    .any(|t| t.mode.is_some() || t.clips.is_some())
+                    .any(|t| t.mode.is_some() || t.clips.is_some() || t.effects.is_some())
             {
-                return Err("schema_version 1 does not accept timeline fields".into());
+                return Err("schema_version 1 does not accept timeline or effect fields".into());
             }
         } else if !self
             .tempo_milli_bpm
             .is_some_and(|t| (20_000..=300_000).contains(&t))
         {
-            return Err(
-                "schema_version 2 requires tempo_milli_bpm between 20000 and 300000".into(),
-            );
+            return Err(format!(
+                "schema_version {} requires tempo_milli_bpm between 20000 and 300000",
+                self.schema_version
+            ));
         }
 
         let mut track_ids = HashSet::new();
@@ -277,13 +301,48 @@ impl Session {
             if self.schema_version == SCHEMA_VERSION {
                 continue;
             }
-            let mode = track
-                .mode
-                .ok_or_else(|| "schema_version 2 requires track mode".to_string())?;
-            let clips = track
-                .clips
-                .as_ref()
-                .ok_or_else(|| "schema_version 2 requires track clips".to_string())?;
+            match (self.schema_version, &track.effects) {
+                (SCHEMA_VERSION_2, Some(_)) => {
+                    return Err("schema_version 2 does not accept effects".into());
+                }
+                (SCHEMA_VERSION_3, None) => {
+                    return Err("schema_version 3 requires track effects".into());
+                }
+                _ => {}
+            }
+            if let Some(effects) = &track.effects {
+                if effects.len() > MAX_EFFECTS_PER_TRACK {
+                    return Err(format!(
+                        "at most {MAX_EFFECTS_PER_TRACK} effects per track are supported"
+                    ));
+                }
+                let mut effect_ids = HashSet::new();
+                for effect in effects {
+                    if !valid_id(effect.id()) || !effect_ids.insert(effect.id()) {
+                        return Err("effect IDs must be unique within a track, nonempty, and at most 128 UTF-8 bytes".into());
+                    }
+                    match effect {
+                        Effect::Gain { gain, .. }
+                            if !gain.is_finite()
+                                || !(MIN_GAIN..=MAX_EFFECT_GAIN).contains(gain) =>
+                        {
+                            return Err(format!(
+                                "effect gain must be finite and between 0 and {MAX_EFFECT_GAIN}"
+                            ));
+                        }
+                        Effect::Gain { .. } => {}
+                    }
+                }
+            }
+            let mode = track.mode.ok_or_else(|| {
+                format!("schema_version {} requires track mode", self.schema_version)
+            })?;
+            let clips = track.clips.as_ref().ok_or_else(|| {
+                format!(
+                    "schema_version {} requires track clips",
+                    self.schema_version
+                )
+            })?;
             match mode {
                 TrackMode::Continuous => {
                     if !matches!(&track.device, Device::Sine { .. }) {

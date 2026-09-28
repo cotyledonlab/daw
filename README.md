@@ -87,6 +87,18 @@ This creates a project under ignored `output/`, with a stereo PCM WAV, two clips
 
 Assets use paths relative to the session file's folder. Only integer PCM16/24/32 mono/stereo WAVs at the session rate are supported. Files are preloaded, with 32 MiB per-file and 128 MiB decoded-session limits. Saving an audio session must stay in the same project folder; asset copying is not implemented. See [audio asset rules](docs/decisions/audio-assets.md) for the exact contract.
 
+## Serial track effects
+
+Schema v3 adds per-track gain effects, applied in array order before the final mix. Gain ranges from 0 to 4; each effect has a saved ID and bypass setting. There is no intermediate clipping. V1/v2 sessions keep their existing behavior and are never silently upgraded.
+
+Play the [gain-chain example](examples/sessions/gain-chain.json) with the native build:
+
+```sh
+target/debug/daw play examples/sessions/gain-chain.json 2 0.25
+```
+
+Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Automation and GUI effect editing remain pending. See the [effect contract](docs/decisions/track-effects.md).
+
 ## Develop
 
 ```sh
@@ -101,4 +113,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T07b seek and loop transport is complete. The next ticket is T08 device chains and automation in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T08a serial track gain effects are complete. The next ticket is T08b parameter automation in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

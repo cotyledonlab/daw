@@ -1,12 +1,16 @@
 //! Prepared sine and note rendering. All scheduling storage is allocated before playback.
 use crate::{
     assets::{self, PreparedAudioClip},
-    session::{Clip, Device, MAX_FRAME, MAX_VOICES, Session, TrackMode, envelope_frames},
+    session::{
+        Clip, Device, Effect, MAX_FRAME, MAX_TRACKS, MAX_VOICES, Session, TrackMode,
+        envelope_frames,
+    },
 };
 use std::f64::consts::TAU;
 
 #[derive(Debug, Clone, Copy)]
 struct Voice {
+    track_index: usize,
     phase: f64,
     increment: f64,
     gain: f64,
@@ -14,6 +18,7 @@ struct Voice {
 
 #[derive(Debug)]
 struct PreparedNote {
+    track_index: usize,
     start: u64,
     off: u64,
     end: u64,
@@ -32,6 +37,8 @@ struct ActiveNote {
 #[derive(Debug)]
 pub struct Engine {
     voices: Vec<Voice>,
+    // Schema-v3 tracks sum into independent stereo buses before serial effects.
+    effect_gains: Option<Vec<Vec<f64>>>,
     audio: Vec<PreparedAudioClip>,
     audio_starts: Vec<usize>,
     next_audio: usize,
@@ -58,12 +65,13 @@ impl Engine {
         let envelope = envelope_frames(session.sample_rate);
         let mut voices = Vec::new();
         let mut ordered = Vec::new();
-        for track in &session.tracks {
+        for (track_index, track) in session.tracks.iter().enumerate() {
             let Device::Sine { frequency_hz, gain } = track.device else {
                 continue;
             };
             if track.mode != Some(TrackMode::Sequenced) {
                 voices.push(Voice {
+                    track_index,
                     phase: 0.0,
                     increment: TAU * frequency_hz / rate,
                     gain,
@@ -80,6 +88,7 @@ impl Engine {
                     ordered.push((
                         (&track.id, &clip.id, &note.id),
                         PreparedNote {
+                            track_index,
                             start,
                             off,
                             end: (off + envelope).min(clip.start_frame + clip.length_frames),
@@ -95,8 +104,26 @@ impl Engine {
         let notes: Vec<_> = ordered.into_iter().map(|(_, note)| note).collect();
         let mut starts: Vec<_> = (0..notes.len()).collect();
         starts.sort_by_key(|&index| (notes[index].start, index));
+        let effect_gains = (session.schema_version == 3).then(|| {
+            session
+                .tracks
+                .iter()
+                .map(|track| {
+                    track
+                        .effects
+                        .as_ref()
+                        .expect("validated effects")
+                        .iter()
+                        .filter_map(|effect| match effect {
+                            Effect::Gain { gain, bypass, .. } => (!bypass).then_some(*gain),
+                        })
+                        .collect()
+                })
+                .collect()
+        });
         Ok(Self {
             voices,
+            effect_gains,
             audio,
             audio_starts,
             next_audio: 0,
@@ -232,9 +259,16 @@ impl Engine {
             }
             self.update_notes();
             self.update_audio();
+            let mut track_frames = [[0.0; 2]; MAX_TRACKS];
             let mut mixed = 0.0;
             for voice in &mut self.voices {
-                mixed += voice.phase.sin() * voice.gain;
+                let sample = voice.phase.sin() * voice.gain;
+                if self.effect_gains.is_some() {
+                    track_frames[voice.track_index][0] += sample;
+                    track_frames[voice.track_index][1] += sample;
+                } else {
+                    mixed += sample;
+                }
                 voice.phase += voice.increment;
                 if voice.phase >= TAU {
                     voice.phase -= TAU;
@@ -248,7 +282,13 @@ impl Engine {
                     note.release_level
                         * (1.0 - (self.frame_position - note.off) as f64 / self.envelope)
                 };
-                mixed += voice.phase.sin() * note.gain * envelope;
+                let sample = voice.phase.sin() * note.gain * envelope;
+                if self.effect_gains.is_some() {
+                    track_frames[note.track_index][0] += sample;
+                    track_frames[note.track_index][1] += sample;
+                } else {
+                    mixed += sample;
+                }
                 voice.phase += note.increment;
                 if voice.phase >= TAU {
                     voice.phase -= TAU;
@@ -259,8 +299,24 @@ impl Engine {
                 let clip = &self.audio[index];
                 let source = clip.source_offset + (self.frame_position - clip.start) as usize;
                 let samples = clip.frames[source];
-                stereo[0] += samples[0] * clip.gain;
-                stereo[1] += samples[1] * clip.gain;
+                if self.effect_gains.is_some() {
+                    track_frames[clip.track_index][0] += samples[0] * clip.gain;
+                    track_frames[clip.track_index][1] += samples[1] * clip.gain;
+                } else {
+                    stereo[0] += samples[0] * clip.gain;
+                    stereo[1] += samples[1] * clip.gain;
+                }
+            }
+            if let Some(chains) = &self.effect_gains {
+                for (frame, gains) in track_frames.iter_mut().zip(chains) {
+                    // Preserve declared order, with no clipping between effects.
+                    for gain in gains {
+                        frame[0] *= gain;
+                        frame[1] *= gain;
+                    }
+                    stereo[0] += frame[0];
+                    stereo[1] += frame[1];
+                }
             }
             if stereo.iter().any(|sample| sample.abs() > 1.0) {
                 clipped_frames += 1;

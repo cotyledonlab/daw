@@ -42,6 +42,13 @@ fn capabilities() -> Value {
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
+        "effects": {
+            "schema_version": 3, "kinds": ["gain"],
+            "max_per_track": session::MAX_EFFECTS_PER_TRACK,
+            "gain": {"minimum": 0, "maximum": session::MAX_EFFECT_GAIN, "default": 1.0, "unit": "linear"},
+            "bypass": true, "latency_frames": 0, "automation": false,
+            "routing": "serial_track_stereo", "clipping": "master_only"
+        },
         "timeline_transport": {"native_only": true, "max_frame": session::MAX_FRAME, "note_chase": false, "persisted": false},
         "audio_clips": {
             "schema_version": 2, "formats": ["wav_pcm16", "wav_pcm24", "wav_pcm32"],
@@ -51,7 +58,7 @@ fn capabilities() -> Value {
             "save_outside_project": false
         },
         "session_schema_version": session::SCHEMA_VERSION,
-        "supported_session_schema_versions": [1, 2],
+        "supported_session_schema_versions": [1, 2, 3],
         "sequencing": {
             "schema_version": 2, "offline": true,
             "native_requires_matching_sample_rate": true,
@@ -86,14 +93,14 @@ fn capabilities() -> Value {
         },
         "device_metadata": {
             "audio": {
-                "session_schema_versions": [2], "track_modes": ["sequenced"],
+                "session_schema_versions": [2, 3], "track_modes": ["sequenced"],
                 "description": "Preloaded PCM WAV clips on a sequenced v2 track.",
                 "parameters": {"gain": {"type":"number", "unit":"linear", "default":1.0,
                     "minimum":0.0,"maximum":1.0,"finite":true,"required":true,
                     "description":"Track amplitude multiplied by each audio clip gain."}}
             },
             "sine": {
-                "session_schema_versions": [1, 2],
+                "session_schema_versions": [1, 2, 3],
                 "description": "Sine oscillator mixed equally into left and right channels.",
                 "parameters": {
                     "frequency_hz": {

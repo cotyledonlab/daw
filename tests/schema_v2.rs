@@ -23,6 +23,7 @@ fn track(mode: TrackMode, clips: Vec<NoteClip>) -> Track {
         },
         mode: Some(mode),
         clips: Some(clips.into_iter().map(Clip::Notes).collect()),
+        effects: None,
     }
 }
 
@@ -66,6 +67,7 @@ fn audio_track(mode: TrackMode, clips: Vec<daw::session::AudioClip>) -> Track {
         device: Device::Audio { gain: 0.5 },
         mode: Some(mode),
         clips: Some(clips.into_iter().map(Clip::Audio).collect()),
+        effects: None,
     }
 }
 

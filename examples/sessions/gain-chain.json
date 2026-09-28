@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "sample_rate": 48000,
+  "tempo_milli_bpm": 120000,
+  "tracks": [
+    {
+      "id": "lead",
+      "mode": "sequenced",
+      "device": { "kind": "sine", "frequency_hz": 440, "gain": 0.3 },
+      "effects": [
+        { "kind": "gain", "id": "boost", "gain": 2, "bypass": false },
+        { "kind": "gain", "id": "trim", "gain": 0.25, "bypass": false },
+        { "kind": "gain", "id": "muted-if-enabled", "gain": 0, "bypass": true }
+      ],
+      "clips": [
+        {
+          "kind": "notes", "id": "phrase", "start_frame": 0, "length_frames": 96000,
+          "notes": [
+            { "id": "c", "start_frame": 0, "duration_frames": 18000, "frequency_hz": 261.625565, "velocity": 0.8 },
+            { "id": "e", "start_frame": 24000, "duration_frames": 18000, "frequency_hz": 329.627557, "velocity": 0.8 },
+            { "id": "g", "start_frame": 48000, "duration_frames": 18000, "frequency_hz": 391.995436, "velocity": 0.8 }
+          ]
+        }
+      ]
+    }
+  ]
+}
