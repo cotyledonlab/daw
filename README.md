@@ -135,6 +135,18 @@ target/debug/daw play path/to/vst3-session.json 60 0.25
 
 The experimental worker creates, processes, and destroys plugins on one dedicated DSP thread. A fixed 1024-frame SPSC queue feeds the CoreAudio callback, which consumes prepared audio without foreign calls, allocation, or locks. The queue holds about 21.3 ms at 48 kHz, in addition to device latency. Parameter edits enter a bounded queue of eight commands; one command is applied at the start of a successfully processed 256-frame block. The worker also has one in-flight command, so queued audio plus that block adds at most about 26.7 ms before device latency. A paused edit can remain pending until playback resumes. Acceptance commits the normalized base value and advances the session revision immediately; `transport.status` reports the applied revision and block-start frame after DSP succeeds. Stop or worker failure cancels edits not yet delivered to DSP, while their accepted base values remain in the session and are saved. Applying an edit does not recapture plugin controller/component state. Underruns output silence without advancing the timeline; `plugin_worker_underruns` is reported in transport status and CLI output. Startup has a five-second timeout. Shutdown waits two seconds and then detaches a hung in-process worker, reporting an explicit stop failure; in-process plugin crashes can terminate the engine. Offline rendering retains its separate child-process isolation. A silent ValhallaFreqEcho check on MacBook Air Speakers at 48 kHz passed three play/pause/resume/stop cycles and session replacement, with zero underruns and zero callbacks over budget; acoustic delivery was not verified.
 
+## Audio Unit lifecycle proof (macOS)
+
+A standalone [AUv2 proof](native/au/README.md) discovers registered Apple effects and renders Apple AULowpass with parameter and state restoration checks:
+
+```sh
+python3 native/au/build.py
+python3 -m native.au.probe
+python3 -m unittest native.au.test_probe
+```
+
+This opens no audio device and runs separately from the DAW. Audio Unit session loading, WAV export through an AU, live playback, and GUI controls remain unavailable. The [adapter decision](docs/decisions/audio-units.md) defines the next integration slice.
+
 ## Develop
 
 ```sh

@@ -212,6 +212,22 @@ Deterministic worker tests verify gain changes at block boundaries without phase
 
 Start with desktop Audio Units: discovery, instantiation, formats, resources, cached render blocks, parameters/state, teardown. Contain Objective-C and window lifecycle in native code. Acceptance: known Apple AU renders and restores state; portable builds still work; unsupported units fail clearly. No AUv3 extensions.
 
+### T10a: standalone Apple Audio Unit lifecycle — complete
+
+**Depends on:** T09g. **Owner:** primary native/lifecycle review; Luna bounded child harness/tests/docs.
+
+`native/au` discovers registered Apple effects and processes the exact AUv2 tuple `aufx/lpas/appl` through stereo planar float32 at 48 kHz. The 256-frame synthetic-input callback is preallocated; no hardware stream opens. Three independent instances verify cutoff control, bounded binary property-list state, fresh-instance restoration, filter-history reset, and checked teardown. The Python owner limits child time/output and kills its process group on failure. This is a standalone proof; T10 overall remains incomplete and the DAW has no AU session or playback capability.
+
+The host found 23 Apple effects. Apple AULowpass's low-cutoff state was 167 bytes and restored with zero maximum sample error. Ten child-harness/native tests pass, including corruption, timeout/crash, output bounds, unsupported identity and descendant cleanup. Five ASan/UBSan lifecycle runs completed without diagnostics. Portable Rust fmt/clippy/tests pass and the feature-enabled preview binary remains available. See the [AU decision](decisions/audio-units.md) for evidence and exclusions.
+
+### T10b: bounded offline AU session adapter
+
+**Depends on:** T10a. **Owner:** primary schema/worker integration; Luna independent fixtures/examples/docs after the contract is fixed.
+
+Derive an exact component-tuple identity, native parameter IDs/ranges/units and bounded property-list state from the working proof. Decide the new schema version explicitly; old versions must reject AU effects. First support the known stereo Apple effect and reject unsupported components/layouts/rates/latency or events. Replace the fixed synthetic source with bounded DAW-owned track PCM in an owned child, and validate state, parameters and buffers before session commit or output creation. Keep native AU playback and GUI edits unavailable until separate tickets implement them.
+
+Acceptance: a scripted sine session exports through the known AU, parameter changes affect output, save/load restores native values and state, and malformed identity/state/child failures preserve session/revision and create no partial output. Portable builds parse only supported contract shapes and reject unavailable hosting explicitly. Preserve VST3 and built-in behavior; derive any common processor interface only from both implemented adapters. Split bounded worker decoder/tests, scripting example/persistence tests and docs for Luna; the primary owns integration and reviews all foreign lifecycle/error paths.
+
 ### T11: SuperCollider jobs and control
 
 **Depends on:** S0 for offline spike; T08b for track integration. **Owner:** Luna process harness, stronger-model audio-routing review. **Files:** proposed `src/runtimes/supercollider.rs`, runtime tests, example score.
@@ -232,4 +248,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T09g is complete experimentally. Continue with T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
+T10a is complete as a standalone AUv2 lifecycle proof. Continue with T10b transactional offline AU session integration. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
