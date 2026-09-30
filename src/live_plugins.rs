@@ -233,6 +233,7 @@ fn prepare<'a>(
                     gain.effects = Some(vec![effect.clone()]);
                     effects.push((index, Processor::Gain(PreparedChain::prepare(&gain))));
                 }
+                Effect::Au { .. } => return Err("native AU playback is unavailable".into()),
                 Effect::Vst3 { bypass: true, .. } => {}
                 Effect::Vst3 { .. } => effects.push((
                     index,

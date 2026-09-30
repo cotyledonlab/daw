@@ -69,7 +69,8 @@ fn capabilities() -> Value {
             "save_outside_project": false
         },
         "session_schema_version": session::SCHEMA_VERSION,
-        "supported_session_schema_versions": [1, 2, 3, 4],
+        "supported_session_schema_versions": [1, 2, 3, 4, 5],
+        "offline_au": {"implemented":cfg!(all(feature="au-offline", target_os="macos")), "schema_version":5, "sample_rate":48000, "max_seconds":10, "native_playback":false, "supported_components":[{"type":"aufx","subtype":"lpas","manufacturer":"appl"}], "parameter_values":"native", "automation":false, "max_state_bytes":65536, "worker_timeout_seconds":15},
         "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": cfg!(all(feature = "vst3-live", target_os = "macos")), "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
         "sequencing": {
             "schema_version": 2, "offline": true,
@@ -105,14 +106,14 @@ fn capabilities() -> Value {
         },
         "device_metadata": {
             "audio": {
-                "session_schema_versions": [2, 3, 4], "track_modes": ["sequenced"],
+                "session_schema_versions": [2, 3, 4, 5], "track_modes": ["sequenced"],
                 "description": "Preloaded PCM WAV clips on a sequenced v2 track.",
                 "parameters": {"gain": {"type":"number", "unit":"linear", "default":1.0,
                     "minimum":0.0,"maximum":1.0,"finite":true,"required":true,
                     "description":"Track amplitude multiplied by each audio clip gain."}}
             },
             "sine": {
-                "session_schema_versions": [1, 2, 3, 4],
+                "session_schema_versions": [1, 2, 3, 4, 5],
                 "description": "Sine oscillator mixed equally into left and right channels.",
                 "parameters": {
                     "frequency_hz": {
@@ -393,9 +394,9 @@ impl Controller {
                 let effect_index = effects
                     .iter()
                     .position(|effect| match effect {
-                        session::Effect::Gain { id, .. } | session::Effect::Vst3 { id, .. } => {
-                            id == &p.effect_id
-                        }
+                        session::Effect::Gain { id, .. }
+                        | session::Effect::Vst3 { id, .. }
+                        | session::Effect::Au { id, .. } => id == &p.effect_id,
                     })
                     .ok_or_else(|| ControlError::new("invalid_params", "effect not found"))?;
                 let session::Effect::Vst3 {
@@ -480,9 +481,9 @@ impl Controller {
                     .unwrap_or_default()
                     .iter()
                     .find(|effect| match effect {
-                        session::Effect::Gain { id, .. } | session::Effect::Vst3 { id, .. } => {
-                            id == &p.effect_id
-                        }
+                        session::Effect::Gain { id, .. }
+                        | session::Effect::Vst3 { id, .. }
+                        | session::Effect::Au { id, .. } => id == &p.effect_id,
                     })
                     .ok_or_else(|| ControlError::new("invalid_params", "effect not found"))?;
                 if !matches!(effect, session::Effect::Vst3 { .. }) {
@@ -774,6 +775,12 @@ impl Controller {
             _ => {
                 let _: EmptyParams = params(value)?;
             }
+        }
+        if method == "transport.play" && crate::hosting::has_au(&self.session) {
+            return Err(ControlError::new(
+                "audio_unavailable",
+                "AU sessions support offline rendering only",
+            ));
         }
         if method == "transport.play"
             && crate::hosting::has_plugins(&self.session)

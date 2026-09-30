@@ -123,7 +123,7 @@ The example commands must be sent interactively: poll status until `timeline_com
 
 Schema v2 implements the note subset of the [timeline contract](decisions/timeline.md): required root `tempo_milli_bpm`, required per-track `mode` and `clips`, and `kind: "notes"` clips containing frame-positioned note gates. See [the runnable arpeggio](../examples/sessions/arpeggio.json) for the full shape. Schema-v1 fields and behavior remain unchanged, and no load silently upgrades them.
 
-`capabilities.supported_session_schema_versions` is `[1,2,3]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
+`capabilities.supported_session_schema_versions` is `[1,2,3,4,5]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
 
 Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips and native seek/loop controls are supported as described above; effect automation requires schema v3.
 
@@ -193,7 +193,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
-| `plugin_error` | VST3 validation, metadata, processing worker, or plugin operation failed |
+| `plugin_error` | VST3 or AU validation, processing worker, or plugin operation failed |
 | `internal_error` | Unexpected session serialization failure |
 
 ## Complete command examples
@@ -230,6 +230,14 @@ At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs
 Build `--features vst3-offline` on macOS and build the offline worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
 
 Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. The GUI upload guard accepts only v1/v4 continuous sine session shapes; plugin sessions still require the Rust validation and preparation described above.
+
+## Schema-v5 offline Audio Unit effects
+
+V5 retains the v4 timeline fields and built-in/VST3 behavior, and adds AUv2 effects. V1–v4 reject AU effects. AU effects use the exact shape `{"kind":"au","id":"lowpass","bypass":false,"component_type":"aufx","component_subtype":"lpas","component_manufacturer":"appl","state_hex":"","parameters":[{"id":0,"value":10000.0}]}`. The only accepted component is Apple's AULowpass (`aufx/lpas/appl`). All fields are required, unknown fields and null are rejected, IDs are unique within a track, state is even-length hex, and parameter IDs are unsigned 32-bit integers with finite values validated against the component's native metadata range. AU parameters have no automation points; the `value` is in the AU's native units, not a normalized range.
+
+Build on macOS with `--features au-offline` and build the worker with `python3 native/au/build.py`. The worker path comes from absolute `DAW_AU_HOST`, falling back to `output/au-spike/au-host`; the feature flag alone does not install or build the worker. Portable builds parse and validate v5 but return `plugin_error` when AU preparation/rendering is requested. `capabilities.offline_au.implemented` reports compiled host support, not worker presence or plugin compatibility. No separate command is added: use `session.replace`, `session.load`, `session.save`, and `render`.
+
+AU processing requires 48 kHz, stereo planar float32, blocks up to 256 frames, and zero reported latency. A render containing plugins is limited to ten seconds. At most eight foreign effects and 64 parameters per effect are accepted. AU state is capped at 64 KiB per effect; aggregate foreign state is capped at 256 KiB. An empty state captures initial component state during successful preparation; native parameter writes are read back before preparation succeeds; saved bases override restored state. Each render restores saved state and parameter bases, then resets filter history before processing. The owned child has a 15-second timeout, 4,000,000-byte stdout limit, and 64 KiB stderr limit. Validate/prepare fully before session commit, and finish render processing before creating output. Failures return `plugin_error` and preserve session/revision or leave no partial output. AUv3, other components, event buses, instruments, plugin windows, parameter automation, and AU live playback are unsupported.
 
 ### VST3 parameter metadata inspection
 
@@ -270,6 +278,6 @@ An owned in-process worker creates, processes, and destroys plugin instances on 
 
 Plugin renders accept 0.001–10 seconds. The renderer preserves headroom between serial effects and across tracks, then clips once at the master to PCM16. Source/assets and all child processing complete before destination creation. Failures create no output and preserve session/revision; the usual fresh-path rule still applies. Each child owns its process group and is terminated/reaped; stdout audio/state and stderr diagnostics are bounded. This is crash containment, not a security sandbox or realtime proof. Plugin code runs with caller permissions. See [the VST3 example](../examples/vst3_demo.py).
 
-### Audio Unit proof boundary
+### Standalone Audio Unit lifecycle proof
 
-The standalone `native/au` AUv2 lifecycle probe has its own schema-version-1 result envelope and owned process harness. It is not a DAW JSONL command or a supported session device/effect. No AU protocol method, capability flag, schema shape, GUI import or playback route is added in T10a. See [the proof](../native/au/README.md) and [integration boundary](decisions/audio-units.md). Continue to use the implemented VST3 paths above for hosted session effects.
+The original `native/au.probe` AUv2 lifecycle probe remains a separate diagnostic with its own schema-version-1 result envelope and owned process harness. It opens no audio device and is distinct from schema-v5 session processing. See [the worker and proof notes](../native/au/README.md) and [the AU adapter contract](decisions/audio-units.md).

@@ -220,13 +220,17 @@ Start with desktop Audio Units: discovery, instantiation, formats, resources, ca
 
 The host found 23 Apple effects. Apple AULowpass's low-cutoff state was 167 bytes and restored with zero maximum sample error. Ten child-harness/native tests pass, including corruption, timeout/crash, output bounds, unsupported identity and descendant cleanup. Five ASan/UBSan lifecycle runs completed without diagnostics. Portable Rust fmt/clippy/tests pass and the feature-enabled preview binary remains available. See the [AU decision](decisions/audio-units.md) for evidence and exclusions.
 
-### T10b: bounded offline AU session adapter
+### T10b: bounded offline AU session adapter — complete
 
 **Depends on:** T10a. **Owner:** primary schema/worker integration; Luna independent fixtures/examples/docs after the contract is fixed.
 
 Derive an exact component-tuple identity, native parameter IDs/ranges/units and bounded property-list state from the working proof. Decide the new schema version explicitly; old versions must reject AU effects. First support the known stereo Apple effect and reject unsupported components/layouts/rates/latency or events. Replace the fixed synthetic source with bounded DAW-owned track PCM in an owned child, and validate state, parameters and buffers before session commit or output creation. Keep native AU playback and GUI edits unavailable until separate tickets implement them.
 
 Acceptance: a scripted sine session exports through the known AU, parameter changes affect output, save/load restores native values and state, and malformed identity/state/child failures preserve session/revision and create no partial output. Portable builds parse only supported contract shapes and reject unavailable hosting explicitly. Preserve VST3 and built-in behavior; derive any common processor interface only from both implemented adapters. Split bounded worker decoder/tests, scripting example/persistence tests and docs for Luna; the primary owns integration and reviews all foreign lifecycle/error paths.
+
+T10b delivers schema-v5 AU state/native parameter bases and owned-child processing for Apple AULowpass. Real track PCM replaces the proof source; state dictionaries must identify the selected component, parameter writes are checked against native metadata and read back, and filter history resets before each render. Session preparation and complete effect rendering precede commit/output creation. Native AU playback and v5 GUI imports are explicitly rejected. Old schemas and VST3 behavior remain distinct.
+
+Verification: six real controller tests cover cutoff response, exact saved/state-only restoration, corrupt/mismatched property lists, invalid identity/parameters, serial bypass, malformed/oversized worker output and timeout rollback. Five portable schema/rollback tests (four when AU hosting is enabled) cover strict fields, unavailable-host rollback and shared VST3/AU count/state limits. The standalone ten-test lifecycle suite remains passing. Portable and combined feature fmt/clippy/tests pass, as do four worker codec tests, both ignored VST3 DSP-owner tests, 20 GUI bridge tests and 13 editor/live-player tests. The isolated browser successfully applied a sine session and exported a WAV without touching the user preview. A scripted session render through the ASan/UBSan host completed without diagnostics. VST3 installed-plugin/hardware checks remain separately conditional. This supports only the known Apple effect; other units, native AU playback and GUI controls remain future work.
 
 ### T11: SuperCollider jobs and control
 
@@ -248,4 +252,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T10a is complete as a standalone AUv2 lifecycle proof. Continue with T10b transactional offline AU session integration. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
+T10b is complete for scripted offline Apple AULowpass sessions. Continue with T11's bounded SuperCollider NRT job proof, then transactional runtime track integration; install/runtime availability must be verified before claiming support. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.

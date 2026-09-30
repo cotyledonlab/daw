@@ -233,7 +233,7 @@ class ServerIntegrationTests(unittest.TestCase):
     def test_note_session_upload_is_rejected_before_replacing_engine_session(self):
         status, _, _ = self.post("/api/session", {"session": SESSION})
         self.assertEqual(status, 200)
-        for version in (2, 3):
+        for version in (2, 3, 5):
             with self.subTest(version=version):
                 timeline_session = {"schema_version": version, "sample_rate": 48000,
                                     "tempo_milli_bpm": 120000, "tracks": []}

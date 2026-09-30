@@ -1,33 +1,24 @@
-# Standalone Audio Unit proof
+# Audio Unit support
 
-This macOS-only AUv2 spike checks that a desktop Audio Unit can be found, instantiated, configured, rendered offline in bounded blocks, and restored from saved state. It is an isolated host experiment; it does not add Audio Unit support to the DAW session model, renderer, native player, or GUI.
+`native/au` contains the macOS AUv2 child worker used by schema-v5 offline AU effects and the earlier standalone lifecycle probe. The DAW adapter supports Apple's AULowpass only (`aufx/lpas/appl`); scanning registered components does not imply support for them.
 
-## Build and run
+## Build and verify
 
 ```sh
 python3 native/au/build.py
-output/au-spike/au-host scan
-python3 -m native.au.probe
+cargo build --locked --features au-offline
+python3 examples/au_demo.py
+python3 -m unittest native.au.test_daw native.au.test_probe
 ```
 
-The build uses the system `xcrun clang++` in C++20 mode and links only the macOS AudioToolbox and CoreFoundation frameworks. The executable is written under ignored `output/au-spike/`. `scan` lists at most 128 registered Apple effect components. The Python wrapper runs the default Apple AULowpass proof in an owned child process. To select a component explicitly, pass its three four-character ASCII fields:
+The build writes `output/au-spike/au-host`. Set `DAW_AU_HOST` to an absolute executable path to use another worker. `au-offline` enables the Rust adapter but does not build/install the worker. `python3 -m native.au.probe` remains the standalone lifecycle proof; it opens no device and its own version-1 result envelope is separate from JSONL.
 
-```sh
-python3 -m native.au.probe aufx lpas appl
-```
+## Adapter contract
 
-The scanner can report other registered Apple effects, but processing is deliberately limited to `aufx` / `lpas` / `appl` (Apple AULowpass). The probe is not a general plugin compatibility test. The wrapper bounds the child to 10 seconds, 256 KiB stdout, and 64 KiB stderr, and terminates its process group on timeout or excess output. Results use a standalone `schema_version: 1` JSON envelope with structured failures; this is not the DAW JSONL protocol.
+Sessions use schema v5 and the `au` effect shape documented in [the protocol](../../docs/PROTOCOL.md). Processing uses 48 kHz stereo planar float32, blocks up to 256 frames, zero latency, and at most ten seconds per render. The owned worker is bounded to 15 seconds, 4,000,000 bytes of stdout, 64 KiB stderr, and the session's 64 KiB per-effect / 256 KiB aggregate state limits. Only the exact AULowpass identity is accepted. Session preparation completes before replacement commits; child rendering completes before output creation.
 
-## What the proof exercises
+## Original proof evidence
 
-It configures one stereo, non-interleaved float32 input/output at 48 kHz with a 256-frame maximum block. A preallocated input callback supplies a 1 kHz sine at amplitude 0.1; no hardware device is opened. Each instance renders 4096 frames through `AudioUnitRender`. The proof reads the cutoff parameter metadata, compares 10 kHz and 200 Hz renders, captures the latter instance's `kAudioUnitProperty_ClassInfo` state as a bounded binary property list, and restores that state into a fresh third instance. It resets filter history before each render, checks that the restored output matches the original low-cutoff output to less than 1e-6 maximum sample error, and requires the high-cutoff RMS to exceed the low-cutoff RMS by five times. All three instances are uninitialized and disposed before reporting success.
+The isolated T10a probe found 23 registered Apple effects on its test host. It configured three AULowpass instances, compared 10 kHz and 200 Hz cutoff renders, captured/restored binary property-list state, reset filter history, and checked teardown. RMS was 0.070968 at 10 kHz and 0.002876 at 200 Hz; restored samples matched within 1e-6 maximum absolute error. Five ASan/UBSan lifecycle runs completed without diagnostics. The synthetic callback opened no audio device, and these checks establish neither acoustic output nor real-time callback safety.
 
-On the tested host, Apple component registration exposed 23 Apple effects, including AULowpass. The proof's measured open-cutoff RMS was 0.070968; the closed and restored RMS were 0.002876. These are fixture evidence from a synthetic signal, not a performance or audio-device measurement. No callback allocation instrumentation, throughput benchmark, or acoustic verification was performed.
-
-## Scope and next step
-
-This is T10a's standalone lifecycle proof, not completion of T10. It does not establish a portable session identity or parameter/state contract, transactional DAW load/render integration, live playback, or general AU compatibility. AUv3 extensions, third-party discovery and processing, instruments, plugin windows, events, automation, latency conversion, and live callback hosting are unsupported. T10b should derive a strict identity, native parameter-range, and serialized-state contract from this working example, then integrate a transactional offline child worker before any live-hosting design.
-
-Apple API references: [AudioComponentFindNext](https://developer.apple.com/documentation/audiotoolbox/audiocomponentfindnext(_:_:)), [AudioUnitRender](https://developer.apple.com/documentation/audiotoolbox/audiounitrender(_:_:_:_:_:_:)), and [Audio Unit properties](https://developer.apple.com/documentation/audiotoolbox/general-audio-unit-properties).
-
-Five repeated Apple AULowpass lifecycle runs with AddressSanitizer and UndefinedBehaviorSanitizer completed without diagnostics. This instruments the host proof, not Apple’s closed-source DSP, and does not establish live callback safety.
+AUv3, other components, instruments, event buses, windows, automation, and AU live playback are unsupported. GUI schema-v5 import/editing is unavailable. VST3 GUI capabilities remain limited to their existing documented v1/v4 flow.

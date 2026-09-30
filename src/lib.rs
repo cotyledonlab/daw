@@ -1,5 +1,6 @@
 //! Scriptable sine/note engine with offline rendering and optional macOS playback.
 pub mod assets;
+mod au_hosting;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 pub mod audio;
 pub mod audio_buffer;

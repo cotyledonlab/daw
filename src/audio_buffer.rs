@@ -56,6 +56,9 @@ impl PlaybackBuffer {
         seconds: f64,
         volume: f64,
     ) -> Result<(Self, Option<crate::live_plugins::WorkerGuard>), String> {
+        if crate::hosting::has_au(session) {
+            return Err("native AU playback is unavailable".into());
+        }
         if !crate::hosting::has_plugins(session) {
             return Ok((
                 Self::prepare(session, device_rate, channels, seconds, volume)?,

@@ -5,6 +5,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const SCHEMA_VERSION_2: u32 = 2;
 pub const SCHEMA_VERSION_3: u32 = 3;
 pub const SCHEMA_VERSION_4: u32 = 4;
+pub const SCHEMA_VERSION_5: u32 = 5;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -117,6 +118,15 @@ pub enum Effect {
         gain: f64,
         bypass: bool,
     },
+    Au {
+        id: String,
+        bypass: bool,
+        component_type: String,
+        component_subtype: String,
+        component_manufacturer: String,
+        state_hex: String,
+        parameters: Vec<AuParameter>,
+    },
     Vst3 {
         id: String,
         bypass: bool,
@@ -126,6 +136,13 @@ pub enum Effect {
         controller_state_hex: String,
         parameters: Vec<Vst3Parameter>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AuParameter {
+    pub id: u32,
+    pub value: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -140,7 +157,7 @@ impl Effect {
     pub fn id(&self) -> &str {
         match self {
             Self::Gain { id, .. } => id,
-            Self::Vst3 { id, .. } => id,
+            Self::Vst3 { id, .. } | Self::Au { id, .. } => id,
         }
     }
 }
@@ -306,9 +323,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_4).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_5).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1, 2, 3, or 4",
+                "unsupported schema_version {}; expected 1, 2, 3, 4, or 5",
                 self.schema_version
             ));
         }
@@ -342,8 +359,8 @@ impl Session {
         let mut total_clips = 0usize;
         let mut total_notes = 0usize;
         let mut total_automation_points = 0usize;
-        let mut vst3_plugin_count = 0usize;
-        let mut vst3_state_bytes = 0usize;
+        let mut foreign_plugin_count = 0usize;
+        let mut foreign_state_bytes = 0usize;
         let mut continuous_voices = 0usize;
         let mut lifetimes: Vec<(u64, i32)> = Vec::new();
         for track in &self.tracks {
@@ -380,7 +397,7 @@ impl Session {
                 (SCHEMA_VERSION_2, Some(_)) => {
                     return Err("schema_version 2 does not accept effects".into());
                 }
-                (SCHEMA_VERSION_3 | SCHEMA_VERSION_4, None) => {
+                (SCHEMA_VERSION_3 | SCHEMA_VERSION_4 | SCHEMA_VERSION_5, None) => {
                     return Err(format!(
                         "schema_version {} requires track effects",
                         self.schema_version
@@ -412,8 +429,53 @@ impl Session {
                             ));
                         }
                         Effect::Gain { .. } => {}
-                        Effect::Vst3 { .. } if self.schema_version != SCHEMA_VERSION_4 => {
-                            return Err("VST3 effects require schema_version 4".into());
+                        Effect::Au { .. } if self.schema_version != SCHEMA_VERSION_5 => {
+                            return Err("AU effects require schema_version 5".into());
+                        }
+                        Effect::Au {
+                            component_type,
+                            component_subtype,
+                            component_manufacturer,
+                            state_hex,
+                            parameters,
+                            ..
+                        } => {
+                            for identity in
+                                [component_type, component_subtype, component_manufacturer]
+                            {
+                                if identity.len() != 4
+                                    || !identity.bytes().all(|b| (32..=126).contains(&b))
+                                {
+                                    return Err("AU component identifiers must be exactly four printable ASCII characters".into());
+                                }
+                            }
+                            let decoded = decode_hex_len(state_hex)
+                                .ok_or("AU state must be even-length hexadecimal")?;
+                            if decoded > MAX_VST3_STATE_BYTES {
+                                return Err("AU state exceeds 64 KiB".into());
+                            }
+                            foreign_state_bytes += decoded;
+                            foreign_plugin_count += 1;
+                            if foreign_state_bytes > MAX_VST3_SESSION_STATE_BYTES
+                                || foreign_plugin_count > MAX_VST3_PLUGINS
+                            {
+                                return Err("session supports at most 8 foreign effects and 256 KiB aggregate state".into());
+                            }
+                            if parameters.len() > MAX_VST3_PARAMETERS {
+                                return Err("at most 64 AU parameters per effect".into());
+                            }
+                            let mut ids = HashSet::new();
+                            for parameter in parameters {
+                                if !ids.insert(parameter.id)
+                                    || !parameter.value.is_finite()
+                                    || !(parameter.value as f32).is_finite()
+                                {
+                                    return Err("AU parameter IDs must be unique and values finite float32 native values".into());
+                                }
+                            }
+                        }
+                        Effect::Vst3 { .. } if self.schema_version < SCHEMA_VERSION_4 => {
+                            return Err("VST3 effects require schema_version 4 or 5".into());
                         }
                         Effect::Vst3 {
                             bundle_path,
@@ -443,17 +505,17 @@ impl Session {
                                 if decoded > MAX_VST3_STATE_BYTES {
                                     return Err("VST3 state exceeds 64 KiB".into());
                                 }
-                                vst3_state_bytes = vst3_state_bytes
+                                foreign_state_bytes = foreign_state_bytes
                                     .checked_add(decoded)
                                     .ok_or_else(|| "VST3 state byte count overflow".to_string())?;
-                                if vst3_state_bytes > MAX_VST3_SESSION_STATE_BYTES {
-                                    return Err("VST3 session state exceeds 256 KiB".into());
+                                if foreign_state_bytes > MAX_VST3_SESSION_STATE_BYTES {
+                                    return Err("foreign session state exceeds 256 KiB".into());
                                 }
                             }
-                            vst3_plugin_count += 1;
-                            if vst3_plugin_count > MAX_VST3_PLUGINS {
+                            foreign_plugin_count += 1;
+                            if foreign_plugin_count > MAX_VST3_PLUGINS {
                                 return Err(
-                                    "at most 8 VST3 effects are supported per session".into()
+                                    "at most 8 foreign effects are supported per session".into()
                                 );
                             }
                             if parameters.len() > MAX_VST3_PARAMETERS {
@@ -555,13 +617,13 @@ impl Session {
                     }
                 }
             }
-            if track
-                .effects
-                .as_ref()
-                .is_some_and(|effects| effects.iter().any(|e| matches!(e, Effect::Vst3 { .. })))
-                && self.sample_rate != 48_000
+            if track.effects.as_ref().is_some_and(|effects| {
+                effects
+                    .iter()
+                    .any(|e| matches!(e, Effect::Vst3 { .. } | Effect::Au { .. }))
+            }) && self.sample_rate != 48_000
             {
-                return Err("VST3 effects require a 48000 Hz session sample rate".into());
+                return Err("foreign effects require a 48000 Hz session sample rate".into());
             }
             let mode = track.mode.ok_or_else(|| {
                 format!("schema_version {} requires track mode", self.schema_version)

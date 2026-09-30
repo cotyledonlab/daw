@@ -1,10 +1,18 @@
-//! Bounded offline VST3 children. This module is never called by audio callbacks.
+//! Bounded offline VST3 and Audio Unit children. This module is never called by audio callbacks.
 use crate::session::{Effect, Session};
 
 pub struct Processed {
     pub audio: Vec<[f64; 2]>,
     pub state_hex: String,
     pub controller_state_hex: String,
+}
+
+pub fn has_au(session: &Session) -> bool {
+    session
+        .tracks
+        .iter()
+        .flat_map(|t| t.effects.as_deref().unwrap_or_default())
+        .any(|e| matches!(e, Effect::Au { .. }))
 }
 
 pub fn has_plugins(session: &Session) -> bool {
@@ -14,7 +22,7 @@ pub fn has_plugins(session: &Session) -> bool {
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .any(|effect| matches!(effect, Effect::Vst3 { .. }))
+            .any(|effect| matches!(effect, Effect::Vst3 { .. } | Effect::Au { .. }))
     })
 }
 
@@ -22,8 +30,13 @@ pub fn has_plugins(session: &Session) -> bool {
 pub fn prepare_session(session: &mut Session) -> Result<(), String> {
     for track in &mut session.tracks {
         for effect in track.effects.as_mut().into_iter().flatten() {
-            if matches!(effect, Effect::Vst3 { .. }) {
+            if matches!(effect, Effect::Vst3 { .. } | Effect::Au { .. }) {
                 let captured = process(effect, &[])?;
+                if let Effect::Au { state_hex, .. } = effect {
+                    if state_hex.is_empty() {
+                        *state_hex = captured.state_hex.clone();
+                    }
+                }
                 if let Effect::Vst3 {
                     state_hex,
                     controller_state_hex,
@@ -52,9 +65,19 @@ pub fn prepare_session(session: &mut Session) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(all(feature = "vst3-offline", target_os = "macos")))]
-pub fn process(_: &Effect, _: &[[f64; 2]]) -> Result<Processed, String> {
-    Err("offline VST3 requires a macOS build with --features vst3-offline".into())
+pub fn process(effect: &Effect, audio: &[[f64; 2]]) -> Result<Processed, String> {
+    if matches!(effect, Effect::Au { .. }) {
+        return crate::au_hosting::process(effect, audio);
+    }
+    #[cfg(all(feature = "vst3-offline", target_os = "macos"))]
+    {
+        worker::process(effect, audio)
+    }
+    #[cfg(not(all(feature = "vst3-offline", target_os = "macos")))]
+    {
+        let _ = (effect, audio);
+        Err("offline VST3 requires a macOS build with --features vst3-offline".into())
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -81,11 +104,6 @@ pub fn inspect(effect: &Effect) -> Result<Vec<ParameterMetadata>, String> {
         let _ = effect;
         Err("VST3 parameter metadata requires a macOS vst3-offline build".into())
     }
-}
-
-#[cfg(all(feature = "vst3-offline", target_os = "macos"))]
-pub fn process(effect: &Effect, audio: &[[f64; 2]]) -> Result<Processed, String> {
-    worker::process(effect, audio)
 }
 
 #[cfg(all(feature = "vst3-offline", target_os = "macos"))]

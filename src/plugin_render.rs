@@ -1,4 +1,4 @@
-//! Bounded offline rendering for sessions containing the VST3 adapter.
+//! Bounded offline rendering for sessions containing foreign effect adapters.
 //!
 //! Plugin instances are created and run while preparing this snapshot, before
 //! the caller opens an output file. The resulting samples are ordinary owned
@@ -30,7 +30,7 @@ pub fn prepare(session: &Session, seconds: f64) -> Result<PreparedPluginRender, 
         return Err("plugin render seconds must be finite and between 0.001 and 10".into());
     }
     if session.sample_rate != 48_000 {
-        return Err("VST3 effects require a 48000 Hz session sample rate".into());
+        return Err("foreign effects require a 48000 Hz session sample rate".into());
     }
     let frame_count = (seconds * f64::from(session.sample_rate)).round();
     if !(1.0..=480_000.0).contains(&frame_count) {
@@ -76,15 +76,15 @@ pub fn prepare(session: &Session, seconds: f64) -> Result<PreparedPluginRender, 
                         samples[1] *= value;
                     }
                 }
-                Effect::Vst3 { bypass, .. } if *bypass => {}
-                Effect::Vst3 { .. } => {
+                Effect::Vst3 { bypass, .. } | Effect::Au { bypass, .. } if *bypass => {}
+                Effect::Vst3 { .. } | Effect::Au { .. } => {
                     let processed = crate::hosting::process(&effect, &stem)?;
                     stem = processed.audio;
                     if stem.len() != frames {
-                        return Err("VST3 processor returned an unexpected frame count".into());
+                        return Err("foreign processor returned an unexpected frame count".into());
                     }
                     if stem.iter().flatten().any(|sample| !sample.is_finite()) {
-                        return Err("VST3 processor returned non-finite audio".into());
+                        return Err("foreign processor returned non-finite audio".into());
                     }
                 }
             }

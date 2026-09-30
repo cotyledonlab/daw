@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-Optional macOS builds support scripted schema-v4 sessions through VST3 effects offline, and an experimental in-process live VST3 mode. Audio Units, SuperCollider/Csound/Pure Data, and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. SuperCollider/Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
 
 ## Run
 
@@ -135,17 +135,17 @@ target/debug/daw play path/to/vst3-session.json 60 0.25
 
 The experimental worker creates, processes, and destroys plugins on one dedicated DSP thread. A fixed 1024-frame SPSC queue feeds the CoreAudio callback, which consumes prepared audio without foreign calls, allocation, or locks. The queue holds about 21.3 ms at 48 kHz, in addition to device latency. Parameter edits enter a bounded queue of eight commands; one command is applied at the start of a successfully processed 256-frame block. The worker also has one in-flight command, so queued audio plus that block adds at most about 26.7 ms before device latency. A paused edit can remain pending until playback resumes. Acceptance commits the normalized base value and advances the session revision immediately; `transport.status` reports the applied revision and block-start frame after DSP succeeds. Stop or worker failure cancels edits not yet delivered to DSP, while their accepted base values remain in the session and are saved. Applying an edit does not recapture plugin controller/component state. Underruns output silence without advancing the timeline; `plugin_worker_underruns` is reported in transport status and CLI output. Startup has a five-second timeout. Shutdown waits two seconds and then detaches a hung in-process worker, reporting an explicit stop failure; in-process plugin crashes can terminate the engine. Offline rendering retains its separate child-process isolation. A silent ValhallaFreqEcho check on MacBook Air Speakers at 48 kHz passed three play/pause/resume/stop cycles and session replacement, with zero underruns and zero callbacks over budget; acoustic delivery was not verified.
 
-## Audio Unit lifecycle proof (macOS)
+## Scripted offline Audio Unit effects (macOS)
 
-A standalone [AUv2 proof](native/au/README.md) discovers registered Apple effects and renders Apple AULowpass with parameter and state restoration checks:
+Build the AUv2 worker and feature-enabled engine, then run the scripted example:
 
 ```sh
 python3 native/au/build.py
-python3 -m native.au.probe
-python3 -m unittest native.au.test_probe
+cargo build --locked --features au-offline
+python3 examples/au_demo.py
 ```
 
-This opens no audio device and runs separately from the DAW. Audio Unit session loading, WAV export through an AU, live playback, and GUI controls remain unavailable. The [adapter decision](docs/decisions/audio-units.md) defines the next integration slice.
+Schema v5 retains the v4 timeline and built-in/VST3 effects, and adds the exact Apple `aufx/lpas/appl` AULowpass effect. Renders require 48 kHz and are limited to ten seconds. `DAW_AU_HOST` may select an absolute worker path; the fallback is `output/au-spike/au-host`. The worker is owned and bounded. AU live playback and GUI imports/edits remain unavailable; the GUI continues to support only its documented v1/v4 continuous sine sessions. See the [AU adapter contract](docs/decisions/audio-units.md) and [protocol](docs/PROTOCOL.md).
 
 ## Develop
 
