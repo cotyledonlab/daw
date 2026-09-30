@@ -23,6 +23,8 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 | `session.load` | `{ "path": "session.json" }` | Validated loaded session |
 | `effect.inspect` | `{ "track_id": "tone", "effect_id": "echo" }` | Active VST3 effect identity, revision, and metadata for its saved parameters; read-only |
 | `effect.set_parameter` | `{ "expected_revision": "4", "track_id": "tone", "effect_id": "echo", "parameter_id": 48, "value": 0.7 }` | Accepted session and revision plus `queued: true`; DSP application is acknowledged through transport status |
+| `supercollider.inspect` | `{ "synthdef_hex": "53436766..." }` | Program name, named control indices/default arrays, and UGen count; structural inspection only |
+| `supercollider.render` | `{ "score_path": "score.osc", "path": "fresh.wav", "sample_rate": 48000 }` | Validated offline WAV path, frames, rate and channels |
 | `render` | `{ "path": "tone.wav", "seconds": 1.0 }` | `{ "frames": 48000, "sample_rate": 48000, "channels": 2, "clipped_frames": 0 }` |
 
 Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or parallel command execution. Revision checks detect stale edits between serialized commands. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
@@ -193,7 +195,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
-| `runtime_error` | SuperCollider score, executable, owned child or output validation/publication failure |
+| `runtime_error` | SuperCollider program/score validation, executable, owned child or output validation/publication failure |
 | `plugin_error` | VST3 or AU validation, processing worker, or plugin operation failed |
 | `internal_error` | Unexpected session serialization failure |
 
@@ -298,3 +300,13 @@ The input is a regular binary score file capped at 1 MiB, snapshotted into a pri
 The owned Unix child runs `scsynth -N` with two output channels, no input, 64-frame blocks and a private restricted path for file-accessing OSC commands. Supply SynthDefs using `/d_recv`; automatic defaults and external-file assets are not loaded. No hardware audio or realtime networking starts. The process group is terminated on completion/failure, and the direct child is reaped. Timeout is 15 seconds, with 64 KiB each for stdout/stderr. Captured server error diagnostics fail even if the process returns exit status zero. Output must be bounded, stereo PCM16 at the requested rate. Up to 128 trailing block frames are trimmed to `round(last_timestamp * sample_rate)`. All samples are validated before exclusive destination creation; failure leaves no partial destination and never overwrites an existing output. This is process ownership, not a security sandbox or a live callback design.
 
 OSC validation checks framing and scalar/string/blob encoding, plus the SynthDef file header for `/d_recv`. It does not interpret every server command or UGen graph. A successful result proves that a bounded WAV was produced and validated; NRT provides no per-command completion acknowledgements, and commands that fail silently in the runtime cannot all be detected. Interactive completion handling remains required before claiming the full T11 control contract.
+
+## SuperCollider program inspection
+
+`supercollider.inspect` is available in every build and does not require `DAW_SCSYNTH`. Params contain exactly `synthdef_hex`, a nonempty even-length hexadecimal string encoding at most 65536 bytes. Uppercase and lowercase hex are accepted. JSON shape or hex errors return `invalid_params`; unsupported/malformed binary programs return `runtime_error`. Inspection launches no child, accesses no files, and leaves the active session, revision and transport unchanged on success or failure. There is no GUI route.
+
+The result is `{ "name": "daw_sine_fixture", "controls": [{ "name": "freq", "index": 0, "default_values": [440.0] }, ...], "ugen_count": 4 }`. Defaults retain native float32 precision. Control records retain the binary name-table order; an array spans from its index to the next greater named index, or the end of the parameter array. Unnamed parameter prefixes are omitted. Names and named indices must be unique.
+
+The accepted subset is SCgf version 2, exactly one definition, and no variants or trailing bytes. Names are nonempty UTF-8 Pascal strings without NUL (at most 255 bytes). Limits are 4096 constants, 256 parameter slots, 64 control names, 1024 UGens, 4096 inputs and 256 outputs per UGen, and 16384 input/output ports in total. Counts cannot be negative. Constants/defaults must be finite. Calculation rates are 0–3; inputs must reference valid constants or outputs of earlier UGens. The recognized Control, AudioControl, TrigControl and LagControl output spans must fit the parameter array.
+
+`capabilities.supercollider_programs` publishes these principal limits and reports `inspection:true`, `runtime_validation:false`, `session_device:false`. Inspection validates encoding and graph references; it does not establish that an installed UGen exists, accepts a particular input/output layout, produces audio, or responds successfully to runtime commands. Use the owned NRT job for actual rendering evidence. Saved programmable sources and interactive routing remain pending.

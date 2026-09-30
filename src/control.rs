@@ -27,6 +27,7 @@ pub const METHODS: &[&str] = &[
     "session.load",
     "render",
     "supercollider.render",
+    "supercollider.inspect",
     "transport.status",
     "transport.play",
     "transport.pause",
@@ -43,6 +44,7 @@ fn capabilities() -> Value {
     json!({
         "methods": METHODS,
         "devices": ["sine", "audio"],
+        "supercollider_programs": {"inspection":true,"format":"scgf_v2","max_bytes":crate::synthdef::MAX_BYTES,"max_controls":crate::synthdef::MAX_CONTROLS,"max_parameters":crate::synthdef::MAX_PARAMETERS,"max_ugens":crate::synthdef::MAX_UGENS,"runtime_validation":false,"session_device":false},
         "supercollider_nrt": {"implemented":cfg!(unix), "configured":std::env::var_os("DAW_SCSYNTH").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()), "session_device":false, "native_playback":false, "command_acknowledgements":false, "max_score_bytes":1048576, "max_seconds":10, "channels":2, "sample_format":"wav_pcm16", "worker_timeout_seconds":15},
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
@@ -279,6 +281,12 @@ struct SuperColliderRenderParams {
     score_path: String,
     path: String,
     sample_rate: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SuperColliderInspectParams {
+    synthdef_hex: String,
 }
 
 #[derive(Deserialize)]
@@ -655,6 +663,14 @@ impl Controller {
                 );
                 self.commit_session(replacement)?;
                 Ok(json!(self.session))
+            }
+            "supercollider.inspect" => {
+                let p: SuperColliderInspectParams = params(value)?;
+                let bytes = crate::synthdef::decode_hex(&p.synthdef_hex)
+                    .map_err(|e| ControlError::new("invalid_params", e))?;
+                let program = crate::synthdef::inspect(&bytes)
+                    .map_err(|e| ControlError::new("runtime_error", e))?;
+                Ok(json!(program))
             }
             "supercollider.render" => {
                 let p: SuperColliderRenderParams = params(value)?;

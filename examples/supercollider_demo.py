@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # noqa: E402 -- add the checkout root before importing its example module.
-from native.supercollider.score import write_score
+from native.supercollider.score import write_score, sine_synthdef
 
 
 def main():
@@ -29,6 +29,8 @@ def main():
 
     requests = [
         {"protocol_version": 1, "id": "supercollider-capabilities", "method": "capabilities", "params": {}},
+        {"protocol_version": 1, "id": "supercollider-inspect", "method": "supercollider.inspect",
+         "params": {"synthdef_hex": sine_synthdef(440.0, 0.1).hex()}},
         {"protocol_version": 1, "id": "supercollider-render", "method": "supercollider.render",
          "params": {"score_path": str(score_path.resolve()), "path": str(wav_path.resolve()),
                     "sample_rate": 48000}},
@@ -44,7 +46,7 @@ def main():
         raise RuntimeError(f"DAW controller failed: {process.stderr.strip()}")
     lines = process.stdout.splitlines()
     if len(lines) != len(requests):
-        raise RuntimeError(f"Expected two responses, received {len(lines)}: {process.stderr.strip()}")
+        raise RuntimeError(f"Expected {len(requests)} responses, received {len(lines)}: {process.stderr.strip()}")
     responses = [json.loads(line) for line in lines]
     for request, response in zip(requests, responses):
         if response.get("id") != request["id"] or not response.get("ok"):
@@ -55,11 +57,14 @@ def main():
         raise RuntimeError("This daw binary does not implement SuperCollider NRT rendering")
     if not support.get("configured"):
         raise RuntimeError("DAW_SCSYNTH is not configured to an existing absolute executable")
-    result = responses[1]["result"]
+    program = responses[1]["result"]
+    result = responses[2]["result"]
 
     if result.get("sample_rate") != 48000 or result.get("channels") != 2:
         raise RuntimeError(f"Unexpected rendered WAV metadata: {result}")
     print(f"Score: {score_path}")
+    print(f"Program: {program['name']} ({program['ugen_count']} UGens); controls: "
+          + ", ".join(control['name'] for control in program['controls']))
     print(f"WAV: {wav_path} ({result['frames']} frames, {result['sample_rate']} Hz, {result['channels']} channels)")
 
 

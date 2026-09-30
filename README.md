@@ -156,7 +156,7 @@ python3 examples/supercollider_demo.py
 python3 -m unittest native.supercollider.test_daw
 ```
 
-On Unix, `supercollider.render` runs a prepared binary OSC score through an explicitly configured `scsynth` executable. It writes a fresh stereo PCM16 WAV, supports 8–192 kHz and scores up to ten seconds, and captures child errors without changing your session or transport. The example creates its own SynthDef and score without starting a language interpreter or audio device. The configured executable and UGens must already be installed; this project bundles neither. The [job contract](docs/decisions/supercollider.md) describes bounds and restrictions.
+On Unix, `supercollider.render` runs a prepared binary OSC score through an explicitly configured `scsynth` executable. It writes a fresh stereo PCM16 WAV, supports 8–192 kHz and scores up to ten seconds, and captures child errors without changing your session or transport. The portable `supercollider.inspect` command reads program names, native control defaults and graph structure without launching a runtime. The example inspects its own SynthDef and creates a score without starting a language interpreter or audio device. The configured executable and UGens must already be installed; this project bundles neither. The [job contract](docs/decisions/supercollider.md) describes bounds and restrictions.
 
 These are synchronous offline jobs. A script can use the exported WAV in an audio-clip project, but saved programmable track devices and interactive OSC/live audio are still being built. The browser has no SuperCollider controls yet.
 
