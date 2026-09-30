@@ -1,9 +1,9 @@
 //! Prepared sine and note rendering. All scheduling storage is allocated before playback.
 use crate::{
     assets::{self, PreparedAudioClip},
+    effects::PreparedChain,
     session::{
-        Clip, Device, Effect, MAX_FRAME, MAX_TRACKS, MAX_VOICES, Session, TrackMode,
-        envelope_frames,
+        Clip, Device, MAX_FRAME, MAX_TRACKS, MAX_VOICES, Session, TrackMode, envelope_frames,
     },
 };
 use std::f64::consts::TAU;
@@ -38,7 +38,7 @@ struct ActiveNote {
 pub struct Engine {
     voices: Vec<Voice>,
     // Schema-v3 tracks sum into independent stereo buses before serial effects.
-    effect_gains: Option<Vec<Vec<f64>>>,
+    effect_chains: Option<Vec<PreparedChain>>,
     audio: Vec<PreparedAudioClip>,
     audio_starts: Vec<usize>,
     next_audio: usize,
@@ -104,26 +104,11 @@ impl Engine {
         let notes: Vec<_> = ordered.into_iter().map(|(_, note)| note).collect();
         let mut starts: Vec<_> = (0..notes.len()).collect();
         starts.sort_by_key(|&index| (notes[index].start, index));
-        let effect_gains = (session.schema_version == 3).then(|| {
-            session
-                .tracks
-                .iter()
-                .map(|track| {
-                    track
-                        .effects
-                        .as_ref()
-                        .expect("validated effects")
-                        .iter()
-                        .filter_map(|effect| match effect {
-                            Effect::Gain { gain, bypass, .. } => (!bypass).then_some(*gain),
-                        })
-                        .collect()
-                })
-                .collect()
-        });
+        let effect_chains = (session.schema_version == 3)
+            .then(|| session.tracks.iter().map(PreparedChain::prepare).collect());
         Ok(Self {
             voices,
-            effect_gains,
+            effect_chains,
             audio,
             audio_starts,
             next_audio: 0,
@@ -174,6 +159,11 @@ impl Engine {
     /// Clear active state and position cursors for a discontinuity. Note starts before
     /// the destination are intentionally skipped; audio clips spanning it are retained.
     fn reset_schedules(&mut self, frame: u64) {
+        if let Some(chains) = &mut self.effect_chains {
+            for chain in chains {
+                chain.seek(frame);
+            }
+        }
         self.active_count = 0;
         for voice in &mut self.voices {
             voice.phase = 0.0;
@@ -263,7 +253,7 @@ impl Engine {
             let mut mixed = 0.0;
             for voice in &mut self.voices {
                 let sample = voice.phase.sin() * voice.gain;
-                if self.effect_gains.is_some() {
+                if self.effect_chains.is_some() {
                     track_frames[voice.track_index][0] += sample;
                     track_frames[voice.track_index][1] += sample;
                 } else {
@@ -283,7 +273,7 @@ impl Engine {
                         * (1.0 - (self.frame_position - note.off) as f64 / self.envelope)
                 };
                 let sample = voice.phase.sin() * note.gain * envelope;
-                if self.effect_gains.is_some() {
+                if self.effect_chains.is_some() {
                     track_frames[note.track_index][0] += sample;
                     track_frames[note.track_index][1] += sample;
                 } else {
@@ -299,7 +289,7 @@ impl Engine {
                 let clip = &self.audio[index];
                 let source = clip.source_offset + (self.frame_position - clip.start) as usize;
                 let samples = clip.frames[source];
-                if self.effect_gains.is_some() {
+                if self.effect_chains.is_some() {
                     track_frames[clip.track_index][0] += samples[0] * clip.gain;
                     track_frames[clip.track_index][1] += samples[1] * clip.gain;
                 } else {
@@ -307,13 +297,9 @@ impl Engine {
                     stereo[1] += samples[1] * clip.gain;
                 }
             }
-            if let Some(chains) = &self.effect_gains {
-                for (frame, gains) in track_frames.iter_mut().zip(chains) {
-                    // Preserve declared order, with no clipping between effects.
-                    for gain in gains {
-                        frame[0] *= gain;
-                        frame[1] *= gain;
-                    }
+            if let Some(chains) = &mut self.effect_chains {
+                for (frame, chain) in track_frames.iter_mut().zip(chains.iter_mut()) {
+                    chain.process(frame, self.frame_position);
                     stereo[0] += frame[0];
                     stereo[1] += frame[1];
                 }

@@ -16,6 +16,8 @@ pub const MAX_CLIPS: usize = 1_024;
 pub const MAX_NOTES: usize = 16_384;
 pub const MAX_EFFECTS_PER_TRACK: usize = 16;
 pub const MAX_EFFECT_GAIN: f64 = 4.0;
+pub const MAX_AUTOMATION_LANES_PER_TRACK: usize = 16;
+pub const MAX_AUTOMATION_POINTS: usize = 16_384;
 pub const MAX_VOICES: usize = 64;
 pub const DEFAULT_TEMPO_MILLI_BPM: u32 = 120_000;
 
@@ -66,6 +68,40 @@ pub struct Track {
         deserialize_with = "deserialize_nonnull"
     )]
     pub effects: Option<Vec<Effect>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nonnull"
+    )]
+    pub automation: Option<Vec<AutomationLane>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationLane {
+    pub effect_id: String,
+    pub parameter: AutomationParameter,
+    pub interpolation: AutomationInterpolation,
+    pub points: Vec<AutomationPoint>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationParameter {
+    Gain,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationInterpolation {
+    Step,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationPoint {
+    pub frame: u64,
+    pub value: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -253,6 +289,7 @@ impl Session {
                     .tracks
                     .iter()
                     .any(|t| t.mode.is_some() || t.clips.is_some() || t.effects.is_some())
+                || self.tracks.iter().any(|t| t.automation.is_some())
             {
                 return Err("schema_version 1 does not accept timeline or effect fields".into());
             }
@@ -269,6 +306,7 @@ impl Session {
         let mut track_ids = HashSet::new();
         let mut total_clips = 0usize;
         let mut total_notes = 0usize;
+        let mut total_automation_points = 0usize;
         let mut continuous_voices = 0usize;
         let mut lifetimes: Vec<(u64, i32)> = Vec::new();
         for track in &self.tracks {
@@ -310,6 +348,9 @@ impl Session {
                 }
                 _ => {}
             }
+            if self.schema_version == SCHEMA_VERSION_2 && track.automation.is_some() {
+                return Err("schema_version 2 does not accept automation".into());
+            }
             if let Some(effects) = &track.effects {
                 if effects.len() > MAX_EFFECTS_PER_TRACK {
                     return Err(format!(
@@ -331,6 +372,56 @@ impl Session {
                             ));
                         }
                         Effect::Gain { .. } => {}
+                    }
+                }
+            }
+            if let Some(lanes) = &track.automation {
+                if lanes.len() > MAX_AUTOMATION_LANES_PER_TRACK {
+                    return Err(format!(
+                        "at most {MAX_AUTOMATION_LANES_PER_TRACK} automation lanes per track are supported"
+                    ));
+                }
+                let effects = track
+                    .effects
+                    .as_ref()
+                    .ok_or_else(|| "automation requires track effects".to_string())?;
+                let mut lane_targets = HashSet::new();
+                for lane in lanes {
+                    if !lane_targets.insert(lane.effect_id.as_str()) {
+                        return Err("each effect can have at most one automation lane".into());
+                    }
+                    if !effects.iter().any(|effect| effect.id() == lane.effect_id) {
+                        return Err("automation effect_id must target an existing effect".into());
+                    }
+                    if lane.points.is_empty() {
+                        return Err("automation lanes must contain at least one point".into());
+                    }
+                    total_automation_points = total_automation_points
+                        .checked_add(lane.points.len())
+                        .ok_or_else(|| "automation point count overflow".to_string())?;
+                    if total_automation_points > MAX_AUTOMATION_POINTS {
+                        return Err(format!(
+                            "at most {MAX_AUTOMATION_POINTS} automation points are supported"
+                        ));
+                    }
+                    let mut previous_frame = None;
+                    for point in &lane.points {
+                        if point.frame > MAX_FRAME {
+                            return Err("automation frame exceeds MAX_FRAME".into());
+                        }
+                        if previous_frame.is_some_and(|frame| point.frame <= frame) {
+                            return Err(
+                                "automation point frames must be strictly increasing".into()
+                            );
+                        }
+                        if !point.value.is_finite()
+                            || !(MIN_GAIN..=MAX_EFFECT_GAIN).contains(&point.value)
+                        {
+                            return Err(format!(
+                                "automation value must be finite and between 0 and {MAX_EFFECT_GAIN}"
+                            ));
+                        }
+                        previous_frame = Some(point.frame);
                     }
                 }
             }

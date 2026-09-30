@@ -1,6 +1,6 @@
 # Timeline contract
 
-Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07a implements audio clips; T07b implements native seek/loop transport. T08 automation remains pending.
+Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07a implements audio clips; T07b implements native seek/loop transport. T08b implements saved schema-v3 effect gain automation.
 
 ## Positions and tempo
 
@@ -93,7 +93,7 @@ Initial seek and loop wrap use no note chase: a note whose onset was before the 
 
 T07 audio clips have a session start, positive length, source offset, and gain. They own the same half-open interval as note clips. Source reads are `source_offset + (timeline_frame - clip_start)`; reject source ranges past the loaded file end. Overlaps sum and adjacent clips share no sample. Load PCM WAV assets fully before playback; sample-rate mismatches fail until resampling is implemented. Asset identity, project-relative paths, and missing-file errors are defined by the implemented [T07a asset contract](audio-assets.md).
 
-T08 automation positions are absolute session frames, with one lane per target parameter. Points are strictly increasing; duplicate positions for a target fail validation. Before the first point use the saved parameter value; at a point apply its value before that frame's note-ons; after the last point hold its value. Initial interpolation is step/hold, not an unspecified smoothing curve. Seek/wrap evaluates the lane at the destination, including the latest preceding point, independently of callback size. Parameter target identity and schemas follow the second working processor interface in T08. No automation fields are accepted before then.
+T08 automation positions are absolute session frames, with one lane per target parameter. Points are strictly increasing; duplicate positions for a target fail validation. Before the first point use the saved parameter value; at a point apply its value before that frame's note-ons; after the last point hold its value. Initial interpolation is step/hold, not an unspecified smoothing curve. Seek/wrap evaluates the lane at the destination, including the latest preceding point, independently of callback size. Parameter target identity and schemas follow the second working processor interface in T08. T08b now implements the saved lanes in [automation.md](automation.md).
 
 ## Compatibility and implementation handoff
 

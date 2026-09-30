@@ -115,7 +115,7 @@ Schema v2 implements the note subset of the [timeline contract](decisions/timeli
 
 `capabilities.supported_session_schema_versions` is `[1,2,3]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
 
-Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips and native seek/loop controls are supported as described above; automation is not implemented.
+Continuous v2 tracks require empty clips and retain v1 oscillator behavior. Sequenced tracks are silent without notes. Notes override the device frequency, multiply velocity by track gain, start at phase zero, and use 5 ms attack/release envelopes. Tails end at clip boundaries. Rendering starts at frame zero, ignores tempo for already positioned notes, and remains bounded to 60 seconds. Native playback requires matching session/device rates for all v2 sessions; a mismatch reports `audio_error`. Browser audition is unavailable for v2. Audio clips and native seek/loop controls are supported as described above; effect automation requires schema v3.
 
 `session.replace`, `session.load`, and whole-track batches validate notes and peak polyphony before stopping playback or committing a new revision. `session.save` preserves the selected schema. The explicit upgrade example maps v1 tracks to continuous v2 tracks without changing their sound. In-place sample-rate editing is not exposed: a full replacement supplies a new arrangement and does not rescale any positions automatically.
 
@@ -135,9 +135,19 @@ V3 retains v2 timeline/source fields and requires `effects` on every track, incl
 
 The source's voices are summed without clipping, then effects run in their array order on that track's stereo audio. Processed tracks are summed in serialized order and clipped once at the master. Gain effects have zero latency. V3's per-track grouping can change floating-point rounding relative to v2 even with empty chains; v1/v2 retain their original path.
 
-`capabilities.effects` reports the supported kind, limits, routing, bypass, latency, and lack of automation. Use revision-checked full replacement for effect edits. Existing `set_parameter` addresses the source device only. Effect changes validate before committing, stop native playback, and advance the revision once. Saved sessions preserve chain order, IDs, gain, and bypass. No live effect mutation or automation fields are supported yet.
+`capabilities.effects` reports the supported kind, limits, routing, bypass, latency, and supported automation. Use revision-checked full replacement for effect edits. Existing `set_parameter` addresses the source device only. Effect changes validate before committing, stop native playback, and advance the revision once. Saved sessions preserve chain order, IDs, gain, and bypass. Live effect mutation is not supported. Saved automation lanes are described below.
 
 V3 native playback requires matching device/session rates. Browser editing and uploads are restricted to v1. See [the effect contract](decisions/track-effects.md) and [runnable example](../examples/sessions/gain-chain.json).
+
+## Saved effect gain automation
+
+Schema-v3 tracks may include `automation`; omission preserves the previous v3 shape. Explicit null is rejected. V1/v2 reject the field. A lane is `{"effect_id":"trim","parameter":"gain","interpolation":"step","points":[{"frame":12000,"value":0.5}]}`. Each field is required and unknown fields are rejected. The target must be an existing effect in that track. A target may have one lane, with at most 16 lanes per track.
+
+Points must be nonempty, strictly increasing by integer frame, and within the existing frame limit. Values are finite 0–4 inclusive. There are at most 16384 points across the session. Before the first point use the saved effect gain; at each point apply its value before that frame's sample; afterward hold the most recent value. Bypass leaves audio unchanged while its lane remains validated and persisted. Step changes can click.
+
+Seek and wrap restore the last value at or before the destination, or the base gain before the first point. They use prepared data and perform no file loading. Automation is part of the snapshot shared by offline and native rendering. Use revision-checked full replacement to edit lanes: invalid edits preserve session/revision/playback; successful edits stop playback before commit.
+
+`capabilities.automation` reports parameters, interpolation, point/lane limits, and `live_edits:false`. `capabilities.effects.automation` is true. [The automation contract](decisions/automation.md) gives the preparation rules; [the example](../examples/sessions/gain-automation.json) is loadable and playable. The browser remains a v1 editor.
 
 ## Session schema v1
 

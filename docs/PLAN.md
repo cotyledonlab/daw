@@ -62,7 +62,7 @@ Parallelize tests/examples/docs only with stable interfaces and separate file ow
 
 ## Backlog
 
-T01, T02, T03, T04, T04b, the T05 design ticket, T06, T07a, T07b, and T08a are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+T01, T02, T03, T04, T04b, the T05 design ticket, T06, T07a, T07b, T08a, and T08b are complete; other tickets below remain pending. New module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
 
 ### T01: machine-readable discovery (complete)
 
@@ -140,11 +140,11 @@ Implemented native JSONL seek/loop controls with a single pending callback comma
 
 Schema v3 adds required per-track effect arrays with bounded serial gain processors and bypass. Each track sums into an unclipped stereo frame before effects; the master clips once after mixing tracks. Schema v1/v2 retain their previous path. Tests cover analytical gain, source/effect clipping order, stereo preservation, strict schema validation, persistence, seek/loops, and callback allocations. The [effect contract](decisions/track-effects.md) records the concrete processing interface and the remaining design work.
 
-### T08b: parameter automation and processor interface
+### T08b: parameter automation and processor interface (complete)
 
 **Depends on:** T08a. **Owner:** stronger-model interface and callback review, Luna tests/examples.
 
-Implement bounded, persisted effect-gain lanes after specifying target identity, point limits, interpolation/smoothing semantics, and seek/wrap reconstruction. Derive the shared processing interface from the working source/effect requirements; do not invent unsupported buses or commands. Follow step/hold timeline semantics unless smoothing is explicitly represented and tested. Acceptance: block-independent samples, saved state and bypass, exact seek/loop values, invalid-edit rollback, and no callback allocation. Keep snapshot replacement until an explicit live parameter handoff is implemented. No arbitrary cycles, sends, or sidechains.
+Implemented optional schema-v3 step/hold effect-gain lanes, resolved by track/effect identity during preparation. Point order, ranges, targets, duplicate lanes, and session-wide limits validate before commit. A concrete prepared chain owns parameter cursors and reconstructs gain on seek/wrap without callback allocation. The [automation contract](decisions/automation.md) records the working stereo processing interface and its zero latency. Tests cover exact point samples, persistence, bypass, backward seeks, loop reconstruction, and rollback. Live parameter edits remain snapshot replacement.
 
 ### T09: VST3 host proof of concept
 
@@ -178,4 +178,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T08a is complete. Start T08b with effect-gain automation targeted by track/effect ID. Specify bounded lanes, step/hold versus explicit smoothing, and seek/wrap reconstruction before implementation; then delegate fixtures/tests. The existing gain chain is snapshot-based and zero-latency. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T08b is complete. Start T09 with a bounded VST3 host spike and a known test plugin. Compare official SDK and maintained bindings using actual discovery/load/process/teardown evidence. Preserve the existing snapshot preparation and zero-allocation callback requirements. Do not claim plugin support until the adapter processes audio. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.

@@ -4,6 +4,7 @@ pub mod assets;
 pub mod audio;
 pub mod audio_buffer;
 pub mod control;
+mod effects;
 pub mod engine;
 pub mod render;
 pub mod session;

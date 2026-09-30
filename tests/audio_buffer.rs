@@ -10,6 +10,7 @@ fn tone() -> Session {
             mode: None,
             clips: None,
             effects: None,
+            automation: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,

@@ -59,7 +59,7 @@ target/debug/daw play examples/sessions/arpeggio.json 2 0.25
 
 The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
 
-The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Native seek and loops are available through JSONL; automation remains planned.
+The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Native seek, loops, and schema-v3 effect automation are available through JSONL.
 
 To preserve an existing sine session while explicitly upgrading its format:
 
@@ -97,7 +97,13 @@ Play the [gain-chain example](examples/sessions/gain-chain.json) with the native
 target/debug/daw play examples/sessions/gain-chain.json 2 0.25
 ```
 
-Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Automation and GUI effect editing remain pending. See the [effect contract](docs/decisions/track-effects.md).
+Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Saved gain automation is available through JSONL; GUI effect editing remains pending. See the [effect contract](docs/decisions/track-effects.md).
+
+## Saved gain automation
+
+Schema-v3 tracks can add step/hold gain lanes targeting an effect ID. Values apply at exact frame positions and are restored on seek or loop wrap. Play the [automation example](examples/sessions/gain-automation.json) with `daw play examples/sessions/gain-automation.json 2 0.25`. Save/load and WAV rendering use the same lane data.
+
+Before a lane's first point, its effect uses the saved base gain. There is no implicit smoothing. Editing a lane uses session replacement and stops the active snapshot. See [the protocol](docs/PROTOCOL.md) for the strict shape and limits.
 
 ## Develop
 
@@ -113,4 +119,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T08a serial track gain effects are complete. The next ticket is T08b parameter automation in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T08b saved gain automation is complete. The next ticket is T09 VST3 hosting in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.

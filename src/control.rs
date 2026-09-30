@@ -42,11 +42,17 @@ fn capabilities() -> Value {
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": false,
+        "automation": {
+            "schema_version": 3, "parameters": ["gain"], "interpolation": ["step"],
+            "max_lanes_per_track": session::MAX_AUTOMATION_LANES_PER_TRACK,
+            "max_points": session::MAX_AUTOMATION_POINTS,
+            "live_edits": false
+        },
         "effects": {
             "schema_version": 3, "kinds": ["gain"],
             "max_per_track": session::MAX_EFFECTS_PER_TRACK,
             "gain": {"minimum": 0, "maximum": session::MAX_EFFECT_GAIN, "default": 1.0, "unit": "linear"},
-            "bypass": true, "latency_frames": 0, "automation": false,
+            "bypass": true, "latency_frames": 0, "automation": true,
             "routing": "serial_track_stereo", "clipping": "master_only"
         },
         "timeline_transport": {"native_only": true, "max_frame": session::MAX_FRAME, "note_chase": false, "persisted": false},

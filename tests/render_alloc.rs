@@ -22,6 +22,7 @@ fn device_buffer_adapter_does_not_allocate_or_free() {
             mode: None,
             clips: None,
             effects: None,
+            automation: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,
@@ -77,6 +78,7 @@ fn prepared_render_blocks_do_not_allocate_or_free() {
                 mode: None,
                 clips: None,
                 effects: None,
+                automation: None,
                 id: i.to_string(),
                 device: Device::Sine {
                     frequency_hz: 100.0 + i as f64,
@@ -177,7 +179,7 @@ fn preloaded_audio_clip_callbacks_do_not_allocate_or_free() {
 }
 
 #[test]
-fn full_gain_chains_do_not_allocate_during_render_seek_or_loop() {
+fn full_automated_chains_do_not_allocate_during_render_seek_or_loop() {
     let tracks: Vec<_> = (0..64)
         .map(|i| {
             serde_json::json!({
@@ -185,6 +187,10 @@ fn full_gain_chains_do_not_allocate_during_render_seek_or_loop() {
                 "device":{"kind":"sine","frequency_hz":100.0+i as f64,"gain":0.01},
                 "effects":(0..16).map(|j| serde_json::json!({
                     "kind":"gain","id":format!("g{j}"),"gain":0.9,"bypass":false
+                })).collect::<Vec<_>>(),
+                "automation":(0..16).map(|j| serde_json::json!({
+                    "effect_id":format!("g{j}"),"parameter":"gain","interpolation":"step",
+                    "points":(0..16).map(|f| serde_json::json!({"frame":f,"value":0.8+f as f64*0.01})).collect::<Vec<_>>()
                 })).collect::<Vec<_>>()
             })
         })
