@@ -41,7 +41,8 @@ fn capabilities() -> Value {
         "methods": METHODS,
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
-        "plugin_hosting": false,
+        "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
+        "native_vst3": {"implemented": cfg!(all(feature = "vst3-live", target_os = "macos")), "experimental": true, "isolation": "in_process_worker", "queue_frames": 1024, "sample_rate": 48000, "seek": false, "loop": false, "editors": false, "instruments": false},
         "automation": {
             "schema_version": 3, "parameters": ["gain"], "interpolation": ["step"],
             "max_lanes_per_track": session::MAX_AUTOMATION_LANES_PER_TRACK,
@@ -65,7 +66,7 @@ fn capabilities() -> Value {
         },
         "session_schema_version": session::SCHEMA_VERSION,
         "supported_session_schema_versions": [1, 2, 3, 4],
-        "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": false, "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
+        "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": cfg!(all(feature = "vst3-live", target_os = "macos")), "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
         "sequencing": {
             "schema_version": 2, "offline": true,
             "native_requires_matching_sample_rate": true,
@@ -620,7 +621,10 @@ impl Controller {
                 let _: EmptyParams = params(value)?;
             }
         }
-        if method == "transport.play" && crate::hosting::has_plugins(&self.session) {
+        if method == "transport.play"
+            && crate::hosting::has_plugins(&self.session)
+            && !cfg!(all(feature = "vst3-live", target_os = "macos"))
+        {
             return Err(ControlError::new(
                 "audio_unavailable",
                 "VST3 sessions support offline rendering only; native plugin playback is unavailable",

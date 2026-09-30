@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-An optional macOS build renders scripted schema-v4 sessions through VST3 effects offline. Live VST3 playback, Audio Units, SuperCollider/Csound/Pure Data, and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
+Optional macOS builds support scripted schema-v4 sessions through VST3 effects offline, and an experimental in-process live VST3 mode. Audio Units, SuperCollider/Csound/Pure Data, and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines those next slices and their acceptance criteria. The [integration notes](docs/INTEGRATIONS.md) record the hosting options.
 
 ## Run
 
@@ -37,7 +37,7 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless 
 
 Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply/save still validate and persist through Rust. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
 
-Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate. Neither playback mode hosts plugins yet; scripted VST3 rendering is offline only.
+Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate. Plugin playback is available only through the experimental native `vst3-live` build described below; the browser does not host plugins.
 
 ## Native playback (macOS)
 
@@ -117,7 +117,21 @@ This creates a fresh project under ignored `output/`, captures initial plugin st
 
 V4 preserves v3 track gain chains and adds serial `vst3` effects. Supported plugins have one stereo input/output, no event buses, float32 offline processing, and zero reported latency. Sessions containing plugins require 48 kHz, and plugin renders stop at ten seconds. Parameters are normalized and points use exact frame positions; plugin DSP may smooth changes. State has strict byte limits. Load/replace prepares plugins in owned child processes before committing; failures preserve the active session and revision. Rendering finishes all plugin work before creating the destination WAV. Bypass skips DSP but still validates the plugin on load. See [the protocol](docs/PROTOCOL.md) for the shape and [the adapter record](docs/decisions/vst3-adapter.md) for limits.
 
-The browser editor still supports v1 only. Native playback rejects VST3 sessions before audio-device access. No plugin picker, editor window, or live plugin support is claimed.
+The browser editor still supports v1 only and has no plugin controls. Native VST3 playback is an experimental, separate feature requiring both offline VST3 and native audio support. It runs third-party plugin code in-process; a plugin crash can terminate the engine. No plugin picker or editor window is provided.
+
+## Experimental live VST3 playback (macOS)
+
+Build the worker library and the feature-enabled engine, then play a saved schema-v4 session containing VST3 effects:
+
+```sh
+python3 native/vst3/build.py
+cargo build --locked --features vst3-live
+target/debug/daw play path/to/vst3-session.json 60 0.25
+```
+
+`vst3-live` implies `vst3-offline` and `native-audio`. The build script writes `libdaw-vst3.dylib` under `output/vst3-spike`; set `DAW_VST3_LIBRARY` to an absolute library path to select another build. Live sessions require a 48 kHz session and device, stereo float32 plugin processing, zero-latency effects, and no event buses. Playback is limited to 60 seconds. Play, pause, resume, volume, and stop are supported. Seek and loop are explicitly rejected for plugin sessions; editing or replacing the session stops playback.
+
+The experimental worker creates, processes, and destroys plugins on one dedicated DSP thread. A fixed 1024-frame SPSC queue feeds the CoreAudio callback, which consumes prepared audio without foreign calls, allocation, or locks. The queue holds about 21.3 ms at 48 kHz, in addition to device latency. Underruns output silence without advancing the timeline; `plugin_worker_underruns` is reported in transport status and CLI output. Startup has a five-second timeout. Shutdown waits two seconds and then detaches a hung in-process worker, reporting an explicit stop failure; in-process plugin crashes can terminate the engine. Offline rendering retains its separate child-process isolation. A silent ValhallaFreqEcho check on MacBook Air Speakers at 48 kHz passed three play/pause/resume/stop cycles and session replacement, with zero underruns and zero callbacks over budget; acoustic delivery was not verified.
 
 ## Develop
 
@@ -133,4 +147,4 @@ node --test gui/test_live.cjs
 
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
-T09a/b provide a [standalone macOS VST3 lifecycle spike](native/vst3/README.md) with a project-owned fixture, child-process scanning, and real ValhallaFreqEcho offline automation/state checks. The Rust host candidate also passes a short offline render. T09c now connects VST3 effects to scripted session save/load and WAV rendering. The next ticket is T09d native callback integration in [docs/PLAN.md](docs/PLAN.md). [AGENTS.md](AGENTS.md) gives future agents the working rules.
+T09a/b provide a [standalone macOS VST3 lifecycle spike](native/vst3/README.md) with a project-owned fixture, child-process scanning, and real ValhallaFreqEcho offline automation/state checks. T09c connects VST3 effects to scripted session save/load and WAV rendering. T09d adds experimental native live playback; hardware behavior remains unverified. [AGENTS.md](AGENTS.md) gives future agents the working rules.

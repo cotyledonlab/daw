@@ -29,7 +29,7 @@ python3 native/vst3/scan.py /path/to/Plugin.vst3
 
 The child process is bounded by a timeout of at most 30 seconds and stdout/stderr limits of 64 KiB each. Timeout and crash handling kills the child process group and returns a structured result. This is process-level failure containment, not a security sandbox: plugin code runs with the user's permissions. Only the fixture may be passed to `--probe` processing.
 
-The fixture covers a combined component/controller, parameter metadata and text conversion, component-to-controller state synchronization, and UI-only parameter changes that leave DSP untouched until queued automation arrives. Host handler references are cleared before termination. The effect probe also handles separate controllers and bidirectional connection points. Editors, instruments, generic layouts, real-time callbacks, DAW commands, and a production adapter remain unimplemented. The pinned Rust host candidate also builds and completes a short offline effect render; see its trial notes for the more limited evidence. See [the binding comparison](../../docs/decisions/vst3-bindings.md) and [the hosting decision record](../../docs/decisions/plugin-hosting.md).
+The fixture covers a combined component/controller, parameter metadata and text conversion, component-to-controller state synchronization, and UI-only parameter changes that leave DSP untouched until queued automation arrives. Host handler references are cleared before termination. The effect probe also handles separate controllers and bidirectional connection points. Editors, instruments, and generic layouts remain unimplemented. DAW schema-v4 commands now support offline effects and optional experimental native playback. The pinned Rust host candidate also builds and completes a short offline effect render; see its trial notes for the more limited evidence. See [the binding comparison](../../docs/decisions/vst3-bindings.md) and [the hosting decision record](../../docs/decisions/plugin-hosting.md).
 
 ## Third-party stereo effect probe
 
@@ -51,3 +51,7 @@ DAW_VST3_EFFECT=/path/to/ValhallaFreqEcho.vst3 python3 -m unittest native.vst3.t
 ```
 
 The integration tests use a project-owned gain fixture with event buses disabled in the test environment. They verify exact frame automation, state persistence, native rejection, bad identities/state/parameters, no-overwrite and duration errors, and child crash/timeout rollback. The optional installed-effect test exercises the real Valhalla session through the Rust controller.
+
+## Experimental live DSP bridge
+
+The build script also produces `libdaw-vst3.dylib`. Build Rust with `--features vst3-live`; see the [adapter record](../../docs/decisions/vst3-adapter.md) for ownership, limits, and failure behavior. `python3 -m unittest native.vst3.test_live` exercises realtime-mode fixture automation and lifecycle without a device. Run `python3 examples/vst3_live_demo.py saved-session.json` for a silent, bounded hardware transport check. Plugin work runs on a DSP worker; CoreAudio only consumes a fixed queue.

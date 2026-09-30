@@ -170,7 +170,7 @@ Turn the tested C++ child into an offline processor for prepared track audio, bo
 
 Implemented schema-v4 serial track VST3 effects through the owned C++ child, with exact class identity, normalized saved parameter points, captured component/controller state, and transactional foreign preparation. Offline stems preserve headroom and plugin work precedes WAV creation. Portable builds reject foreign preparation explicitly; native playback stays disabled for plugin sessions. First limits are 48 kHz, zero latency, no events, ten-second render, 8 effects, 64 parameters/effect, and 64 KiB/state. See [protocol](PROTOCOL.md) and [adapter record](decisions/vst3-adapter.md). GUI remains v1-only.
 
-### T09d: native effect ownership and callback integration
+### T09d: native effect ownership and callback integration — complete (experimental)
 
 **Depends on:** T09c. **Owner:** stronger model, Luna bounded fixtures/docs.
 
@@ -200,6 +200,8 @@ Use separate commits. Start Csound with CLI rendering, then assess libcsound blo
 
 First add cancellable render jobs with progress and subscriptions. Then build minimal track/clip/device/transport/meter views through the same commands. Optional MCP translates discovery, inspect, edit, and jobs without another session model. Acceptance: Python creates/edits/saves/reloads/renders the arrangement shown by the UI, failed edits preserve state, and cancellation cleans output. Defer a visual patch editor and elaborate mixer.
 
+Implemented optional `vst3-live` with a C++ realtime-mode shim on an owned DSP worker and a fixed 1024-frame SPSC callback consumer. Same-thread initialization/process/destruction, allocation-free consumption, exact fixture automation/state restoration, repeated release, and silent Valhalla native pause/resume/stop/replacement are verified. Zero underruns and zero over-budget callbacks in the short hardware run; no acoustic claim. Seek/loop, editors, instruments, crash isolation, and general plugin compatibility are excluded. Startup/shutdown timeouts report failures; hung foreign workers are detached, requiring an engine restart. See the adapter record for limits.
+
 ## Next starting point
 
-T09c is complete. Continue with T09d native callback ownership and integration review. Scripted offline VST3 processing now works; live plugin capability remains false and the browser has no plugin controls. Preserve the tested transactional state, process containment, and unclipped effect routing. Browser clip/effect editing remains a separate UI slice.
+T09d is complete for the experimental scripted native path. Next implement one bounded GUI slice: schema-v4 inspection and selection of a previously validated stereo effect, using Rust capabilities and session.replace as authority. Keep unsupported note/clip editing locked and preserve the play/pause/hold-to-stop interaction. The current GUI remains v1-only until that slice is implemented. Then consider T10 Audio Units. Preserve offline child containment and keep all foreign lifecycle operations off the callback.

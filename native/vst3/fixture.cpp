@@ -235,7 +235,7 @@ public:
 	}
 	uint32 PLUGIN_API getLatencySamples () override { return 0; }
 	tresult PLUGIN_API setupProcessing (ProcessSetup& setup) override {
-		if (!initialized_ || active_ || setup.processMode != kOffline ||
+		if (!initialized_ || active_ || (setup.processMode != kOffline && !(setup.processMode == kRealtime && std::getenv("DAW_VST3_FIXTURE_REALTIME"))) ||
 		    setup.symbolicSampleSize != kSample32 || setup.sampleRate != 48000.0 ||
 		    setup.maxSamplesPerBlock != 256) return kResultFalse;
 		setupDone_ = true;

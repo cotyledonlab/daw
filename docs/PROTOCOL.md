@@ -14,7 +14,7 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects the native macOS build; plugin hosting is false |
+| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects native playback support; `plugin_hosting` reflects experimental live VST3 support |
 | `session.get` | `{}` | Current session (legacy shape) |
 | `session.inspect` | `{}` | `{ "revision": "0", "session": <session> }` |
 | `session.edit` | `{ "expected_revision": "0", "operations": [...] }` | Updated revision and session |
@@ -68,7 +68,7 @@ For example, after reading capabilities, construct a device by selecting a name 
 
 ## Native transport
 
-Build with `--features native-audio` on macOS. `capabilities.live_audio` means this build supports native playback, not that a working device is connected. The following methods are recognized in every build; unsupported builds return `audio_unavailable`, except status and stop, which return stopped.
+Build with `--features native-audio` on macOS. `capabilities.live_audio` means this build supports native playback, not that a working device is connected. Build `--features vst3-live` to add experimental plugin playback; this feature implies `vst3-offline` and `native-audio`. The following methods are recognized in every build; unsupported builds return `audio_unavailable`, except status and stop, which return stopped.
 
 | Method | Params | Result |
 | --- | --- | --- |
@@ -89,11 +89,11 @@ The native timeline command handoff has one pending slot. A successful seek/loop
 
 Once a seek is applied, `timeline_frame` reports its destination while paused, and playback resumes from that position. At or after an enabled loop's exclusive `end_frame`, playback wraps to `start_frame` before rendering the next sample. Seek and wrap clear note voices without chasing notes that began before the destination. They reset continuous oscillator phase and resume audio clips at the corresponding source offset. These discontinuities may click. The initial lead-in before the first loop boundary plays once. Loop settings are temporary transport state and are cleared by stop or restart. The play `seconds` limit is unchanged, including time spent paused. Offline WAV rendering starts at frame zero and ignores live transport loops.
 
-Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a callback transition is pending), `playing`, `paused`, or `error`. Active snapshots also contain `device`, `sample_rate`, `submitted_frames`, `timeline_frame`, `timeline_command_pending`, `loop_region`, and `volume`. Callback diagnostics are `callbacks`, `max_render_microseconds`, and `callbacks_over_buffer_budget`. Error snapshots contain diagnostic `error` text. `level` is the latest callback peak after monitor volume. Playing/paused states reflect callback observation, not just command dispatch. Poll status to observe transitions and later device errors. Submitted frames count DSP output, not acoustic delivery.
+Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a callback transition is pending), `playing`, `paused`, or `error`. Active snapshots also contain `device`, `sample_rate`, `submitted_frames`, `timeline_frame`, `timeline_command_pending`, `loop_region`, and `volume`. Callback diagnostics are `callbacks`, `max_render_microseconds`, and `callbacks_over_buffer_budget`. Live VST3 snapshots additionally report `plugin_worker_underruns`. Error snapshots contain diagnostic `error` text. `level` is the latest callback peak after monitor volume. Playing/paused states reflect callback observation, not just command dispatch. Poll status to observe transitions and later device errors. Submitted frames count DSP output, not acoustic delivery.
 
 Playback ends at either the requested frame count or the wall-time deadline, including pauses, followed by a short bounded buffer drain. The owner checks deadlines without needing status requests. Stop releases the stream before acknowledgment; EOF terminates the engine and releases process resources. The control queue holds at most eight messages and commands time out after ten seconds; a timed-out command has an uncertain result, so restart the engine before relying on playback state. Audio callbacks use atomics and never wait on the command queue. Default device selection and host permissions remain platform limitations.
 
-The GUI uses a 60-second native snapshot, locks session edits while active, and retains browser mode for live draft editing. Use one editing window: native transport is shared, while Web Audio players belong to individual tabs. Closing a page requests native stop on a best-effort basis; the engine's duration limit still applies.
+The GUI uses a 60-second native snapshot, locks session edits while active, and retains browser mode for live draft editing. Use one editing window: native transport is shared, while Web Audio players belong to individual tabs. Closing a page requests native stop on a best-effort basis; the engine's duration limit still applies. The GUI remains v1-only and does not expose plugin controls.
 
 ```jsonl
 {"protocol_version":1,"id":"play","method":"transport.play","params":{"seconds":10,"volume":0.25}}
@@ -200,7 +200,7 @@ Use fresh output paths for this sequence:
 
 ## Standalone VST3 spike
 
-The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. The original probes add no JSONL methods and remain separate diagnostics. T09c now provides scripted offline session processing as documented below. `plugin_hosting` remains false for live hosting.
+The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. The original probes add no JSONL methods and remain separate diagnostics. T09c provides scripted offline session processing as documented below. `capabilities.native_vst3` reports experimental status, in-process isolation, queue size, rate, and unsupported seek/loop/editors/instruments. `capabilities.plugin_hosting` reports whether experimental live hosting was compiled; `capabilities.offline_vst3.implemented` describes offline support only.
 
 ## Schema-v4 offline VST3 effects
 
@@ -216,8 +216,16 @@ State strings are even-length hex, at most 64 KiB decoded each; aggregate decode
 
 At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs per effect. Every parameter requires `id`, normalized finite `value` in 0–1, and `points` (empty allowed). Points require `frame` and normalized `value`; frames strictly increase up to `MAX_FRAME`. Plugin and gain automation together have at most 16384 points. Base values are queued at frame zero; a point at zero overrides the base, and points apply in their containing 256-frame block at the indicated offset. Plugin interpolation/smoothing is plugin-specific. Existing gain automation lanes cannot target plugin effects; plugin automation resides inside `parameters`.
 
-Build `--features vst3-offline` on macOS and build the worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. `plugin_hosting` remains false for live hosting. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
+Build `--features vst3-offline` on macOS and build the offline worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
 
-Supported layout is one stereo input/output audio bus, no event buses, float32 offline at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. Native `transport.play` returns `audio_unavailable` before opening a device. GUI editing/upload remains v1-only.
+Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. GUI editing/upload remains v1-only.
+
+### Experimental live VST3 playback (macOS)
+
+Build the shared library with `python3 native/vst3/build.py`, then build Rust with `cargo build --locked --features vst3-live`. This feature implies `vst3-offline` and `native-audio`. The script writes `output/vst3-spike/libdaw-vst3.dylib` as a fallback; `DAW_VST3_LIBRARY` may name a different library using an absolute path. Start playback from a saved schema-v4 session with `target/debug/daw play session.json 60 0.25`.
+
+Live plugin sessions require both the session and CoreAudio device to run at 48 kHz, stereo float32 plugin processing, zero-latency plugins, and no event buses. The engine supports play, pause, resume, volume, and stop for up to 60 seconds. Seek and loop requests on plugin sessions return `audio_error`. Replacing or editing the session stops playback.
+
+An owned in-process worker creates, processes, and destroys plugin instances on the same DSP thread. The CoreAudio callback consumes a fixed 1024-frame SPSC queue and performs no foreign calls, allocation, or locks. At 48 kHz the queue represents about 21.3 ms, in addition to device latency. On underrun the callback emits silence and does not advance the timeline; status and CLI transport output include `plugin_worker_underruns`. Worker startup times out after five seconds. Shutdown waits two seconds; if the in-process worker is hung, the engine detaches it and reports an explicit stop failure. Because plugin code runs in-process, a plugin crash can terminate the engine. Offline rendering continues to use its isolated child workers. A silent ValhallaFreqEcho check on MacBook Air Speakers at 48 kHz passed three play/pause/resume/stop cycles and session replacement, with zero underruns and zero callbacks over budget; acoustic delivery was not verified.
 
 Plugin renders accept 0.001–10 seconds. The renderer preserves headroom between serial effects and across tracks, then clips once at the master to PCM16. Source/assets and all child processing complete before destination creation. Failures create no output and preserve session/revision; the usual fresh-path rule still applies. Each child owns its process group and is terminated/reaped; stdout audio/state and stderr diagnostics are bounded. This is crash containment, not a security sandbox or realtime proof. Plugin code runs with caller permissions. See [the VST3 example](../examples/vst3_demo.py).

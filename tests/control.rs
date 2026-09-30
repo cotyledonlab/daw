@@ -65,7 +65,10 @@ fn capabilities_report_the_implemented_build_surface() {
         capabilities["live_audio"],
         cfg!(all(feature = "native-audio", target_os = "macos"))
     );
-    assert_eq!(capabilities["plugin_hosting"], false);
+    assert_eq!(
+        capabilities["plugin_hosting"],
+        cfg!(all(feature = "vst3-live", target_os = "macos"))
+    );
     assert_eq!(capabilities["render"]["format"], "wav_pcm16");
     assert_eq!(capabilities["render"]["channels"], 2);
     assert_eq!(capabilities["render"]["max_seconds"], 60);

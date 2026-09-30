@@ -9,6 +9,7 @@ publish = false
 [features]
 default = []
 vst3-offline = []
+vst3-live = ["vst3-offline", "native-audio"]
 native-audio = ["dep:cpal"]
 
 [target.'cfg(target_os = "macos")'.dependencies]

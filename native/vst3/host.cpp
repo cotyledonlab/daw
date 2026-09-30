@@ -386,6 +386,7 @@ static std::string probe(Module& module) {
 #include "effect_probe.inc"
 #include "process_job.inc"
 
+#ifndef DAW_VST3_LIBRARY
 int main(int argc,char** argv) {
     if(argc==4 && std::string(argv[1])=="process") {
         try { Module module(argv[2]); processJob(module,argv[3]); return 0; }
@@ -404,3 +405,5 @@ int main(int argc,char** argv) {
         std::cout<<"{\"ok\":false,\"error\":"<<quote(error.what())<<"}\n"; return 1;
     }
 }
+
+#endif

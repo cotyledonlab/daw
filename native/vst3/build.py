@@ -56,6 +56,8 @@ def main():
     run(flags + [ROOT / "native/vst3/host.cpp"] + common + ["-o", BUILD / "vst3-host"])
     run(flags + ["-bundle", ROOT / "native/vst3/fixture.cpp"] + common +
         ["-o", fixture / "MacOS/DawTestGain"])
+    run(flags + ["-dynamiclib", "-Wno-unused-function", ROOT / "native/vst3/live.cpp"] + common +
+        ["-o", BUILD / "libdaw-vst3.dylib"])
     shutil.copyfile(interfaces / "LICENSE.txt", BUILD / "STEINBERG-LICENSE.txt")
     print(f"Host: {BUILD / 'vst3-host'}")
     print(f"Fixture: {fixture.parent}")

@@ -69,7 +69,7 @@ struct EffectInstance {
     IConnectionPoint* controllerConnection=nullptr;
     bool initialized=false, separate=false, controllerInitialized=false;
     bool componentConnected=false, controllerConnected=false, active=false, processing=false;
-    EffectInstance(Module& module,const TUID cid,Host& host,Handler& handler) {
+    EffectInstance(Module& module,const TUID cid,Host& host,Handler& handler,int32 mode=kOffline) {
         try {
             success(module.factory->createInstance(cid,IComponent::iid,
                 reinterpret_cast<void**>(&component)),"create effect failed");
@@ -115,7 +115,7 @@ struct EffectInstance {
                 success(component->activateBus(kAudio,direction,0,true),"effect bus activation failed");
             }
             success(processor->canProcessSampleSize(kSample32),"effect rejected float32");
-            ProcessSetup setup{kOffline,kSample32,256,48000};
+            ProcessSetup setup{mode,kSample32,256,48000};
             success(processor->setupProcessing(setup),"effect offline setup failed");
         } catch(...) { close(false); throw; }
     }
