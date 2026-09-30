@@ -227,6 +227,8 @@ enum Action {
     Volume(f64),
     Seek(u64),
     Loop(Option<(u64, u64)>),
+    #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+    Parameter(crate::live_plugins::ParameterChange),
     Status,
 }
 struct Envelope {
@@ -303,7 +305,7 @@ impl Active {
         }
         Ok(())
     }
-    fn snapshot(&self) -> Value {
+    fn snapshot(&mut self) -> Value {
         #[cfg(all(feature = "vst3-live", target_os = "macos"))]
         let underruns = self
             .plugin_worker
@@ -311,6 +313,13 @@ impl Active {
             .map_or(0, |worker| worker.underruns());
         #[cfg(not(all(feature = "vst3-live", target_os = "macos")))]
         let underruns = 0u64;
+        #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+        let parameter_status = self
+            .plugin_worker
+            .as_mut()
+            .map(|worker| worker.parameter_status());
+        #[cfg(not(all(feature = "vst3-live", target_os = "macos")))]
+        let parameter_status: Option<Value> = None;
         let pending = self.stats.command.load(Acquire) != 0;
         let observed = self.stats.observed.load(Relaxed);
         let paused = self.stats.paused.load(Relaxed);
@@ -326,7 +335,7 @@ impl Active {
             "callbacks":self.stats.calls.load(Relaxed),
             "max_render_microseconds":self.stats.max_ns.load(Relaxed) as f64 / 1000.0,
             "callbacks_over_buffer_budget":self.stats.over_budget.load(Relaxed),
-            "timeline_command_pending":pending,"plugin_worker_underruns":underruns,
+            "timeline_command_pending":pending,"plugin_worker_underruns":underruns,"plugin_parameter_update":parameter_status,
             "loop_region":self.loop_region.map(|(start,end)| json!({"start_frame":start,"end_frame":end})),
             "volume":f64::from_bits(self.stats.volume.load(Relaxed))})
     }
@@ -366,6 +375,13 @@ impl Transport {
         crate::render::validate_duration(seconds)?;
         validate_volume(volume)?;
         self.request(Action::Play(session.clone(), seconds, volume))
+    }
+    #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+    pub(crate) fn parameter(
+        &mut self,
+        change: crate::live_plugins::ParameterChange,
+    ) -> Result<Value, String> {
+        self.request(Action::Parameter(change))
     }
     pub fn seek(&mut self, frame: u64) -> Result<Value, String> {
         if frame > crate::session::MAX_FRAME {
@@ -445,6 +461,22 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                     }
                     idle = json!({"state":"stopped","level":0});
                 }
+                #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+                Action::Parameter(change) => {
+                    let current = active.as_mut().ok_or("native playback is stopped")?;
+                    if current.stats.done.load(Relaxed)
+                        || current.stats.error.load(Relaxed)
+                        || current.drain.is_some()
+                        || Instant::now() >= current.deadline
+                    {
+                        return Err("native playback is finishing".into());
+                    }
+                    current
+                        .plugin_worker
+                        .as_mut()
+                        .ok_or("native playback has no live plugins")?
+                        .queue_parameter(change)?;
+                }
                 Action::Status => {}
                 Action::Pause | Action::Resume => {
                     let current = active.as_ref().ok_or("native playback is stopped")?;
@@ -488,7 +520,7 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
         })();
         let result = result.map(|()| {
             active
-                .as_ref()
+                .as_mut()
                 .map_or_else(|| idle.clone(), Active::snapshot)
         });
         if envelope.reply.send(result).is_err() {

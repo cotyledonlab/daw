@@ -150,9 +150,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.authorized(api=self.path.startswith("/api/")):
             return
-        if self.path in ("/api/session", "/api/capabilities", "/api/transport"):
+        if self.path in ("/api/session", "/api/session/inspect", "/api/capabilities", "/api/transport"):
             try:
-                method = {"/api/session": "session.get", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
+                method = {"/api/session": "session.get", "/api/session/inspect": "session.inspect", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
                 self.send_json(200, self.server.engine.call(method))
             except EngineError as error:
                 self.send_json(422, {"error": str(error)})
@@ -204,6 +204,24 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 128:
                         raise ValueError(f"{key} must be a nonempty string of at most 128 UTF-8 bytes.")
                 self.send_json(200, self.server.engine.call("effect.inspect", data))
+            elif self.path == "/api/effect/parameter":
+                if set(data) != {"expected_revision", "track_id", "effect_id", "parameter_id", "value"}:
+                    raise ValueError("Expected expected_revision, track_id, effect_id, parameter_id and value only.")
+                revision = data["expected_revision"]
+                if not isinstance(revision, str) or not revision or not revision.isascii() or not revision.isdecimal():
+                    raise ValueError("expected_revision must be a canonical unsigned decimal string.")
+                if str(int(revision)) != revision:
+                    raise ValueError("expected_revision must be a canonical unsigned decimal string.")
+                for key in ("track_id", "effect_id"):
+                    value = data[key]
+                    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 128:
+                        raise ValueError(f"{key} must be a nonempty string of at most 128 UTF-8 bytes.")
+                if type(data["parameter_id"]) is not int or not 0 <= data["parameter_id"] <= 0xFFFFFFFF:
+                    raise ValueError("parameter_id must be an unsigned 32-bit integer.")
+                value = data["value"]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                    raise ValueError("value must be a finite number from 0 to 1.")
+                self.send_json(200, self.server.engine.call("effect.set_parameter", data))
             elif self.path == "/api/render":
                 if set(data) != {"seconds"}:
                     raise ValueError("Expected seconds only.")

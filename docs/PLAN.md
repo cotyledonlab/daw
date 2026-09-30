@@ -194,13 +194,17 @@ Implementation notes for T09f: the primary model owns the protocol/native interf
 
 Implemented read-only `effect.inspect` through the bounded child, with strict metadata decoding, default/restored values, units and flags. The authenticated GUI route accepts only active-session IDs; display updates preserve drafts and focused controls. Fixture tests cover malformed responses, crashes, bounded Unicode conversion, and inspection without DSP; Valhalla reports parameter 48 as `wetDry`. Browser checks against the real engine verify stopped edits, apply/reload, and preserved automation. Portable, combined offline/native, and live Rust checks, thirteen JavaScript tests, and twenty-six bridge/metadata/offline integration tests pass. The preview was restarted with the user's current session restored. Playback parameter edits remain unsupported.
 
-### T09g: live edits to saved VST3 parameter values
+### T09g: live edits to saved VST3 parameter values — complete (experimental)
 
 **Depends on:** T09f. **Owner:** stronger model for worker control, state semantics and integration; Luna for independent protocol/fixture tests and docs.
 
 Start with the already saved, automatable VST3 parameters and reject targets that have saved automation for this slice. Specify a strict ID/value/revision command and its acknowledgement before implementing it. Send bounded changes to the existing DSP owner without creating or replacing plugin instances; the callback continues to consume only prepared audio. Define queue-full errors, stop/replacement races, timing relative to the queued audio, and how acknowledged values persist in the authoritative session. Avoid holding the controller indefinitely for foreign acknowledgements. No foreign calls, allocation, locks or destruction in the callback.
 
 Acceptance: a deterministic fixture test changes gain at a defined block boundary during playback without restarting phase or the worker; acknowledgements identify applied changes; invalid/stale/full-queue requests preserve the session. Save/reload retains acknowledged bases and existing opaque state. Browser controls remain responsive during play/pause, and silent installed-effect hardware checks record callback evidence separately from acoustic verification. Defer bypass, oscillator/track edits, automation override modes, discovery, windows and new parameter insertion. Document the measured control delay and any unsupported paused-state behavior.
+
+Implemented strict revision-checked `effect.set_parameter` with an eight-entry DSP-owner queue. Acceptance commits the saved base; successful block processing reports revision/frame acknowledgements separately. Eligible saved VST3 controls remain editable during native play/pause without rebuilding the instance. Automated and bypassed targets, structural controls, and new parameter insertion remain excluded. Stop/failure can cancel DSP delivery while accepted bases remain saved. The callback path is unchanged.
+
+Deterministic worker tests verify gain changes at block boundaries without phase reset, queue bounds, reused-module teardown and exclusive worker ownership. Concurrent fixture tests exposed module unloading during processing; a process-wide worker lease prevents competing DSP owners, including after a hung-worker detach, and reused instances retain shared modules until final teardown. All four Rust build configurations pass fmt/clippy/tests; thirteen JavaScript tests and forty-two bridge/native/metadata/offline integration tests pass with installed-plugin and silent-hardware coverage. The browser changed Valhalla wet/dry while playing and paused, resumed, stopped, and retained the base after refresh. A short silent hardware run reported zero underruns and over-budget callbacks; acoustic output and live sanitizer checks remain unverified.
 
 ### T10: Audio Unit host proof of concept
 
@@ -228,4 +232,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T09f is complete. Continue with T09g live edits to saved VST3 parameters, then T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Editing currently requires stopped playback; saved automation can override the base value.
+T09g is complete experimentally. Continue with T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.

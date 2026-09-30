@@ -20,6 +20,7 @@ pub const METHODS: &[&str] = &[
     "session.get",
     "session.inspect",
     "effect.inspect",
+    "effect.set_parameter",
     "session.replace",
     "session.edit",
     "session.save",
@@ -43,6 +44,7 @@ fn capabilities() -> Value {
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
+        "live_parameter_edits": {"implemented":cfg!(all(feature="vst3-live",target_os="macos")),"max_pending":8,"automation_override":false},
         "parameter_metadata": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "saved_parameters_only": true, "max_parameters": 64},
         "native_vst3": {"implemented": cfg!(all(feature = "vst3-live", target_os = "macos")), "experimental": true, "isolation": "in_process_worker", "queue_frames": 1024, "sample_rate": 48000, "seek": false, "loop": false, "editors": false, "instruments": false},
         "automation": {
@@ -198,6 +200,15 @@ pub struct Controller {
 struct EmptyParams {}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct EffectParameterParams {
+    expected_revision: String,
+    track_id: String,
+    effect_id: String,
+    parameter_id: u32,
+    value: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EffectInspectParams {
     track_id: String,
     effect_id: String,
@@ -351,6 +362,100 @@ impl Controller {
             "session.get" => {
                 let _: EmptyParams = params(value)?;
                 Ok(json!(self.session))
+            }
+            "effect.set_parameter" => {
+                let p: EffectParameterParams = params(value)?;
+                self.check_revision(&p.expected_revision)?;
+                if !p.value.is_finite()
+                    || !(0.0..=1.0).contains(&p.value)
+                    || [p.track_id.as_str(), p.effect_id.as_str()]
+                        .iter()
+                        .any(|id| id.is_empty() || id.len() > 128)
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "parameter requires bounded IDs and a normalized value",
+                    ));
+                }
+                let next_revision = self.revision.checked_add(1).ok_or_else(|| {
+                    ControlError::new("revision_exhausted", "session revision is exhausted")
+                })?;
+                let mut updated = self.session.clone();
+                let track_index = updated
+                    .tracks
+                    .iter()
+                    .position(|track| track.id == p.track_id)
+                    .ok_or_else(|| ControlError::new("invalid_params", "track not found"))?;
+                let effects = updated.tracks[track_index]
+                    .effects
+                    .as_mut()
+                    .ok_or_else(|| ControlError::new("invalid_params", "effect not found"))?;
+                let effect_index = effects
+                    .iter()
+                    .position(|effect| match effect {
+                        session::Effect::Gain { id, .. } | session::Effect::Vst3 { id, .. } => {
+                            id == &p.effect_id
+                        }
+                    })
+                    .ok_or_else(|| ControlError::new("invalid_params", "effect not found"))?;
+                let session::Effect::Vst3 {
+                    bypass, parameters, ..
+                } = &mut effects[effect_index]
+                else {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "live edits require a VST3 effect",
+                    ));
+                };
+                if *bypass {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "bypassed plugin has no live processor",
+                    ));
+                }
+                let parameter = parameters
+                    .iter_mut()
+                    .find(|parameter| parameter.id == p.parameter_id)
+                    .ok_or_else(|| {
+                        ControlError::new("invalid_params", "saved parameter not found")
+                    })?;
+                if !parameter.points.is_empty() {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "live edits cannot override saved automation",
+                    ));
+                }
+                parameter.value = p.value;
+                updated
+                    .validate()
+                    .map_err(|error| ControlError::new("invalid_params", error))?;
+                #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+                {
+                    self.transport
+                        .parameter(crate::live_plugins::ParameterChange {
+                            track: track_index,
+                            effect: effect_index,
+                            id: p.parameter_id,
+                            value: p.value,
+                            revision: next_revision,
+                        })
+                        .map_err(|error| ControlError::new("audio_error", error))?;
+                    // Queue acceptance is the commit point. DSP delivery is reported
+                    // separately; no foreign initialization or snapshot replacement.
+                    self.session = updated;
+                    self.revision = next_revision;
+                    Ok(
+                        json!({"revision":self.revision.to_string(),"session":self.session,"queued":true}),
+                    )
+                }
+                #[cfg(not(all(feature = "vst3-live", target_os = "macos")))]
+                {
+                    let _ = (effect_index, next_revision);
+                    Err(ControlError::new(
+                        "audio_unavailable",
+                        "live parameter edits require vst3-live on macOS",
+                    ))
+                }
             }
             "effect.inspect" => {
                 let p: EffectInspectParams = params(value)?;

@@ -12,6 +12,16 @@
   let metadataCache = new Map();
   let metadataPending = new Set();
   let metadataSuppressed = false;
+  let sessionRevision = null;
+  let liveParameterEditsAvailable = false;
+  const liveParameterValues = new Map();
+  let liveParameterTimer = null;
+  let liveParameterQueue = Promise.resolve();
+  let liveParameterBusy = false;
+  let liveParameterGeneration = 0;
+  let liveParameterAppliedRevision = null;
+  let liveParameterAppliedFrame = null;
+  let liveParameterPendingCount = 0;
 
   const $ = (selector) => document.querySelector(selector);
   const tracksEl = $('#tracks');
@@ -56,6 +66,29 @@
     return nativeActive();
   }
 
+  function liveParameterEligible(trackId, effectId, parameterId) {
+    if (!liveParameterEditsAvailable || !['playing', 'paused'].includes(nativeSnapshot.state)) return false;
+    const track = applied?.tracks?.find(item => item.id === trackId);
+    const effect = track?.effects?.find(item => item.id === effectId && item.kind === 'vst3');
+    const parameter = effect?.parameters?.find(item => String(item.id) === String(parameterId));
+    if (!parameter || parameter.points?.length || effect.bypass) return false;
+    const metadata = metadataCache.get(JSON.stringify([trackId, effectId]));
+    if (parameterMetadataAvailable) {
+      if (!metadata || !Array.isArray(metadata.parameters)) return false;
+      const info = metadata.parameters?.find(item => String(item.id) === String(parameterId));
+      if (!info || info.automatable !== true || info.read_only === true) return false;
+    }
+    return true;
+  }
+
+  async function inspectCurrentSession() {
+    const response = await request('/api/session/inspect');
+    const info = await response.json();
+    if (typeof info.revision !== 'string' || !info.session) throw new Error('The server returned an invalid session revision.');
+    sessionRevision = info.revision;
+    return info;
+  }
+
   function nativeStatusText(snapshot) {
     if (snapshot.state === 'starting') return 'Starting native audio…';
     if (snapshot.state === 'playing') {
@@ -77,6 +110,21 @@
       outputMode.value = 'native';
     }
     nativeSnapshot = snapshot;
+    const update = snapshot.plugin_parameter_update;
+    if (update && Number.isInteger(update.pending)) {
+      const changed = liveParameterAppliedRevision !== (update.applied_revision ?? null) || liveParameterPendingCount !== update.pending;
+      liveParameterAppliedRevision = update.applied_revision ?? null;
+      liveParameterAppliedFrame = update.applied_frame ?? null;
+      liveParameterPendingCount = update.pending;
+      if (changed && update.pending > 0) setNotice(`Plugin parameter update queued (${update.pending} pending).`);
+      else if (changed && liveParameterAppliedRevision !== null) setNotice(`Plugin parameter applied at frame ${liveParameterAppliedFrame ?? 'unknown'}.`);
+    }
+    if (snapshot.state === 'stopped' || snapshot.state === 'error') {
+      liveParameterGeneration += 1;
+      liveParameterValues.clear();
+      clearTimeout(liveParameterTimer);
+      liveParameterTimer = null;
+    }
     if (snapshot.state === 'stopped' || snapshot.state === 'error') requestAppliedEffectMetadata();
     if (outputMode.value === 'native') {
       playState.textContent = nativeStatusText(snapshot);
@@ -123,6 +171,7 @@
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
       parameterMetadataAvailable = capabilities.parameter_metadata?.implemented === true;
+      liveParameterEditsAvailable = capabilities.live_parameter_edits?.implemented === true && capabilities.live_parameter_edits?.automation_override === false;
       const option = outputMode.querySelector('option[value="native"]');
       option.disabled = !nativeAvailable;
       $('#native-build-hint').hidden = nativeAvailable;
@@ -299,7 +348,8 @@
       range.setAttribute('aria-label', `Sine ${identity.track_id}, ${identity.effect_id}, ${name}${info.unit ? ` in ${info.unit}` : ''}`);
       control.dataset.metadataDisabled = info.automatable !== true || info.read_only === true ? 'true' : 'false';
       range.dataset.metadataDisabled = control.dataset.metadataDisabled;
-      range.disabled = busy || nativeLocked() || control.dataset.metadataDisabled === 'true';
+      const live = liveParameterEligible(identity.track_id, identity.effect_id, control.dataset.parameterId);
+      range.disabled = busy || (nativeLocked() && !live) || control.dataset.metadataDisabled === 'true';
     }
   }
 
@@ -328,7 +378,10 @@
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     tracksEl.querySelectorAll('button, input').forEach(control => {
-      control.disabled = unsupportedSession || busy || locked || control.dataset.metadataDisabled === 'true';
+      const row = control.closest('.effect-row');
+      const live = control.type === 'range' && row && control.closest('[data-parameter-id]') &&
+        liveParameterEligible(row.dataset.trackId, row.dataset.effectId, control.closest('[data-parameter-id]').dataset.parameterId);
+      control.disabled = unsupportedSession || busy || (locked && !live) || control.dataset.metadataDisabled === 'true';
     });
     rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0;
     if (draft.schema_version === 4) {
@@ -366,6 +419,69 @@
     return response;
   }
 
+  function scheduleLiveParameter(identity, value) {
+    const key = JSON.stringify([identity.track_id, identity.effect_id, identity.parameter_id]);
+    liveParameterValues.set(key, { ...identity, value });
+    clearTimeout(liveParameterTimer);
+    liveParameterTimer = setTimeout(() => {
+      liveParameterTimer = null;
+      const generation = liveParameterGeneration;
+      liveParameterQueue = liveParameterQueue.then(() => flushLiveParameters(generation)).catch(() => {});
+    }, 75);
+  }
+
+  async function flushLiveParameters(generation) {
+    if (liveParameterBusy || generation !== liveParameterGeneration) return;
+    liveParameterBusy = true;
+    try {
+      while (liveParameterValues.size && generation === liveParameterGeneration && ['playing', 'paused'].includes(nativeSnapshot.state)) {
+        const [key, change] = liveParameterValues.entries().next().value;
+        liveParameterValues.delete(key);
+        if (sessionRevision === null) throw new Error('The session revision is unavailable.');
+        const response = await request('/api/effect/parameter', { method: 'POST', body: JSON.stringify({
+          expected_revision: sessionRevision, track_id: change.track_id, effect_id: change.effect_id,
+          parameter_id: change.parameter_id, value: change.value,
+        }) });
+        const result = await response.json();
+        if (typeof result.revision !== 'string' || !result.session || result.queued !== true) throw new Error('The server returned an invalid plugin parameter acceptance.');
+        sessionRevision = result.revision;
+        applied = clone(result.session);
+        syncStatus();
+      }
+    } catch (error) {
+      liveParameterValues.clear();
+      await restoreAuthoritativeParameterValues();
+      announceError(`Live plugin parameter update failed. ${error.message}`);
+    } finally {
+      liveParameterBusy = false;
+      syncStatus();
+      if (liveParameterValues.size && !liveParameterTimer && generation === liveParameterGeneration) {
+        liveParameterQueue = liveParameterQueue.then(() => flushLiveParameters(generation)).catch(() => {});
+      }
+    }
+  }
+
+  function parameterIn(session, identity) {
+    const track = session?.tracks?.find(item => item.id === identity.track_id);
+    const effect = track?.effects?.find(item => item.id === identity.effect_id);
+    return effect?.parameters?.find(item => String(item.id) === String(identity.parameter_id));
+  }
+
+  function setDraftParameter(identity, value) {
+    const parameter = parameterIn(draft, identity);
+    if (parameter) parameter.value = value;
+  }
+
+  async function restoreAuthoritativeParameterValues() {
+    try {
+      const revision = await inspectCurrentSession();
+      if (validateSession(revision.session)) return;
+      applied = clone(revision.session);
+      draft = clone(revision.session);
+      renderTracks();
+    } catch (_) { /* Keep the last accepted base if the bridge is unavailable. */ }
+  }
+
   function validateSession(session) { return SessionEditor.validate(session); }
 
   function rememberEffects() {
@@ -382,7 +498,7 @@
     if (effectsMode && nativeAvailable) outputMode.value = 'native';
     durationInput.max = SessionEditor.plugins(draft).length ? '10' : '60';
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
-    $('#effects-hint').textContent = effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. Stop before editing. Saved automation is preserved; its points cannot be edited here.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
+    $('#effects-hint').textContent = effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
   }
 
   function makeId() {
@@ -544,9 +660,22 @@
           range.dataset.metadataDisabled = control.dataset.metadataDisabled;
           range.disabled = control.dataset.metadataDisabled === 'true';
         }
-        range.addEventListener('input', () => { const number = Number(range.value); if (effect.kind === 'gain') effect.gain = number; else param.value = number; value.textContent = number.toFixed(3); markEdited(); });
+        range.addEventListener('input', () => {
+          const number = Number(range.value);
+          if (effect.kind === 'gain') { effect.gain = number; markEdited(); }
+          else {
+            const identity = { track_id: track.id, effect_id: effect.id, parameter_id: param.id };
+            setDraftParameter(identity, number);
+            if (liveParameterEligible(track.id, effect.id, param.id)) {
+              setNotice(nativeSnapshot.state === 'paused' ? 'Parameter queued; it will reach the plugin when playback resumes.' : 'Sending live plugin parameter update…');
+              scheduleLiveParameter(identity, number);
+              syncStatus();
+            } else markEdited();
+          }
+          value.textContent = number.toFixed(3);
+        });
         control.append(range, value); row.append(control);
-        if (param.points.length) row.append(element('p', 'output-hint', `${param.points.length} saved automation points override this base value during playback.`));
+        if (param.points.length) row.append(element('p', 'output-hint', `${param.points.length} saved automation points override this base value; live editing is locked for this parameter.`));
       }
       if (effect.kind === 'vst3') {
         const details = element('details', 'effect-identity');
@@ -631,6 +760,7 @@
       return false;
     }
     if (!isDirty()) return true;
+    await liveParameterQueue;
     setBusy(true);
     setNotice('Applying session changes…');
     try {
@@ -640,8 +770,9 @@
       const error = validateSession(session);
       if (error) throw new Error(`The server returned an invalid session: ${error}`);
       invalidateEffectMetadata();
-      applied = clone(session);
-      draft = clone(session);
+      const inspected = await inspectCurrentSession();
+      applied = clone(inspected.session || session);
+      draft = clone(applied);
       rememberEffects();
       configureSessionMode();
       selectSampleRate(draft.sample_rate);
@@ -699,14 +830,16 @@
       catch (_) { throw new Error('The selected file is not valid JSON.'); }
       const validation = validateSession(parsed);
       if (validation) throw new Error(validation);
+      await liveParameterQueue;
       const response = await request('/api/session', { method: 'POST', body: JSON.stringify({ session: parsed }) });
       const result = await response.json();
       const session = result.session || result;
       const serverValidation = validateSession(session);
       if (serverValidation) throw new Error(`The server returned an invalid session: ${serverValidation}`);
       invalidateEffectMetadata();
-      applied = clone(session);
-      draft = clone(session);
+      const inspected = await inspectCurrentSession();
+      applied = clone(inspected.session || session);
+      draft = clone(applied);
       rememberEffects();
       configureSessionMode();
       selectSampleRate(draft.sample_rate);
@@ -831,9 +964,8 @@
     setBusy(true);
     setNotice('Connecting to the studio…');
     try {
-      const response = await request('/api/session', { method: 'GET' });
-      const result = await response.json();
-      const session = result.session || result;
+      const inspected = await inspectCurrentSession();
+      const session = inspected.session;
       if (session && !SessionEditor.supported(session)) {
         invalidateEffectMetadata();
         unsupportedSession = true;

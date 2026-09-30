@@ -8,7 +8,7 @@ import unittest
 import wave
 from unittest.mock import patch
 
-from gui.server import ROOT, Server
+from gui.server import EngineError, ROOT, Server
 
 
 BINARY = ROOT / "target" / "debug" / "daw"
@@ -80,6 +80,62 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn(b"Reload this window", body)
         self.assertEqual(self.get_session()["sample_rate"], 48000)
+
+    def test_session_inspect_is_authenticated_and_forwards_protocol_method(self):
+        status, _, _ = self.request("GET", "/api/session/inspect", token=False)
+        self.assertEqual(status, 403)
+        with patch.object(self.server.engine, "call", return_value={"revision": "7", "session": SESSION}) as call:
+            status, body, _ = self.request("GET", "/api/session/inspect")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("session.inspect",))
+        self.assertEqual(json.loads(body)["revision"], "7")
+
+    def test_live_parameter_route_is_authenticated_and_forwards_exact_payload(self):
+        request = {"expected_revision": "0", "track_id": "tone", "effect_id": "verb",
+                   "parameter_id": 48, "value": 0.25}
+        status, _, _ = self.request("POST", "/api/effect/parameter", request, token=False)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/api/effect/parameter", request, origin="http://attacker.example")
+        self.assertEqual(status, 403)
+        accepted = {"revision": "1", "session": V4_GAIN_SESSION, "queued": True}
+        with patch.object(self.server.engine, "call", return_value=accepted) as call:
+            status, body, _ = self.post("/api/effect/parameter", request)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("effect.set_parameter", request))
+        self.assertEqual(json.loads(body), accepted)
+
+    def test_live_parameter_route_rejects_extra_fields_and_invalid_values_before_engine(self):
+        good = {"expected_revision": "0", "track_id": "tone", "effect_id": "verb",
+                "parameter_id": 48, "value": 0.25}
+        invalid = (
+            {**good, "path": "/tmp/plugin.vst3"},
+            {**good, "expected_revision": "00"},
+            {**good, "expected_revision": 0},
+            {**good, "track_id": ""},
+            {**good, "parameter_id": True},
+            {**good, "parameter_id": 2**32},
+            {**good, "value": True},
+            {**good, "value": float("nan")},
+            {**good, "value": 1.01},
+        )
+        with patch.object(self.server.engine, "call") as call:
+            for payload in invalid:
+                with self.subTest(payload=payload):
+                    status, body, _ = self.post("/api/effect/parameter", payload)
+                    self.assertEqual(status, 422, body)
+            call.assert_not_called()
+
+    def test_live_parameter_engine_rejection_returns_structured_error_without_replacing_session(self):
+        status, body, _ = self.post("/api/session", {"session": SESSION})
+        self.assertEqual(status, 200, body)
+        before = self.get_session()
+        request = {"expected_revision": "0", "track_id": "tone", "effect_id": "verb",
+                   "parameter_id": 48, "value": 0.25}
+        with patch.object(self.server.engine, "call", side_effect=EngineError("Revision conflict.")):
+            status, body, _ = self.post("/api/effect/parameter", request)
+        self.assertEqual(status, 422, body)
+        self.assertEqual(json.loads(body)["error"], "Revision conflict.")
+        self.assertEqual(self.get_session(), before)
 
     def test_capabilities_and_transport_routes_are_authenticated_and_report_stopped(self):
         status, _, _ = self.request("GET", "/api/capabilities", token=False)

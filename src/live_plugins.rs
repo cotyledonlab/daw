@@ -14,6 +14,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+// CFBundle unloading and plugin globals are not safe across competing owners.
+// A detached hung worker retains this lease until it actually exits.
+static WORKER_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct WorkerLease;
+impl Drop for WorkerLease {
+    fn drop(&mut self) {
+        WORKER_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
 type Create = unsafe extern "C" fn(
     *const c_char,
     *const c_char,
@@ -24,6 +33,7 @@ type Create = unsafe extern "C" fn(
     usize,
 ) -> *mut c_void;
 type Process = unsafe extern "C" fn(*mut c_void, *mut f64, u32, u64) -> c_int;
+type SetParameter = unsafe extern "C" fn(*mut c_void, u32, f64) -> c_int;
 type Destroy = unsafe extern "C" fn(*mut c_void) -> c_int;
 unsafe extern "C" {
     fn dlopen(path: *const c_char, flags: c_int) -> *mut c_void;
@@ -35,6 +45,7 @@ struct Library {
     create: Create,
     process: Process,
     destroy: Destroy,
+    set_parameter: SetParameter,
     teardown_failed: Cell<bool>,
 }
 impl Library {
@@ -56,8 +67,10 @@ impl Library {
         unsafe {
             let create = dlsym(handle.as_ptr(), c"daw_vst3_create".as_ptr());
             let process = dlsym(handle.as_ptr(), c"daw_vst3_process".as_ptr());
+            let set_parameter = dlsym(handle.as_ptr(), c"daw_vst3_set_parameter".as_ptr());
             let destroy = dlsym(handle.as_ptr(), c"daw_vst3_destroy".as_ptr());
-            if create.is_null() || process.is_null() || destroy.is_null() {
+            if create.is_null() || process.is_null() || destroy.is_null() || set_parameter.is_null()
+            {
                 dlclose(handle.as_ptr());
                 return Err("invalid live VST3 library exports".into());
             }
@@ -66,6 +79,7 @@ impl Library {
                 teardown_failed: Cell::new(false),
                 create: std::mem::transmute::<*mut c_void, Create>(create),
                 process: std::mem::transmute::<*mut c_void, Process>(process),
+                set_parameter: std::mem::transmute::<*mut c_void, SetParameter>(set_parameter),
                 destroy: std::mem::transmute::<*mut c_void, Destroy>(destroy),
             })
         }
@@ -151,6 +165,13 @@ impl<'a> Plugin<'a> {
                 )
             })
     }
+    fn set_parameter(&mut self, id: u32, value: f64) -> Result<(), String> {
+        // SAFETY: the handle and setter run exclusively on their DSP owner.
+        if unsafe { (self.library.set_parameter)(self.handle.as_ptr(), id, value) } != 0 {
+            return Err("live VST3 parameter update failed".into());
+        }
+        Ok(())
+    }
     fn process(&mut self, samples: &mut [[f64; 2]], frame: u64) -> Result<(), String> {
         // SAFETY: handle belongs to this thread; arrays provide contiguous stereo f64s.
         if unsafe {
@@ -183,7 +204,7 @@ enum Processor<'a> {
 }
 struct Track<'a> {
     engine: Engine,
-    effects: Vec<Processor<'a>>,
+    effects: Vec<(usize, Processor<'a>)>,
 }
 fn prepare<'a>(
     session: &Session,
@@ -199,20 +220,29 @@ fn prepare<'a>(
         source.tracks[0].automation = None;
         let engine = Engine::prepare(&source)?;
         let mut effects = Vec::new();
-        for effect in track.effects.as_deref().unwrap_or_default() {
+        for (index, effect) in track
+            .effects
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             match effect {
                 Effect::Gain { .. } => {
                     let mut gain = track.clone();
                     gain.effects = Some(vec![effect.clone()]);
-                    effects.push(Processor::Gain(PreparedChain::prepare(&gain)));
+                    effects.push((index, Processor::Gain(PreparedChain::prepare(&gain))));
                 }
                 Effect::Vst3 { bypass: true, .. } => {}
-                Effect::Vst3 { .. } => effects.push(Processor::Plugin(Plugin::new(
-                    library,
-                    effect,
-                    f64::from(session.tempo_milli_bpm.unwrap_or(120_000)) / 1000.0,
-                    frames,
-                )?)),
+                Effect::Vst3 { .. } => effects.push((
+                    index,
+                    Processor::Plugin(Plugin::new(
+                        library,
+                        effect,
+                        f64::from(session.tempo_milli_bpm.unwrap_or(120_000)) / 1000.0,
+                        frames,
+                    )?),
+                )),
             }
         }
         tracks.push(Track { engine, effects });
@@ -220,11 +250,54 @@ fn prepare<'a>(
     Ok(tracks)
 }
 
+pub(crate) const MAX_PENDING_PARAMETERS: usize = 8;
+#[derive(Clone, Copy)]
+pub(crate) struct ParameterChange {
+    pub(crate) track: usize,
+    pub(crate) effect: usize,
+    pub(crate) id: u32,
+    pub(crate) value: f64,
+    pub(crate) revision: u64,
+}
 pub(crate) struct WorkerGuard {
     control: Control,
     thread: Option<JoinHandle<Result<(), String>>>,
+    commands: std::sync::mpsc::SyncSender<ParameterChange>,
+    acknowledgements: std::sync::mpsc::Receiver<(u64, u64)>,
+    pending: usize,
+    applied: Option<(u64, u64)>,
 }
 impl WorkerGuard {
+    fn collect_acknowledgements(&mut self) {
+        while let Ok(ack) = self.acknowledgements.try_recv() {
+            self.pending -= 1;
+            self.applied = Some(ack);
+        }
+    }
+    pub(crate) fn parameter_status(&mut self) -> serde_json::Value {
+        self.collect_acknowledgements();
+        serde_json::json!({"pending":self.pending,
+            "applied_revision":self.applied.map(|(revision,_)|revision.to_string()),
+            "applied_frame":self.applied.map(|(_,frame)|frame)})
+    }
+    pub(crate) fn queue_parameter(&mut self, change: ParameterChange) -> Result<(), String> {
+        self.collect_acknowledgements();
+        if self
+            .thread
+            .as_ref()
+            .is_none_or(|thread| thread.is_finished())
+        {
+            return Err("live plugin worker has finished".into());
+        }
+        if self.pending >= MAX_PENDING_PARAMETERS {
+            return Err("plugin parameter queue full; poll status before retrying".into());
+        }
+        self.commands
+            .try_send(change)
+            .map_err(|_| "plugin parameter queue unavailable".to_string())?;
+        self.pending += 1;
+        Ok(())
+    }
     pub(crate) fn underruns(&self) -> u64 {
         self.control.underruns()
     }
@@ -251,12 +324,27 @@ impl Drop for WorkerGuard {
     }
 }
 pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerGuard), String> {
+    WORKER_ACTIVE
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .map_err(|_| {
+            "live plugin worker already active; restart engine after a hung worker".to_string()
+        })?;
+    let lease = WorkerLease;
     let (mut producer, consumer, control) = live_ring::pair();
     let session = session.clone();
     let (ready, prepared) = std::sync::mpsc::sync_channel(1);
+    let (commands, updates) =
+        std::sync::mpsc::sync_channel::<ParameterChange>(MAX_PENDING_PARAMETERS);
+    let (acknowledge, acknowledgements) = std::sync::mpsc::sync_channel(MAX_PENDING_PARAMETERS);
     let worker = thread::Builder::new()
         .name("daw-vst3-dsp".into())
         .spawn(move || {
+            let _lease = lease;
             let result: Result<(), String> =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let library = Library::open()?;
@@ -266,12 +354,33 @@ pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerG
                         if producer.stop_requested() {
                             break 'play;
                         }
+                        let mut changed = [None; MAX_PENDING_PARAMETERS];
+                        for slot in changed.iter_mut().take(1) {
+                            let Ok(change) = updates.try_recv() else {
+                                break;
+                            };
+                            let processor = tracks
+                                .get_mut(change.track)
+                                .and_then(|track| {
+                                    track
+                                        .effects
+                                        .iter_mut()
+                                        .find(|(index, _)| *index == change.effect)
+                                })
+                                .map(|(_, processor)| processor)
+                                .ok_or("live parameter target missing")?;
+                            let Processor::Plugin(plugin) = processor else {
+                                return Err("live parameter target is not a plugin".into());
+                            };
+                            plugin.set_parameter(change.id, change.value)?;
+                            *slot = Some(change.revision);
+                        }
                         let count = (frames - position).min(256) as usize;
                         let mut mixed = [[0.0f64; 2]; 256];
                         for track in &mut tracks {
                             let mut stem = [[0.0; 2]; 256];
                             track.engine.render_block_unclipped(&mut stem[..count]);
-                            for effect in &mut track.effects {
+                            for (_, effect) in &mut track.effects {
                                 match effect {
                                     Processor::Gain(chain) => {
                                         for (i, sample) in stem[..count].iter_mut().enumerate() {
@@ -287,6 +396,13 @@ pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerG
                                 mixed[i][0] += stem[i][0];
                                 mixed[i][1] += stem[i][1];
                             }
+                        }
+                        // Acknowledge DSP delivery, not acoustic output. The bounded audio
+                        // ring may still hold older samples, including while paused.
+                        for revision in changed.into_iter().flatten() {
+                            acknowledge
+                                .try_send((revision, position))
+                                .map_err(|_| "parameter acknowledgement queue unavailable")?;
                         }
                         for (i, audio) in mixed[..count].iter().enumerate() {
                             if audio.iter().any(|s| !s.is_finite()) {
@@ -335,6 +451,10 @@ pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerG
     let mut guard = WorkerGuard {
         control,
         thread: Some(worker),
+        commands,
+        acknowledgements,
+        pending: 0,
+        applied: None,
     };
     match prepared.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(())) => Ok((consumer, guard)),

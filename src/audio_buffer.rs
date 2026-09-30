@@ -187,6 +187,7 @@ mod live_tests {
         alloc::{GlobalAlloc, Layout, System},
         cell::Cell,
     };
+    static NATIVE_FIXTURE_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
     struct Counted;
     thread_local! { static WATCH: Cell<bool> = const { Cell::new(false) }; static OPERATIONS: Cell<usize> = const { Cell::new(0) }; }
     fn count() {
@@ -250,6 +251,7 @@ mod live_tests {
     #[test]
     #[ignore = "requires built native fixture and DAW_VST3_FIXTURE_NO_EVENTS/REALTIME=1"]
     fn actual_live_worker_restores_state_automates_and_releases() {
+        let _exclusive = NATIVE_FIXTURE_TEST.lock().unwrap();
         let session: Session = serde_json::from_value(serde_json::json!({
             "schema_version":4,"sample_rate":48000,"tempo_milli_bpm":120000,
             "tracks":[{"id":"t","mode":"continuous","clips":[],"device":{"kind":"sine","frequency_hz":440,"gain":0.1},
@@ -282,5 +284,89 @@ mod live_tests {
             PlaybackBuffer::prepare_native(&session, 48000, 2, 60.0, 1.0).unwrap();
         drop(playback);
         worker.as_mut().unwrap().finish().unwrap();
+    }
+    #[test]
+    #[ignore = "requires built native fixture and DAW_VST3_FIXTURE_NO_EVENTS/REALTIME=1"]
+    fn actual_live_parameter_update_preserves_phase_and_queue_bounds() {
+        let _exclusive = NATIVE_FIXTURE_TEST.lock().unwrap();
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "schema_version":4,"sample_rate":48000,"tempo_milli_bpm":120000,
+            "tracks":[{"id":"t","mode":"continuous","clips":[],"device":{"kind":"sine","frequency_hz":440,"gain":0.1},
+            "effects":[{"kind":"gain","id":"g","gain":0.5,"bypass":false},
+            {"kind":"vst3","id":"fx","bypass":false,
+            "bundle_path":format!("{}/output/vst3-spike/DawTestGain.vst3",env!("CARGO_MANIFEST_DIR")),
+            "class_id":"DA01234567894ABCBDEF0123456789AB","state_hex":"000000000000e03f","controller_state_hex":"",
+            "parameters":[{"id":0,"value":0.2,"points":[]}]}]}]
+        })).unwrap();
+        let (mut consumer, mut worker) = crate::live_plugins::start(&session, 8192).unwrap();
+        assert!(crate::live_plugins::start(&session, 8192).is_err());
+        worker
+            .queue_parameter(crate::live_plugins::ParameterChange {
+                track: 0,
+                effect: 1,
+                id: 0,
+                value: 0.7,
+                revision: 42,
+            })
+            .unwrap();
+        let mut frames = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while frames.len() < 4096 && std::time::Instant::now() < deadline {
+            if let Some(frame) = consumer.pop() {
+                frames.push(frame)
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        assert_eq!(frames.len(), 4096);
+        let status = worker.parameter_status();
+        assert_eq!(status["applied_revision"], "42");
+        assert_eq!(status["pending"], 0);
+        let changed_at = status["applied_frame"].as_u64().unwrap();
+        assert!(changed_at >= 1024 && changed_at % 256 == 0);
+        for frame in frames {
+            let position = frame.timeline - 1;
+            let gain = if position < changed_at { 0.2 } else { 0.7 };
+            let expected =
+                (std::f64::consts::TAU * position as f64 * 440.0 / 48000.0).sin() * 0.05 * gain;
+            assert!((frame.audio[0] - expected).abs() < 1e-7, "frame {position}");
+        }
+        worker.finish().unwrap();
+        let (_consumer, mut worker) = crate::live_plugins::start(&session, 8192).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        for revision in 1..=8 {
+            worker
+                .queue_parameter(crate::live_plugins::ParameterChange {
+                    track: 0,
+                    effect: 1,
+                    id: 0,
+                    value: 0.6,
+                    revision,
+                })
+                .unwrap();
+        }
+        assert!(
+            worker
+                .queue_parameter(crate::live_plugins::ParameterChange {
+                    track: 0,
+                    effect: 1,
+                    id: 0,
+                    value: 0.1,
+                    revision: 9
+                })
+                .is_err()
+        );
+        assert_eq!(worker.parameter_status()["pending"], 8);
+        worker.finish().unwrap();
+        // Reused effects share a module until every instance has released it.
+        let mut repeated = session.clone();
+        let effects = repeated.tracks[0].effects.as_mut().unwrap();
+        let mut second = effects[1].clone();
+        if let crate::session::Effect::Vst3 { id, .. } = &mut second {
+            *id = "fx2".into();
+        }
+        effects.push(second);
+        let (_consumer, mut worker) = crate::live_plugins::start(&repeated, 512).unwrap();
+        worker.finish().unwrap();
     }
 }

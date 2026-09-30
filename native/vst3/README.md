@@ -60,4 +60,18 @@ The integration tests use a project-owned gain fixture with event buses disabled
 
 ## Experimental live DSP bridge
 
-The build script also produces `libdaw-vst3.dylib`. Build Rust with `--features vst3-live`; see the [adapter record](../../docs/decisions/vst3-adapter.md) for ownership, limits, and failure behavior. `python3 -m unittest native.vst3.test_live` exercises realtime-mode fixture automation and lifecycle without a device. Run `python3 examples/vst3_live_demo.py saved-session.json` for a silent, bounded hardware transport check. Plugin work runs on a DSP worker; CoreAudio only consumes a fixed queue.
+The build script also produces `libdaw-vst3.dylib`. Build Rust with `--features vst3-live`; see the [adapter record](../../docs/decisions/vst3-adapter.md) for ownership, limits, and failure behavior. `python3 -m unittest native.vst3.test_live` exercises realtime-mode fixture automation, parameter edits, and lifecycle without a device. Run `python3 examples/vst3_live_demo.py saved-session.json` for a silent, bounded hardware transport check. Plugin work runs on a DSP worker; CoreAudio only consumes a fixed queue.
+
+Live edits target only an already saved, automatable parameter on an active, non-bypassed effect, and are rejected if the parameter has saved automation. The bounded Rust-to-worker queue accepts at most eight pending edits. Acceptance commits the base value and advances the session revision immediately; status acknowledges DSP application after a successful 256-frame block and reports the block's beginning frame. The worker's 1024-frame audio queue plus one in-flight block adds at most 26.7 ms at 48 kHz, before device latency. A paused edit can wait until resume. Stop or worker failure cancels updates not yet delivered to DSP, but accepted values remain committed and persist on save. Edits do not recapture opaque component/controller state or call the foreign controller setter. The callback remains limited to consuming prepared audio.
+
+`test_parameters` first checks strict command shapes without hardware. Its transport tests are opt-in and require the fixture, a `vst3-live` engine, and an available 48 kHz audio device:
+
+```sh
+python3 native/vst3/build.py
+cargo build --locked --features vst3-live
+python3 -m unittest native.vst3.test_live
+DAW_TEST_NATIVE_AUDIO=1 python3 -m unittest native.vst3.test_parameters
+DAW_VST3_FIXTURE_NO_EVENTS=1 DAW_VST3_FIXTURE_REALTIME=1 cargo test --locked --features vst3-live actual_live_worker -- --ignored
+```
+
+The hardware integration tests cover active and paused edits, application status, save/reload preservation, invalid targets and revisions, and the eight-entry queue limit. Keep callback evidence distinct from acoustic verification.

@@ -39,6 +39,9 @@ def load_library():
     library.daw_vst3_process.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double),
                                          ctypes.c_uint32, ctypes.c_uint64]
     library.daw_vst3_process.restype = ctypes.c_int
+    library.daw_vst3_set_parameter.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+                                                ctypes.c_double]
+    library.daw_vst3_set_parameter.restype = ctypes.c_int
     library.daw_vst3_destroy.argtypes = [ctypes.c_void_p]
     library.daw_vst3_destroy.restype = ctypes.c_int
     return library
@@ -97,6 +100,47 @@ class LiveBridgeTests(unittest.TestCase):
                 handle, error = self.create(cid=cid, blob=blob)
                 self.assertFalse(handle)
                 self.assertIn(expected.lower(), error.lower())
+
+    def test_saved_parameter_change_applies_at_next_block_and_persists(self):
+        handle, error = self.create(blob=config(points=()))
+        self.assertTrue(handle, error)
+        try:
+            initial = (ctypes.c_double * 32)(*([1.0] * 32))
+            self.assertEqual(self.library.daw_vst3_process(handle, initial, 16, 0), 0)
+            self.assertTrue(all(abs(value - 0.2) < 1e-7 for value in initial))
+            self.assertEqual(self.library.daw_vst3_set_parameter(handle, 0, 0.7), 0)
+            for position in (16, 32):
+                changed = (ctypes.c_double * 32)(*([1.0] * 32))
+                self.assertEqual(self.library.daw_vst3_process(handle, changed, 16,
+                                                               position), 0)
+                self.assertTrue(all(abs(value - 0.7) < 1e-7 for value in changed))
+        finally:
+            self.assertEqual(self.library.daw_vst3_destroy(handle), 0)
+
+    def test_invalid_or_automated_parameter_updates_leave_base_unchanged(self):
+        handle, error = self.create(blob=config(points=()))
+        self.assertTrue(handle, error)
+        try:
+            for parameter_id, value in ((99, 0.8), (0, -0.1), (0, 1.1),
+                                        (0, float("nan")), (0, float("inf"))):
+                self.assertEqual(self.library.daw_vst3_set_parameter(handle,
+                                                                     parameter_id,
+                                                                     value), -1)
+            samples = (ctypes.c_double * 32)(*([1.0] * 32))
+            self.assertEqual(self.library.daw_vst3_process(handle, samples, 16, 0), 0)
+            self.assertTrue(all(abs(value - 0.2) < 1e-7 for value in samples))
+        finally:
+            self.assertEqual(self.library.daw_vst3_destroy(handle), 0)
+
+        handle, error = self.create(blob=config(points=((20, 0.8),)))
+        self.assertTrue(handle, error)
+        try:
+            self.assertEqual(self.library.daw_vst3_set_parameter(handle, 0, 0.7), -1)
+            samples = (ctypes.c_double * 32)(*([1.0] * 32))
+            self.assertEqual(self.library.daw_vst3_process(handle, samples, 16, 0), 0)
+            self.assertTrue(all(abs(value - 0.2) < 1e-7 for value in samples))
+        finally:
+            self.assertEqual(self.library.daw_vst3_destroy(handle), 0)
 
     def test_repeated_create_process_destroy_lifecycle(self):
         for _ in range(10):
