@@ -388,8 +388,8 @@ static std::string probe(Module& module) {
 
 #ifndef DAW_VST3_LIBRARY
 int main(int argc,char** argv) {
-    if(argc==4 && std::string(argv[1])=="process") {
-        try { Module module(argv[2]); processJob(module,argv[3]); return 0; }
+    if(argc==4 && (std::string(argv[1])=="process" || std::string(argv[1])=="metadata")) {
+        try { Module module(argv[2]); processJob(module,argv[3],std::string(argv[1])=="metadata"); return 0; }
         catch(const std::exception& error) { std::cerr<<error.what()<<"\n"; return 1; }
     }
     if(argc!=3 || (std::string(argv[1])!="scan" && std::string(argv[1])!="probe" && std::string(argv[1])!="effect-probe")) {

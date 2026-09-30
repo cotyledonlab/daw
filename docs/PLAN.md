@@ -186,11 +186,21 @@ The browser accepts v1 and schema-v4 continuous, clip-free sine sessions. Add ga
 
 Acceptance verified: thirteen bridge tests and thirteen JavaScript tests pass; browser loaded Valhalla, edited/applied bypass and parameter 48, added serial gain/reused VST3 effects, played/paused/resumed/stopped silently, and downloaded a WAV through the real engine. The existing preview's sine edits were saved and restored during restart.
 
-### T09f: names and metadata for validated plugin parameters
+### T09f: names and metadata for validated plugin parameters — complete
 
 **Depends on:** T09e. Inspect only effects already in the authoritative session through a bounded owned child. Add names/defaults/flags to the protocol and GUI without guessing ParamID meanings or changing opaque state. Keep metadata errors explicit and editing limited to supported automatable parameters. Acceptance: Valhalla's saved parameter displays its actual name, restored base value and automation remain intact, and metadata failures preserve the session. No arbitrary HTTP file browsing or native plugin windows.
 
-Implementation notes for T09f: the primary model owns the protocol/native interface; Luna can add display and bounded fixtures after it is specified. Proposed command `effect.inspect` takes only track/effect IDs from the active session, never client paths. Use the existing owned child/timeouts and bounded state restore. Return bounded parameter metadata with actual UTF-16 names decoded safely, numeric IDs, automatable/read-only flags, and current restored normalized values. Inspect must not process or commit the session, replace playback, or overwrite saved bases/points. Extend the existing controller/child tests for invalid IDs, corrupt metadata and worker failures; GUI shows names but preserves ID-based serialization. Keep snapshot values authoritative and editable parameters limited to the already saved list for this slice.
+Implementation notes for T09f: the primary model owns the protocol/native interface; Luna can add display and bounded fixtures after it is specified. Command `effect.inspect` takes only track/effect IDs from the active session, never client paths. Use the existing owned child/timeouts and bounded state restore. Return bounded parameter metadata with actual UTF-16 names decoded safely, numeric IDs, automatable/read-only flags, and current restored normalized values. Inspect must not process or commit the session, replace playback, or overwrite saved bases/points. Extend the existing controller/child tests for invalid IDs, corrupt metadata and worker failures; GUI shows names but preserves ID-based serialization. Keep snapshot values authoritative and editable parameters limited to the already saved list for this slice.
+
+Implemented read-only `effect.inspect` through the bounded child, with strict metadata decoding, default/restored values, units and flags. The authenticated GUI route accepts only active-session IDs; display updates preserve drafts and focused controls. Fixture tests cover malformed responses, crashes, bounded Unicode conversion, and inspection without DSP; Valhalla reports parameter 48 as `wetDry`. Browser checks against the real engine verify stopped edits, apply/reload, and preserved automation. Portable, combined offline/native, and live Rust checks, thirteen JavaScript tests, and twenty-six bridge/metadata/offline integration tests pass. The preview was restarted with the user's current session restored. Playback parameter edits remain unsupported.
+
+### T09g: live edits to saved VST3 parameter values
+
+**Depends on:** T09f. **Owner:** stronger model for worker control, state semantics and integration; Luna for independent protocol/fixture tests and docs.
+
+Start with the already saved, automatable VST3 parameters and reject targets that have saved automation for this slice. Specify a strict ID/value/revision command and its acknowledgement before implementing it. Send bounded changes to the existing DSP owner without creating or replacing plugin instances; the callback continues to consume only prepared audio. Define queue-full errors, stop/replacement races, timing relative to the queued audio, and how acknowledged values persist in the authoritative session. Avoid holding the controller indefinitely for foreign acknowledgements. No foreign calls, allocation, locks or destruction in the callback.
+
+Acceptance: a deterministic fixture test changes gain at a defined block boundary during playback without restarting phase or the worker; acknowledgements identify applied changes; invalid/stale/full-queue requests preserve the session. Save/reload retains acknowledged bases and existing opaque state. Browser controls remain responsive during play/pause, and silent installed-effect hardware checks record callback evidence separately from acoustic verification. Defer bypass, oscillator/track edits, automation override modes, discovery, windows and new parameter insertion. Document the measured control delay and any unsupported paused-state behavior.
 
 ### T10: Audio Unit host proof of concept
 
@@ -218,4 +228,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T09e is complete. Continue with T09f parameter names and metadata for validated session effects, then T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction.
+T09f is complete. Continue with T09g live edits to saved VST3 parameters, then T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Editing currently requires stopped playback; saved automation can override the base value.

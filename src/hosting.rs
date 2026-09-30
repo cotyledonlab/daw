@@ -57,6 +57,32 @@ pub fn process(_: &Effect, _: &[[f64; 2]]) -> Result<Processed, String> {
     Err("offline VST3 requires a macOS build with --features vst3-offline".into())
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParameterMetadata {
+    pub id: u32,
+    pub name: String,
+    pub short_name: String,
+    pub unit: String,
+    pub default_value: f64,
+    pub restored_value: f64,
+    pub automatable: bool,
+    pub read_only: bool,
+    pub step_count: u32,
+}
+
+pub fn inspect(effect: &Effect) -> Result<Vec<ParameterMetadata>, String> {
+    #[cfg(all(feature = "vst3-offline", target_os = "macos"))]
+    {
+        worker::inspect(effect)
+    }
+    #[cfg(not(all(feature = "vst3-offline", target_os = "macos")))]
+    {
+        let _ = effect;
+        Err("VST3 parameter metadata requires a macOS vst3-offline build".into())
+    }
+}
+
 #[cfg(all(feature = "vst3-offline", target_os = "macos"))]
 pub fn process(effect: &Effect, audio: &[[f64; 2]]) -> Result<Processed, String> {
     worker::process(effect, audio)
@@ -135,7 +161,7 @@ mod worker {
             kill(-(pid as i32), 9);
         }
     }
-    pub(super) fn process(effect: &Effect, audio: &[[f64; 2]]) -> Result<Processed, String> {
+    fn run(effect: &Effect, audio: &[[f64; 2]], metadata: bool) -> Result<Vec<u8>, String> {
         let Effect::Vst3 {
             bundle_path,
             class_id,
@@ -191,7 +217,11 @@ mod worker {
             }
         }
         let mut child = Command::new(host)
-            .args(["process", bundle_path, class_id])
+            .args([
+                if metadata { "metadata" } else { "process" },
+                bundle_path,
+                class_id,
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -203,7 +233,8 @@ mod worker {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let writer = thread::spawn(move || stdin.write_all(&job));
-        let reader = thread::spawn(move || bounded(stdout, MAX_OUTPUT));
+        let output_limit = if metadata { 131072 } else { MAX_OUTPUT };
+        let reader = thread::spawn(move || bounded(stdout, output_limit));
         let errors = thread::spawn(move || bounded(stderr, 65536));
         let start = Instant::now();
         let mut timed_out = false;
@@ -238,7 +269,7 @@ mod worker {
         if timed_out {
             return Err("plugin host timed out after 15 seconds".into());
         }
-        if output.len() > MAX_OUTPUT || stderr.len() > 65536 {
+        if output.len() > output_limit || stderr.len() > 65536 {
             return Err("plugin host output exceeded limits".into());
         }
         let status = status.map_err(|e| e.to_string())?;
@@ -249,6 +280,10 @@ mod worker {
             ));
         }
         written.map_err(|e| format!("plugin job write failed: {e}"))?;
+        Ok(output)
+    }
+    pub(super) fn process(effect: &Effect, audio: &[[f64; 2]]) -> Result<Processed, String> {
+        let output = run(effect, audio, false)?;
         let mut input = output.as_slice();
         if read_u32(&mut input)? != MAGIC {
             return Err("invalid plugin response magic".into());
@@ -272,5 +307,81 @@ mod worker {
             state_hex,
             controller_state_hex,
         })
+    }
+    fn read_text(input: &mut &[u8]) -> Result<String, String> {
+        let size = read_u32(input)? as usize;
+        if size > 512 || input.len() < size {
+            return Err("invalid metadata text length".into());
+        }
+        let value = std::str::from_utf8(&input[..size])
+            .map_err(|_| "invalid metadata UTF-8")?
+            .to_owned();
+        *input = &input[size..];
+        Ok(value)
+    }
+    fn read_value(input: &mut &[u8]) -> Result<f64, String> {
+        if input.len() < 8 {
+            return Err("truncated metadata value".into());
+        }
+        let value = f64::from_le_bytes(input[..8].try_into().unwrap());
+        *input = &input[8..];
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err("invalid normalized metadata value".into());
+        }
+        Ok(value)
+    }
+    fn read_flag(input: &mut &[u8]) -> Result<bool, String> {
+        match read_u32(input)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err("invalid metadata flag".into()),
+        }
+    }
+    pub(super) fn inspect(effect: &Effect) -> Result<Vec<ParameterMetadata>, String> {
+        let Effect::Vst3 { parameters, .. } = effect else {
+            return Err("metadata requires a VST3 effect".into());
+        };
+        let output = run(effect, &[], true)?;
+        let mut input = output.as_slice();
+        if read_u32(&mut input)? != 0x314D5744 {
+            return Err("invalid metadata response magic".into());
+        }
+        let count = read_u32(&mut input)? as usize;
+        if count != parameters.len() || count > 64 {
+            return Err("metadata parameter count mismatch".into());
+        }
+        let mut records = Vec::with_capacity(count);
+        for saved in parameters {
+            let id = read_u32(&mut input)?;
+            if id != saved.id {
+                return Err("metadata parameter identity mismatch".into());
+            }
+            let name = read_text(&mut input)?;
+            let short_name = read_text(&mut input)?;
+            let unit = read_text(&mut input)?;
+            let default_value = read_value(&mut input)?;
+            let restored_value = read_value(&mut input)?;
+            let automatable = read_flag(&mut input)?;
+            let read_only = read_flag(&mut input)?;
+            let step_count = read_u32(&mut input)?;
+            if step_count > i32::MAX as u32 {
+                return Err("invalid metadata step count".into());
+            }
+            records.push(ParameterMetadata {
+                id,
+                name,
+                short_name,
+                unit,
+                default_value,
+                restored_value,
+                automatable,
+                read_only,
+                step_count,
+            });
+        }
+        if !input.is_empty() {
+            return Err("trailing metadata response bytes".into());
+        }
+        Ok(records)
     }
 }

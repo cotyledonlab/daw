@@ -142,3 +142,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .effect-identity { flex-basis: 100%; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
 .effect-select { flex: 1; min-width: 160px; max-width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--line); padding: 9px; border-radius: 6px; }
 #effects-hint { margin-bottom: 16px; }
+
+.parameter-name { max-width: 45%; overflow-wrap: anywhere; }
+.metadata-error { flex-basis: 100%; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }

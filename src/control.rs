@@ -19,6 +19,7 @@ pub const METHODS: &[&str] = &[
     "capabilities",
     "session.get",
     "session.inspect",
+    "effect.inspect",
     "session.replace",
     "session.edit",
     "session.save",
@@ -42,6 +43,7 @@ fn capabilities() -> Value {
         "devices": ["sine", "audio"],
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
+        "parameter_metadata": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "saved_parameters_only": true, "max_parameters": 64},
         "native_vst3": {"implemented": cfg!(all(feature = "vst3-live", target_os = "macos")), "experimental": true, "isolation": "in_process_worker", "queue_frames": 1024, "sample_rate": 48000, "seek": false, "loop": false, "editors": false, "instruments": false},
         "automation": {
             "schema_version": 3, "parameters": ["gain"], "interpolation": ["step"],
@@ -196,6 +198,13 @@ pub struct Controller {
 struct EmptyParams {}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct EffectInspectParams {
+    track_id: String,
+    effect_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PathParams {
     path: String,
 }
@@ -342,6 +351,46 @@ impl Controller {
             "session.get" => {
                 let _: EmptyParams = params(value)?;
                 Ok(json!(self.session))
+            }
+            "effect.inspect" => {
+                let p: EffectInspectParams = params(value)?;
+                if [p.track_id.as_str(), p.effect_id.as_str()]
+                    .iter()
+                    .any(|id| id.is_empty() || id.len() > 128)
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "track/effect IDs must contain 1..128 UTF-8 bytes",
+                    ));
+                }
+                let track = self
+                    .session
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == p.track_id)
+                    .ok_or_else(|| ControlError::new("invalid_params", "track not found"))?;
+                let effect = track
+                    .effects
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .find(|effect| match effect {
+                        session::Effect::Gain { id, .. } | session::Effect::Vst3 { id, .. } => {
+                            id == &p.effect_id
+                        }
+                    })
+                    .ok_or_else(|| ControlError::new("invalid_params", "effect not found"))?;
+                if !matches!(effect, session::Effect::Vst3 { .. }) {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "parameter metadata requires a VST3 effect",
+                    ));
+                }
+                let parameters = crate::hosting::inspect(effect)
+                    .map_err(|e| ControlError::new("plugin_error", e))?;
+                Ok(
+                    json!({"track_id":p.track_id,"effect_id":p.effect_id,"revision":self.revision.to_string(),"parameters":parameters}),
+                )
             }
             "session.inspect" => {
                 let _: EmptyParams = params(value)?;

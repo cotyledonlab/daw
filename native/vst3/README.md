@@ -1,6 +1,6 @@
 # macOS VST3 offline spike
 
-This directory contains a standalone experiment for loading and inspecting VST3 bundles on macOS. The original diagnostic probes remain standalone. T09c adds a private worker used by scripted schema-v4 session validation and offline rendering. The GUI and playback do not host plugins; live plugin capability remains unavailable.
+This directory contains a standalone experiment for loading and inspecting VST3 bundles on macOS. The original diagnostic probes remain standalone. T09c adds private workers used by scripted schema-v4 session validation and offline rendering; T09f adds read-only metadata inspection for effects already in the active session. The GUI can display saved parameter names and units but does not host plugin editors or discover plugins. Live plugin capability remains experimental.
 
 The spike uses Steinberg's official `pluginterfaces` repository at commit `31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c`, tag `v3.8.0_build_66`. The build intentionally avoids CMake: `build.py` invokes the system `clang++` and links CoreFoundation. The SDK checkout, binaries, fixture bundle, and copied `STEINBERG-LICENSE.txt` are all placed under ignored `output/`.
 
@@ -44,7 +44,13 @@ ValhallaFreqEcho passed five repeated probes in both normal and sanitizer builds
 
 ## Session worker
 
-Build the Rust controller with `--features vst3-offline` (combine with `native-audio` for existing built-in playback). `src/hosting.rs` drives the private binary `process BUNDLE CID` job; use JSONL session/render commands rather than invoking binary jobs manually. See [schema v4](../../docs/PROTOCOL.md) and [the example](../../examples/vst3_demo.py). The worker validates exact class identity and parameter IDs, restores state, processes stereo blocks, captures bounded state, and exits before Rust accepts successful output. Session limits are stricter than the diagnostic probe: 64 KiB state blobs and zero latency, with ten-second renders.
+Build the Rust controller with `--features vst3-offline` (combine with `native-audio` for existing built-in playback). `src/hosting.rs` drives private worker jobs; use JSONL session/render commands rather than invoking binary jobs manually. See [schema v4](../../docs/PROTOCOL.md) and [the example](../../examples/vst3_demo.py). The processing worker validates exact class identity and parameter IDs, restores state, processes stereo blocks, captures bounded state, and exits before Rust accepts successful output. Session limits are stricter than the diagnostic probe: 64 KiB state blobs and zero latency, with ten-second renders.
+
+### Read-only parameter metadata
+
+The Rust `effect.inspect` command accepts only the IDs of a VST3 effect already present in the active validated session. Its owned child metadata job reads the effect's saved component/controller state, restores it, and reports bounded parameter metadata without activating or processing the plugin. It does not capture state, commit or revise the session, alter saved base values or automation points, or stop playback. The JSON result includes the current session revision and metadata only for the saved parameter IDs, with names, short names, units, defaults, restored values, automation/read-only flags, and step counts. `capabilities.parameter_metadata.implemented` reports whether the build supports this operation; `vst3-live` implies the required offline feature.
+
+The metadata child has a 15-second timeout, a 128 KiB stdout limit, and a 64 KiB stderr limit. Plugin text fields are bounded to 128 UTF-16 code units; invalid surrogate pairs are replaced with U+FFFD before strict Rust-side UTF-8 and record validation. Failures return structured errors and leave the session untouched. The optional installed-plugin test in `test_daw` checks that ValhallaFreqEcho parameter 48 is named `wetDry`, reports its restored value, and does not change the active session.
 
 ```sh
 DAW_VST3_EFFECT=/path/to/ValhallaFreqEcho.vst3 python3 -m unittest native.vst3.test_daw

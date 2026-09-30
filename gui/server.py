@@ -196,6 +196,14 @@ class Handler(BaseHTTPRequestHandler):
                 if action not in ("play", "pause", "resume", "stop", "volume"):
                     raise ValueError("Unknown transport action.")
                 self.send_json(200, self.server.engine.call("transport." + action, data))
+            elif self.path == "/api/effect/inspect":
+                if set(data) != {"track_id", "effect_id"}:
+                    raise ValueError("Expected track_id and effect_id only.")
+                for key in ("track_id", "effect_id"):
+                    value = data[key]
+                    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 128:
+                        raise ValueError(f"{key} must be a nonempty string of at most 128 UTF-8 bytes.")
+                self.send_json(200, self.server.engine.call("effect.inspect", data))
             elif self.path == "/api/render":
                 if set(data) != {"seconds"}:
                     raise ValueError("Expected seconds only.")

@@ -14,13 +14,14 @@ Malformed envelopes, invalid IDs, invalid UTF-8, and oversized requests return `
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects native playback support; `plugin_hosting` reflects experimental live VST3 support |
+| `capabilities` | `{}` | Methods, implemented devices, session version, render limits; `live_audio` reflects native playback support; `plugin_hosting` reflects experimental live VST3 support; `parameter_metadata.implemented` reflects VST3 metadata inspection support |
 | `session.get` | `{}` | Current session (legacy shape) |
 | `session.inspect` | `{}` | `{ "revision": "0", "session": <session> }` |
 | `session.edit` | `{ "expected_revision": "0", "operations": [...] }` | Updated revision and session |
 | `session.replace` | `{ "session": <session> }` | Validated replacement session |
 | `session.save` | `{ "path": "session.json" }` | `{ "path": "session.json" }` |
 | `session.load` | `{ "path": "session.json" }` | Validated loaded session |
+| `effect.inspect` | `{ "track_id": "tone", "effect_id": "echo" }` | Active VST3 effect identity, revision, and metadata for its saved parameters; read-only |
 | `render` | `{ "path": "tone.wav", "seconds": 1.0 }` | `{ "frames": 48000, "sample_rate": 48000, "channels": 2, "clipped_frames": 0 }` |
 
 Command responses are synchronous and serial. Native playback continues on its owner thread between commands. There is no render cancellation, undo, request deduplication, or parallel command execution. Revision checks detect stale edits between serialized commands. Replacement/load validate before stopping native playback and changing state; validation failures preserve both. A stop failure preserves the session. Retrying a save/render uses a new path because output creation never overwrites. Paths are relative to the server's working directory unless absolute. Parent directories must exist. A write error attempts to delete incomplete output; a process crash can leave an incomplete file. Successful writes are synced, but there is no crash-recovery journal or atomic publication to other readers.
@@ -191,6 +192,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
+| `plugin_error` | VST3 validation, metadata, processing worker, or plugin operation failed |
 | `internal_error` | Unexpected session serialization failure |
 
 ## Complete command examples
@@ -227,6 +229,20 @@ At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs
 Build `--features vst3-offline` on macOS and build the offline worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
 
 Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. The GUI upload guard accepts only v1/v4 continuous sine session shapes; plugin sessions still require the Rust validation and preparation described above.
+
+### VST3 parameter metadata inspection
+
+Build with `--features vst3-offline` on macOS. `capabilities.parameter_metadata.implemented` is true when metadata inspection is enabled in the build; the worker must also be built to use it. `vst3-live` implies `vst3-offline`. Inspection accepts only the `track_id` and `effect_id` of an existing VST3 effect in the active, validated session. Each ID must be a nonempty string of at most 128 UTF-8 bytes. No bundle path or other client-selected plugin information is accepted.
+
+```jsonl
+{"protocol_version":1,"id":"inspect","method":"effect.inspect","params":{"track_id":"tone","effect_id":"echo"}}
+```
+
+The result contains `track_id`, `effect_id`, the current decimal-string `revision`, and `parameters` for the parameters already saved on that effect, up to 64. Each parameter record contains `id`, `name`, `short_name`, `unit`, normalized `default_value`, normalized `restored_value`, `automatable`, `read_only`, and `step_count`. It never appends parameters that the session does not save. `restored_value` reports the plugin's current value after saved state is restored; it is informational and does not replace the session's saved base `value` or automation points.
+
+The command runs an owned child metadata job against the saved plugin state. It does not activate or process the plugin, capture new state, commit a session, advance the revision, change base values or points, or stop playback. The job has a 15-second timeout, a 128 KiB stdout limit, and a 64 KiB stderr limit. Plugin names and units originate as bounded UTF-16 fields of at most 128 code units; malformed surrogate pairs are replaced with U+FFFD before UTF-8 output. Rust validates UTF-8, numeric bounds, IDs, flags, and trailing output. A missing active effect, non-VST3 effect, worker failure, timeout, malformed metadata, or unavailable worker returns a structured error without changing the session.
+
+The loopback GUI exposes this as authenticated `POST /api/effect/inspect` with a JSON object containing exactly `track_id` and `effect_id`; the route never accepts paths. It queries metadata only for VST3 effects in the applied session, serializes metadata requests, and defers them during render or native playback. Replies from an older applied-session generation are ignored. The editor uses actual names and units for the saved parameter controls while retaining draft/session base values; it preserves focused controls, shows a per-effect fallback error, and disables parameters marked read-only or non-automatable. Editing still requires stopped playback.
 
 ### Experimental live VST3 playback (macOS)
 

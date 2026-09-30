@@ -6,6 +6,7 @@ import subprocess
 import threading
 import unittest
 import wave
+from unittest.mock import patch
 
 from gui.server import ROOT, Server
 
@@ -87,6 +88,7 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         capabilities = json.loads(body)
         self.assertIn("transport.status", capabilities["methods"])
+        self.assertIsInstance(capabilities["parameter_metadata"]["implemented"], bool)
 
         status, _, _ = self.request("GET", "/api/transport", token=False)
         self.assertEqual(status, 403)
@@ -102,6 +104,46 @@ class ServerIntegrationTests(unittest.TestCase):
         status, body, _ = self.post("/api/transport", {"action": "render", "path": "/tmp/owned.wav"})
         self.assertEqual(status, 422, body)
         self.assertIn(b"Unknown transport action", body)
+
+    def test_effect_inspect_route_is_authenticated_and_forwards_only_ids(self):
+        status, _, _ = self.request("POST", "/api/effect/inspect", {"track_id": "tone", "effect_id": "verb"}, token=False)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/api/effect/inspect", {"track_id": "tone", "effect_id": "verb"}, origin="http://attacker.example")
+        self.assertEqual(status, 403)
+        expected = {"track_id": "tone", "effect_id": "verb"}
+        with patch.object(self.server.engine, "call", return_value={"track_id": "tone", "effect_id": "verb", "revision": "0", "parameters": []}) as call:
+            status, body, _ = self.post("/api/effect/inspect", expected)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("effect.inspect", expected))
+        self.assertEqual(json.loads(body)["parameters"], [])
+
+    def test_effect_inspect_rejects_extra_fields_and_invalid_ids_without_engine_mutation(self):
+        status, _, _ = self.post("/api/session", {"session": SESSION})
+        self.assertEqual(status, 200)
+        before = self.get_session()
+        invalid = (
+            {"track_id": "tone", "effect_id": "fx", "path": "/tmp/plugin.vst3"},
+            {"track_id": "", "effect_id": "fx"},
+            {"track_id": "tone", "effect_id": "x" * 129},
+            {"track_id": "é" * 65, "effect_id": "fx"},
+            {"track_id": 12, "effect_id": "fx"},
+        )
+        with patch.object(self.server.engine, "call") as call:
+            for payload in invalid:
+                with self.subTest(payload=payload):
+                    status, body, _ = self.post("/api/effect/inspect", payload)
+                    self.assertEqual(status, 422, body)
+            call.assert_not_called()
+        self.assertEqual(self.get_session(), before)
+
+    def test_effect_inspect_non_plugin_identity_returns_error_and_preserves_session(self):
+        status, body, _ = self.post("/api/session", {"session": V4_GAIN_SESSION})
+        self.assertEqual(status, 200, body)
+        before = self.get_session()
+        status, body, _ = self.post("/api/effect/inspect", {"track_id": "tone", "effect_id": "trim"})
+        self.assertEqual(status, 422, body)
+        self.assertIsInstance(json.loads(body)["error"], str)
+        self.assertEqual(self.get_session(), before)
 
     def test_invalid_host_and_origin_are_rejected(self):
         status, _, _ = self.request("GET", "/api/session", host="attacker.example")

@@ -48,7 +48,22 @@ static void readState(OpaqueState& state) {
     if(size) std::cin.read(reinterpret_cast<char*>(state.bytes.data()),size);
     check(static_cast<bool>(std::cin),"truncated job state");
 }
-static void processJob(Module& module,const std::string& cid) {
+static void writeText(const TChar* text) {
+    std::string utf8;
+    for(size_t i=0;i<128 && text[i];++i) {
+        uint32 cp=static_cast<uint16>(text[i]);
+        if(cp>=0xD800 && cp<=0xDBFF) {
+            if(i+1<128 && text[i+1]>=0xDC00 && text[i+1]<=0xDFFF) { cp=0x10000+((cp-0xD800)<<10)+(text[++i]-0xDC00); }
+            else cp=0xFFFD;
+        } else if(cp>=0xDC00 && cp<=0xDFFF) cp=0xFFFD;
+        if(cp<0x80) utf8.push_back(cp);
+        else if(cp<0x800) { utf8.push_back(0xC0|(cp>>6)); utf8.push_back(0x80|(cp&63)); }
+        else if(cp<0x10000) { utf8.push_back(0xE0|(cp>>12)); utf8.push_back(0x80|((cp>>6)&63)); utf8.push_back(0x80|(cp&63)); }
+        else { utf8.push_back(0xF0|(cp>>18)); utf8.push_back(0x80|((cp>>12)&63)); utf8.push_back(0x80|((cp>>6)&63)); utf8.push_back(0x80|(cp&63)); }
+    }
+    writeJob<uint32>(utf8.size()); std::cout.write(utf8.data(),utf8.size());
+}
+static void processJob(Module& module,const std::string& cid,bool metadata=false) {
     check(cid.size()==32,"job requires exact class CID");
     PClassInfo selected{}; bool found=false;
     auto classes=module.factory->countClasses(); check(classes>0 && classes<=128,"job class count outside limit");
@@ -73,7 +88,7 @@ static void processJob(Module& module,const std::string& cid) {
         }
         queue->block.reserve(257); changes.queues.push_back(std::move(queue));
     }
-    auto frames=readJob<uint32>(); check(frames<=480000,"offline plugin render exceeds 10 seconds");
+    auto frames=readJob<uint32>(); check(!metadata || (frames==0 && totalPoints==0),"metadata job contains audio or automation"); check(frames<=480000,"offline plugin render exceeds 10 seconds");
     std::vector<float> audio(static_cast<size_t>(frames)*2);
     if(frames) std::cin.read(reinterpret_cast<char*>(audio.data()),audio.size()*sizeof(float));
     check(static_cast<bool>(std::cin),"truncated job audio");
@@ -94,9 +109,39 @@ static void processJob(Module& module,const std::string& cid) {
             bool valid=false;
             for(int i=0;i<count;++i) {
                 ParameterInfo info{}; success(effect.controller->getParameterInfo(i,info),"job parameter info failed");
-                if(info.id==queue->id && (info.flags & ParameterInfo::kCanAutomate) && !(info.flags & ParameterInfo::kIsReadOnly)) valid=true;
+                if(info.id==queue->id && (metadata || ((info.flags & ParameterInfo::kCanAutomate) && !(info.flags & ParameterInfo::kIsReadOnly)))) valid=true;
             }
             check(valid,"job parameter ID unavailable or not automatable");
+        }
+        if(metadata) {
+            std::vector<std::pair<ParameterInfo,double>> records;
+            for(auto& queue:changes.queues) {
+                ParameterInfo selectedParam{}; bool foundParam=false;
+                for(int i=0;i<count;++i) {
+                    ParameterInfo info{}; success(effect.controller->getParameterInfo(i,info),"metadata parameter info failed");
+                    if(info.id==queue->id) { check(!foundParam,"duplicate plugin parameter ID"); selectedParam=info; foundParam=true; }
+                }
+                check(foundParam && selectedParam.stepCount>=0,"invalid plugin parameter metadata");
+                auto current=effect.controller->getParamNormalized(queue->id);
+                check(std::isfinite(current) && current>=0 && current<=1 && std::isfinite(selectedParam.defaultNormalizedValue) && selectedParam.defaultNormalizedValue>=0 && selectedParam.defaultNormalizedValue<=1,"invalid normalized metadata value");
+                records.emplace_back(selectedParam,current);
+            }
+            check(handler.restartFlags==0,"metadata requires unsupported restart");
+            effect.close(true);
+            check(host.refs==1 && handler.refs==1 && state.refs==1 && controllerState.refs==1,"metadata reference imbalance");
+            check(module.close(),"metadata module exit failed");
+            writeJob<uint32>(0x314D5744); // DWM1
+            writeJob<uint32>(records.size());
+            for(auto& record:records) {
+                auto& info=record.first;
+                writeJob<uint32>(info.id); writeText(info.title); writeText(info.shortTitle); writeText(info.units);
+                writeJob<double>(info.defaultNormalizedValue); writeJob<double>(record.second);
+                writeJob<uint32>((info.flags & ParameterInfo::kCanAutomate)?1:0);
+                writeJob<uint32>((info.flags & ParameterInfo::kIsReadOnly)?1:0);
+                writeJob<uint32>(info.stepCount);
+            }
+            check(static_cast<bool>(std::cout),"metadata output failed");
+            return;
         }
         std::array<float,256> left{},right{},outLeft{},outRight{};
         Sample32* inputs[]={left.data(),right.data()},*outputs[]={outLeft.data(),outRight.data()};

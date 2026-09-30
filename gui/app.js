@@ -7,6 +7,11 @@
   let draft = structuredClone(DEFAULT_SESSION);
   let busy = false;
   let unsupportedSession = false;
+  let appliedGeneration = 0;
+  let metadataRequestTail = Promise.resolve();
+  let metadataCache = new Map();
+  let metadataPending = new Set();
+  let metadataSuppressed = false;
 
   const $ = (selector) => document.querySelector(selector);
   const tracksEl = $('#tracks');
@@ -25,6 +30,7 @@
   let nativeAvailable = false;
   let nativePluginsAvailable = false;
   let offlinePluginsAvailable = false;
+  let parameterMetadataAvailable = false;
   let effectCatalog = [];
   let nativeSnapshot = { state: 'stopped' };
   let nativeCommandGeneration = 0;
@@ -71,6 +77,7 @@
       outputMode.value = 'native';
     }
     nativeSnapshot = snapshot;
+    if (snapshot.state === 'stopped' || snapshot.state === 'error') requestAppliedEffectMetadata();
     if (outputMode.value === 'native') {
       playState.textContent = nativeStatusText(snapshot);
       $('#output-level').value = Number.isFinite(snapshot.level) ? Math.max(0, Math.min(1, snapshot.level)) : 0;
@@ -100,6 +107,7 @@
     clearTimeout(nativeVolumeTimer);
     try {
       await nativeCommand({ action: 'stop' });
+      requestAppliedEffectMetadata();
       return nativeSnapshot.state === 'stopped';
     } catch (error) {
       announceError(`Could not stop native audio. ${error.message}`);
@@ -114,6 +122,7 @@
       nativeAvailable = capabilities.live_audio === true;
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
+      parameterMetadataAvailable = capabilities.parameter_metadata?.implemented === true;
       const option = outputMode.querySelector('option[value="native"]');
       option.disabled = !nativeAvailable;
       $('#native-build-hint').hidden = nativeAvailable;
@@ -124,6 +133,7 @@
       }
       configureSessionMode();
       syncStatus();
+      requestAppliedEffectMetadata();
     } catch (error) {
       nativeAvailable = false;
       outputMode.querySelector('option[value="native"]').disabled = true;
@@ -222,6 +232,77 @@
     syncStatus();
   }
 
+  function invalidateEffectMetadata() {
+    appliedGeneration += 1;
+    metadataCache = new Map();
+    metadataPending = new Set();
+  }
+
+  function requestAppliedEffectMetadata() {
+    if (!parameterMetadataAvailable) return;
+    const generation = appliedGeneration;
+    const effects = [];
+    for (const track of applied?.tracks || []) {
+      for (const effect of track.effects || []) {
+        if (effect.kind === 'vst3') effects.push({ track_id: track.id, effect_id: effect.id });
+      }
+    }
+    for (const identity of effects) {
+      const key = JSON.stringify([identity.track_id, identity.effect_id]);
+      const pendingKey = `${generation}:${key}`;
+      if (metadataCache.has(key) || metadataPending.has(pendingKey)) continue;
+      metadataPending.add(pendingKey);
+      const task = metadataRequestTail.then(async () => {
+        if (generation !== appliedGeneration || metadataSuppressed || busy || starting || player.context || nativeActive()) return;
+        try {
+          const response = await request('/api/effect/inspect', { method: 'POST', body: JSON.stringify(identity) });
+          const metadata = await response.json();
+          if (generation !== appliedGeneration) return;
+          metadataCache.set(key, metadata);
+          updateEffectMetadata(identity, metadata);
+        } catch (error) {
+          if (generation === appliedGeneration) {
+            metadataCache.set(key, { error: error.message });
+            showMetadataError(identity, error.message);
+          }
+        }
+      }).finally(() => metadataPending.delete(pendingKey));
+      metadataRequestTail = task.catch(() => {});
+    }
+  }
+
+  function findEffectRow(identity) {
+    return [...tracksEl.querySelectorAll('.effect-row')].find(row =>
+      row.dataset.trackId === identity.track_id && row.dataset.effectId === identity.effect_id);
+  }
+
+  function showMetadataError(identity, message) {
+    const row = findEffectRow(identity);
+    if (!row) return;
+    let notice = row.querySelector('.metadata-error');
+    if (!notice) { notice = element('p', 'output-hint metadata-error'); row.append(notice); }
+    notice.textContent = `Parameter names unavailable. ${message}`;
+  }
+
+  function updateEffectMetadata(identity, metadata) {
+    const row = findEffectRow(identity);
+    if (!row || !Array.isArray(metadata.parameters)) return;
+    row.querySelector('.metadata-error')?.remove();
+    const byId = new Map(metadata.parameters.map(parameter => [String(parameter.id), parameter]));
+    for (const control of row.querySelectorAll('[data-parameter-id]')) {
+      const info = byId.get(control.dataset.parameterId);
+      if (!info) continue;
+      const label = control.querySelector('.parameter-name');
+      const name = typeof info.name === 'string' && info.name ? info.name : `Parameter ${info.id}`;
+      label.textContent = info.unit ? `${name} (${info.unit})` : name;
+      const range = control.querySelector('input[type="range"]');
+      range.setAttribute('aria-label', `Sine ${identity.track_id}, ${identity.effect_id}, ${name}${info.unit ? ` in ${info.unit}` : ''}`);
+      control.dataset.metadataDisabled = info.automatable !== true || info.read_only === true ? 'true' : 'false';
+      range.dataset.metadataDisabled = control.dataset.metadataDisabled;
+      range.disabled = busy || nativeLocked() || control.dataset.metadataDisabled === 'true';
+    }
+  }
+
   function syncStatus(error = false) {
     const saveState = $('#save-state');
     const text = $('#save-state-text');
@@ -246,7 +327,9 @@
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
-    tracksEl.querySelectorAll('button, input').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
+    tracksEl.querySelectorAll('button, input').forEach(control => {
+      control.disabled = unsupportedSession || busy || locked || control.dataset.metadataDisabled === 'true';
+    });
     rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0;
     if (draft.schema_version === 4) {
       outputMode.querySelector('option[value="browser"]').disabled = true;
@@ -427,6 +510,8 @@
     panel.append(heading);
     for (const effect of track.effects || []) {
       const row = element('div', 'effect-row');
+      row.dataset.trackId = track.id;
+      row.dataset.effectId = effect.id;
       const label = effect.kind === 'vst3' ? effect.bundle_path.split('/').pop().replace(/\.vst3$/, '') : 'Gain';
       row.append(element('strong', '', label));
       const bypassLabel = element('label', 'bypass-control', 'Bypass');
@@ -441,9 +526,24 @@
       const params = effect.kind === 'gain' ? [{id: 'gain', value: effect.gain, points: (track.automation || []).find(lane => lane.effect_id === effect.id)?.points || []}] : effect.parameters;
       for (const param of params) {
         const control = element('label', 'effect-parameter');
-        control.append(element('span', '', effect.kind === 'gain' ? 'Gain' : `Parameter ${param.id}`));
+        if (effect.kind === 'vst3') {
+          control.dataset.parameterId = String(param.id);
+          const metadata = metadataCache.get(JSON.stringify([track.id, effect.id]));
+          const info = metadata?.parameters?.find(item => String(item.id) === String(param.id));
+          control.dataset.metadataDisabled = info && (info.automatable !== true || info.read_only === true) ? 'true' : 'false';
+          const name = info?.name || `Parameter ${param.id}`;
+          control.append(element('span', 'parameter-name', info?.unit ? `${name} (${info.unit})` : name));
+        } else control.append(element('span', '', 'Gain'));
         const value = element('output', '', Number(param.value).toFixed(3));
-        const range = makeRange(0, effect.kind === 'gain' ? 4 : 1, 0.001, param.value, `${label} ${effect.kind === 'gain' ? 'gain' : `parameter ${param.id}`} on Sine ${index + 1}`);
+        const metadata = effect.kind === 'vst3' ? metadataCache.get(JSON.stringify([track.id, effect.id]))?.parameters?.find(item => String(item.id) === String(param.id)) : null;
+        const parameterName = metadata?.name || `Parameter ${param.id}`;
+        const parameterUnit = metadata?.unit ? ` in ${metadata.unit}` : '';
+        const range = makeRange(0, effect.kind === 'gain' ? 4 : 1, 0.001, param.value,
+          effect.kind === 'gain' ? `Gain on Sine ${index + 1}` : `Sine ${track.id}, ${effect.id}, ${parameterName}${parameterUnit}`);
+        if (effect.kind === 'vst3') {
+          range.dataset.metadataDisabled = control.dataset.metadataDisabled;
+          range.disabled = control.dataset.metadataDisabled === 'true';
+        }
         range.addEventListener('input', () => { const number = Number(range.value); if (effect.kind === 'gain') effect.gain = number; else param.value = number; value.textContent = number.toFixed(3); markEdited(); });
         control.append(range, value); row.append(control);
         if (param.points.length) row.append(element('p', 'output-hint', `${param.points.length} saved automation points override this base value during playback.`));
@@ -452,6 +552,8 @@
         const details = element('details', 'effect-identity');
         details.append(element('summary', '', 'Saved plugin identity'), element('p', '', `${effect.bundle_path} · ${effect.class_id}`));
         row.append(details);
+        const failure = metadataCache.get(JSON.stringify([track.id, effect.id]))?.error;
+        if (failure) row.append(element('p', 'output-hint metadata-error', `Parameter names unavailable. ${failure}`));
       }
       panel.append(row);
     }
@@ -537,6 +639,7 @@
       const session = result.session || result;
       const error = validateSession(session);
       if (error) throw new Error(`The server returned an invalid session: ${error}`);
+      invalidateEffectMetadata();
       applied = clone(session);
       draft = clone(session);
       rememberEffects();
@@ -551,6 +654,7 @@
     } finally {
       setBusy(false);
       syncStatus();
+      requestAppliedEffectMetadata();
     }
   }
 
@@ -600,6 +704,7 @@
       const session = result.session || result;
       const serverValidation = validateSession(session);
       if (serverValidation) throw new Error(`The server returned an invalid session: ${serverValidation}`);
+      invalidateEffectMetadata();
       applied = clone(session);
       draft = clone(session);
       rememberEffects();
@@ -613,6 +718,7 @@
       fileInput.value = '';
       setBusy(false);
       syncStatus();
+      requestAppliedEffectMetadata();
     }
   }
 
@@ -627,8 +733,9 @@
       return;
     }
     durationInput.setCustomValidity('');
+    metadataSuppressed = true;
     const ok = await applyDraft();
-    if (!ok) return;
+    if (!ok) { metadataSuppressed = false; requestAppliedEffectMetadata(); return; }
     setBusy(true);
     setNotice('Rendering WAV…');
     try {
@@ -643,6 +750,8 @@
     } finally {
       setBusy(false);
       syncStatus();
+      metadataSuppressed = false;
+      requestAppliedEffectMetadata();
     }
   }
 
@@ -664,22 +773,25 @@
     }
 
     const startGeneration = ++nativePlayGeneration;
+    metadataSuppressed = true;
     const appliedOk = await applyDraft();
-    if (startGeneration !== nativePlayGeneration || outputMode.value !== 'native') return;
-    if (!appliedOk) return;
+    if (startGeneration !== nativePlayGeneration || outputMode.value !== 'native') { metadataSuppressed = false; requestAppliedEffectMetadata(); return; }
+    if (!appliedOk) { metadataSuppressed = false; requestAppliedEffectMetadata(); return; }
     // Invalidate a pending browser start before releasing its stream.
     playGeneration += 1;
     starting = false;
     paused = false;
     player.stop();
     $('#output-level').value = 0;
-    if (!draft.tracks.length) { setNotice('Add a sine track, then press Play.'); return; }
+    if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a sine track, then press Play.'); return; }
     nativeSnapshot = { state: 'starting' };
     playState.textContent = 'Starting native audio…';
     syncStatus();
     try {
       await nativeCommand({ action: 'play', seconds: 60, volume: Number($('#monitor-volume').value) });
+      metadataSuppressed = false;
     } catch (error) {
+      metadataSuppressed = false;
       nativeSnapshot = { state: 'error', error: error.message };
       applyNativeSnapshot(nativeSnapshot);
     }
@@ -723,6 +835,7 @@
       const result = await response.json();
       const session = result.session || result;
       if (session && !SessionEditor.supported(session)) {
+        invalidateEffectMetadata();
         unsupportedSession = true;
         emptyEl.hidden = true;
         $('#track-count').textContent = `${session.tracks.length} ${session.tracks.length === 1 ? "track" : "tracks"} · read-only`;
@@ -732,6 +845,7 @@
       }
       const validation = validateSession(session);
       if (validation) throw new Error(`The server returned an invalid session: ${validation}`);
+      invalidateEffectMetadata();
       applied = clone(session);
       draft = clone(session);
       rememberEffects();
@@ -744,6 +858,7 @@
     } finally {
       setBusy(false);
       syncStatus();
+      requestAppliedEffectMetadata();
     }
   }
 

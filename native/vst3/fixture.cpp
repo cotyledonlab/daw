@@ -163,6 +163,11 @@ public:
 		setAscii (info.title, "Gain");
 		setAscii (info.shortTitle, "Gain");
 		setAscii (info.units, "linear");
+        if (const char* text = std::getenv("DAW_VST3_FIXTURE_METADATA_TEXT")) {
+            if (std::strcmp(text,"unicode")==0) { info.title[0]=0x03BB; info.title[1]=0xD83C; info.title[2]=0xDFB5; info.title[3]=0; }
+            if (std::strcmp(text,"surrogate")==0) { info.title[0]=0xD800; info.title[1]=0; }
+            if (std::strcmp(text,"full")==0) std::fill(std::begin(info.title),std::end(info.title),0x03BB);
+        }
 		info.stepCount = 0;
 		info.defaultNormalizedValue = 0.5;
 		info.unitId = 0;
@@ -247,6 +252,7 @@ public:
 		return kResultOk;
 	}
 	tresult PLUGIN_API process (ProcessData& data) override {
+        if (std::getenv("DAW_VST3_FIXTURE_FAIL_PROCESS")) return kResultFalse;
 		if (!processing_ || data.symbolicSampleSize != kSample32 || data.numSamples <= 0 ||
 		    data.numSamples > 256 || data.numInputs != 1 || data.numOutputs != 1 ||
 		    !data.inputs || !data.outputs || !audioOutputActive_) return kResultFalse;
