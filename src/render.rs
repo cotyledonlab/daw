@@ -28,6 +28,9 @@ pub fn render<W: Write + Seek>(
     seconds: f64,
     output: W,
 ) -> Result<RenderReport, String> {
+    if crate::hosting::has_plugins(session) {
+        return crate::plugin_render::prepare(session, seconds)?.encode(output);
+    }
     let mut engine = Engine::prepare(session)?;
     render_prepared(&mut engine, session.sample_rate, seconds, output)
 }

@@ -4,6 +4,7 @@ use std::{collections::HashSet, path::PathBuf};
 pub const SCHEMA_VERSION: u32 = 1;
 pub const SCHEMA_VERSION_2: u32 = 2;
 pub const SCHEMA_VERSION_3: u32 = 3;
+pub const SCHEMA_VERSION_4: u32 = 4;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -18,6 +19,10 @@ pub const MAX_EFFECTS_PER_TRACK: usize = 16;
 pub const MAX_EFFECT_GAIN: f64 = 4.0;
 pub const MAX_AUTOMATION_LANES_PER_TRACK: usize = 16;
 pub const MAX_AUTOMATION_POINTS: usize = 16_384;
+pub const MAX_VST3_PLUGINS: usize = 8;
+pub const MAX_VST3_PARAMETERS: usize = 64;
+pub const MAX_VST3_STATE_BYTES: usize = 64 * 1024;
+pub const MAX_VST3_SESSION_STATE_BYTES: usize = 256 * 1024;
 pub const MAX_VOICES: usize = 64;
 pub const DEFAULT_TEMPO_MILLI_BPM: u32 = 120_000;
 
@@ -107,13 +112,35 @@ pub struct AutomationPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Effect {
-    Gain { id: String, gain: f64, bypass: bool },
+    Gain {
+        id: String,
+        gain: f64,
+        bypass: bool,
+    },
+    Vst3 {
+        id: String,
+        bypass: bool,
+        bundle_path: String,
+        class_id: String,
+        state_hex: String,
+        controller_state_hex: String,
+        parameters: Vec<Vst3Parameter>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Vst3Parameter {
+    pub id: u32,
+    pub value: f64,
+    pub points: Vec<AutomationPoint>,
 }
 
 impl Effect {
     pub fn id(&self) -> &str {
         match self {
             Self::Gain { id, .. } => id,
+            Self::Vst3 { id, .. } => id,
         }
     }
 }
@@ -256,6 +283,14 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= MAX_TRACK_ID_BYTES
 }
 
+fn decode_hex_len(value: &str) -> Option<usize> {
+    if value.len() % 2 != 0 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        None
+    } else {
+        Some(value.len() / 2)
+    }
+}
+
 fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
     if length == 0 {
         return Err(format!("{label} length must be positive"));
@@ -271,9 +306,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_3).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_4).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1, 2, or 3",
+                "unsupported schema_version {}; expected 1, 2, 3, or 4",
                 self.schema_version
             ));
         }
@@ -307,6 +342,8 @@ impl Session {
         let mut total_clips = 0usize;
         let mut total_notes = 0usize;
         let mut total_automation_points = 0usize;
+        let mut vst3_plugin_count = 0usize;
+        let mut vst3_state_bytes = 0usize;
         let mut continuous_voices = 0usize;
         let mut lifetimes: Vec<(u64, i32)> = Vec::new();
         for track in &self.tracks {
@@ -343,8 +380,11 @@ impl Session {
                 (SCHEMA_VERSION_2, Some(_)) => {
                     return Err("schema_version 2 does not accept effects".into());
                 }
-                (SCHEMA_VERSION_3, None) => {
-                    return Err("schema_version 3 requires track effects".into());
+                (SCHEMA_VERSION_3 | SCHEMA_VERSION_4, None) => {
+                    return Err(format!(
+                        "schema_version {} requires track effects",
+                        self.schema_version
+                    ));
                 }
                 _ => {}
             }
@@ -372,6 +412,94 @@ impl Session {
                             ));
                         }
                         Effect::Gain { .. } => {}
+                        Effect::Vst3 { .. } if self.schema_version != SCHEMA_VERSION_4 => {
+                            return Err("VST3 effects require schema_version 4".into());
+                        }
+                        Effect::Vst3 {
+                            bundle_path,
+                            class_id,
+                            state_hex,
+                            controller_state_hex,
+                            parameters,
+                            ..
+                        } => {
+                            if bundle_path.len() > 4096
+                                || !std::path::Path::new(bundle_path).is_absolute()
+                                || !bundle_path.ends_with(".vst3")
+                            {
+                                return Err("VST3 bundle_path must be an absolute .vst3 path of at most 4096 UTF-8 bytes".into());
+                            }
+                            if class_id.len() != 32
+                                || !class_id
+                                    .bytes()
+                                    .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+                            {
+                                return Err("VST3 class_id must be exactly 32 uppercase hexadecimal characters".into());
+                            }
+                            for state in [state_hex, controller_state_hex] {
+                                let decoded = decode_hex_len(state).ok_or_else(|| {
+                                    "VST3 state must be even-length hexadecimal".to_string()
+                                })?;
+                                if decoded > MAX_VST3_STATE_BYTES {
+                                    return Err("VST3 state exceeds 64 KiB".into());
+                                }
+                                vst3_state_bytes = vst3_state_bytes
+                                    .checked_add(decoded)
+                                    .ok_or_else(|| "VST3 state byte count overflow".to_string())?;
+                                if vst3_state_bytes > MAX_VST3_SESSION_STATE_BYTES {
+                                    return Err("VST3 session state exceeds 256 KiB".into());
+                                }
+                            }
+                            vst3_plugin_count += 1;
+                            if vst3_plugin_count > MAX_VST3_PLUGINS {
+                                return Err(
+                                    "at most 8 VST3 effects are supported per session".into()
+                                );
+                            }
+                            if parameters.len() > MAX_VST3_PARAMETERS {
+                                return Err(
+                                    "at most 64 VST3 parameters are supported per effect".into()
+                                );
+                            }
+                            let mut parameter_ids = HashSet::new();
+                            for parameter in parameters {
+                                if !parameter_ids.insert(parameter.id) {
+                                    return Err(
+                                        "VST3 parameter IDs must be unique within an effect".into(),
+                                    );
+                                }
+                                if !parameter.value.is_finite()
+                                    || !(0.0..=1.0).contains(&parameter.value)
+                                {
+                                    return Err("VST3 parameter value must be finite and normalized between 0 and 1".into());
+                                }
+                                total_automation_points = total_automation_points
+                                    .checked_add(parameter.points.len())
+                                    .ok_or_else(|| "automation point count overflow".to_string())?;
+                                if total_automation_points > MAX_AUTOMATION_POINTS {
+                                    return Err(format!(
+                                        "at most {MAX_AUTOMATION_POINTS} automation points are supported"
+                                    ));
+                                }
+                                let mut previous_frame = None;
+                                for point in &parameter.points {
+                                    if point.frame > MAX_FRAME {
+                                        return Err(
+                                            "VST3 automation frame exceeds MAX_FRAME".into()
+                                        );
+                                    }
+                                    if previous_frame.is_some_and(|frame| point.frame <= frame) {
+                                        return Err("VST3 automation point frames must be strictly increasing".into());
+                                    }
+                                    if !point.value.is_finite()
+                                        || !(0.0..=1.0).contains(&point.value)
+                                    {
+                                        return Err("VST3 automation value must be finite and normalized between 0 and 1".into());
+                                    }
+                                    previous_frame = Some(point.frame);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -390,7 +518,9 @@ impl Session {
                     if !lane_targets.insert(lane.effect_id.as_str()) {
                         return Err("each effect can have at most one automation lane".into());
                     }
-                    if !effects.iter().any(|effect| effect.id() == lane.effect_id) {
+                    if !effects.iter().any(
+                        |effect| matches!(effect, Effect::Gain { id, .. } if id == &lane.effect_id),
+                    ) {
                         return Err("automation effect_id must target an existing effect".into());
                     }
                     if lane.points.is_empty() {
@@ -424,6 +554,14 @@ impl Session {
                         previous_frame = Some(point.frame);
                     }
                 }
+            }
+            if track
+                .effects
+                .as_ref()
+                .is_some_and(|effects| effects.iter().any(|e| matches!(e, Effect::Vst3 { .. })))
+                && self.sample_rate != 48_000
+            {
+                return Err("VST3 effects require a 48000 Hz session sample rate".into());
             }
             let mode = track.mode.ok_or_else(|| {
                 format!("schema_version {} requires track mode", self.schema_version)

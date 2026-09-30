@@ -72,6 +72,7 @@ public:
 
 	tresult PLUGIN_API initialize (FUnknown*) override {
 		if (initialized_) return kResultFalse;
+		eventInputActive_ = std::getenv("DAW_VST3_FIXTURE_NO_EVENTS") == nullptr;
 		initialized_ = true;
 		return kResultOk;
 	}
@@ -85,7 +86,7 @@ public:
 	int32 PLUGIN_API getBusCount (MediaType type, BusDirection dir) override {
 		if (!initialized_) return 0;
 		if (type == kAudio) return dir == kInput || dir == kOutput ? 1 : 0;
-		if (type == kEvent) return dir == kInput ? 1 : 0;
+		if (type == kEvent) return dir == kInput && eventInputActive_ ? 1 : 0;
 		return 0;
 	}
 	tresult PLUGIN_API getBusInfo (MediaType type, BusDirection dir, int32 index,

@@ -1,6 +1,6 @@
 # Proposed VST3 adapter boundary
 
-This is a design proposal informed by the working standalone effect probe and the Rust-host trial. It does not mean the DAW can load or process plugins. `native/vst3/effect_probe.inc` now processes a third-party stereo effect offline, saves/restores state, exercises parameter changes, and tears instances down. `src/engine.rs` still prepares only built-in sine, note, clip, and gain-effect state; the probe is not on the session, renderer, or playback path.
+T09c implements the offline boundary through schema-v4 sessions and JSONL rendering. Native callback hosting remains proposed. `native/vst3/effect_probe.inc` now processes a third-party stereo effect offline, saves/restores state, exercises parameter changes, and tears instances down. `src/engine.rs` prepares source stems and gains; `src/plugin_render.rs` serially applies foreign effects through `src/hosting.rs` before final mixing. The standalone probe remains a diagnostic; plugin processing is not in playback.
 
 ## First supported slice
 
@@ -8,7 +8,7 @@ Start with an offline session-processing adapter for serial track effects. The f
 
 The adapter owns component, processor, controller, connection points, and host interfaces as one prepared instance. It handles both a combined controller and a distinct controller with the VST3 connection handshake. It receives bounded per-block parameter queues keyed by VST3 `ParamID`, with normalized values and sample offsets within the block; invalid IDs, values, ordering, or offsets fail validation before processing. UI/controller edits are outside this slice. The actual probe's sample-offset event check is evidence for queue plumbing, not a DAW automation contract.
 
-Opaque component and controller state are each capped at 8 MiB. State capture, validation, instance creation, bus negotiation, parameter metadata preparation, restore, and all destruction happen off the audio callback. The adapter reports plugin latency, as the probe does, but the first slice does not compensate it or claim latency-aligned mixes. State stream reads must report actual byte counts, including short reads and EOF; writes and seeks must enforce the cap without partial over-limit mutation.
+Probe state is capped at 8 MiB; the session adapter caps each component/controller blob at 64 KiB, with 256 KiB aggregate decoded state. State capture, validation, instance creation, bus negotiation, parameter metadata preparation, restore, and all destruction happen off the audio callback. The session adapter rejects nonzero plugin latency; the probe reports latency. Compensation is not implemented. State stream reads must report actual byte counts, including short reads and EOF; writes and seeks must enforce the cap without partial over-limit mutation.
 
 Teardown returns ownership to a designated worker or preparation thread. It must never drop plugin objects, unload a module, or run lifecycle calls from an audio callback. Process failures, unsupported restart requests, and teardown failures become explicit adapter errors; callers discard the affected instance. Restart requests that imply reconfiguration are unsupported in the first slice and require rebuilding a prepared instance off the processing path.
 
@@ -26,7 +26,13 @@ Production playback ownership remains undecided. The Rust candidate's ordinary `
 
 ## Proposed sequence
 
-- **T09c — bounded offline adapter and session integration.** Wire the contract above through validated session data and offline rendering using one known third-party plugin. Verify deterministic errors for unsupported layouts, sample rates, restarts, oversized state, and child timeout/crash. Keep plugin capabilities false for live playback.
+- **T09c — bounded offline adapter and session integration (complete).** Wire the contract above through validated session data and offline rendering using one known third-party plugin. Verify deterministic errors for unsupported layouts, sample rates, restarts, oversized state, and child timeout/crash. Keep plugin capabilities false for live playback.
 - **T09d — native callback integration after ownership audit.** Select Rust runner or C++ shim only after a strong-model review of lifecycle and callback ownership. Measure allocation, lock, and timing behavior independently of acoustic hardware checks; prove teardown always returns to a non-callback owner. Expose live plugin capability only after those checks pass.
 
-Until T09c and T09d are complete, the third-party offline effect probe remains standalone experimental evidence. It does not imply DAW plugin support, general VST3 compatibility, sandboxing, real-time safety, or latency compensation.
+T09c is complete for scripted offline processing. T09d remains outstanding. No general compatibility, sandbox, realtime safety, live plugin playback, or latency compensation is claimed.
+
+## Implemented worker boundary
+
+The private little-endian `DWV4` job carries bounded hex-decoded state, parameter bases and frame points, and interleaved float32 stereo audio. Each child owns one complete module lifecycle on its main thread. Validation/capture runs a silent 256-frame block to flush base parameters; render runs at most 480000 frames. Responses carry captured state and finite stereo output. Rust creates a distinct process group, drains bounded output concurrently, applies a 15-second timeout, and reaps the child before decoding. No subprocess, I/O, allocation, or foreign lifecycle call enters an audio callback. A configured `DAW_VST3_HOST` must be an absolute executable path; the checkout build is the default.
+
+All foreign validation occurs before session commit. Empty state is filled once during commit; rendering never mutates the saved snapshot. Bypassed plugins are validated on load but do not process stems. Initial unsupported or corrupt state leaves the old session and revision intact. The completed mix is prepared before a fresh WAV destination is created; intermediate gains and plugin outputs are not clipped. Memory and duration are bounded by the ten-second render cap. The host and portable core remain independently built.

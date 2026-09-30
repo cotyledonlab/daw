@@ -384,8 +384,13 @@ static std::string probe(Module& module) {
 }
 
 #include "effect_probe.inc"
+#include "process_job.inc"
 
 int main(int argc,char** argv) {
+    if(argc==4 && std::string(argv[1])=="process") {
+        try { Module module(argv[2]); processJob(module,argv[3]); return 0; }
+        catch(const std::exception& error) { std::cerr<<error.what()<<"\n"; return 1; }
+    }
     if(argc!=3 || (std::string(argv[1])!="scan" && std::string(argv[1])!="probe" && std::string(argv[1])!="effect-probe")) {
         std::cout<<"{\"ok\":false,\"error\":\"usage: vst3-host scan|probe|effect-probe BUNDLE\"}\n"; return 2;
     }

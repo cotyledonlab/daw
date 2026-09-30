@@ -162,11 +162,13 @@ Compare official SDK plus thin C++ shim against maintained Rust bindings using o
 
 The C++ effect probe handles separate controllers/connections, bounded opaque state, explicit stereo bus negotiation, and offline ValhallaFreqEcho processing. Automation changes its output; component state restores into fresh instances; repeated normal/sanitizer runs and controller isolation pass. The Rust host candidate at a verified pin builds and completes a short offline render of the same effect, with finite nonzero output. Its automation/state and callback paths remain unverified. Choose the tested C++ child for the next offline slice; native ownership remains undecided. See [hosting evidence](decisions/plugin-hosting.md), [Rust trial](decisions/vst3-rust-trial.md), and [adapter boundary](decisions/vst3-adapter.md). T09 overall remains incomplete until DAW processing uses the adapter.
 
-### T09c: bounded offline effect adapter and session integration (next)
+### T09c: bounded offline effect adapter and session integration (complete)
 
 **Depends on:** T09b. **Owner:** stronger model for schema/worker/ownership, Luna example and persistence/error tests.
 
 Turn the tested C++ child into an offline processor for prepared track audio, bounded normalized automation, and opaque component/controller state. Validate exact bundle-path/CID identity, supported stereo layout, 48 kHz rate, and state limits before output creation. Add strict session/protocol shapes with the working adapter, preserve revision rollback and no-overwrite outputs, and keep portable builds independent of native SDK tooling. Reject unsupported events, restart/reconfiguration requests, and unavailable hosts with structured errors. Acceptance: a scripted DAW session renders a track through the known effect, automation changes samples, save/load restores state, failures preserve session/revision and clean partial outputs, and owned worker timeout/crash does not kill the controller. No live plugin capability or editor claim.
+
+Implemented schema-v4 serial track VST3 effects through the owned C++ child, with exact class identity, normalized saved parameter points, captured component/controller state, and transactional foreign preparation. Offline stems preserve headroom and plugin work precedes WAV creation. Portable builds reject foreign preparation explicitly; native playback stays disabled for plugin sessions. First limits are 48 kHz, zero latency, no events, ten-second render, 8 effects, 64 parameters/effect, and 64 KiB/state. See [protocol](PROTOCOL.md) and [adapter record](decisions/vst3-adapter.md). GUI remains v1-only.
 
 ### T09d: native effect ownership and callback integration
 
@@ -200,4 +202,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T09b is complete. Continue with T09c using the tested offline C++ child and the [adapter boundary](decisions/vst3-adapter.md). DAW plugin hosting remains unavailable; standalone third-party processing is not session/native playback integration. Preserve snapshot preparation and callback rules. Browser clip editing remains separate. See [hosting evidence](decisions/plugin-hosting.md).
+T09c is complete. Continue with T09d native callback ownership and integration review. Scripted offline VST3 processing now works; live plugin capability remains false and the browser has no plugin controls. Preserve the tested transactional state, process containment, and unclipped effect routing. Browser clip/effect editing remains a separate UI slice.

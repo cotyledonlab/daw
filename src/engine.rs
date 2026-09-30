@@ -58,6 +58,9 @@ pub struct Engine {
 impl Engine {
     pub fn prepare(session: &Session) -> Result<Self, String> {
         session.validate()?;
+        if crate::hosting::has_plugins(session) {
+            return Err("VST3 sessions support offline rendering only; native plugin playback is unavailable".into());
+        }
         let audio = assets::prepare(session)?;
         let mut audio_starts: Vec<_> = (0..audio.len()).collect();
         audio_starts.sort_by_key(|&index| (audio[index].start, index));
@@ -104,7 +107,7 @@ impl Engine {
         let notes: Vec<_> = ordered.into_iter().map(|(_, note)| note).collect();
         let mut starts: Vec<_> = (0..notes.len()).collect();
         starts.sort_by_key(|&index| (notes[index].start, index));
-        let effect_chains = (session.schema_version == 3)
+        let effect_chains = (session.schema_version >= 3)
             .then(|| session.tracks.iter().map(PreparedChain::prepare).collect());
         Ok(Self {
             voices,
@@ -239,6 +242,15 @@ impl Engine {
     /// Mix and hard-clip stereo frames. Each sample has the same event/envelope
     /// semantics regardless of the caller's block sizes.
     pub fn render_block(&mut self, output: &mut [[f64; 2]]) -> u64 {
+        self.render_inner(output, true)
+    }
+
+    /// Offline stem preparation preserves headroom until the final master mix.
+    pub(crate) fn render_block_unclipped(&mut self, output: &mut [[f64; 2]]) {
+        self.render_inner(output, false);
+    }
+
+    fn render_inner(&mut self, output: &mut [[f64; 2]], clip: bool) -> u64 {
         let mut clipped_frames = 0;
         for frame in output {
             if let Some((start, end)) = self.loop_region {
@@ -307,7 +319,11 @@ impl Engine {
             if stereo.iter().any(|sample| sample.abs() > 1.0) {
                 clipped_frames += 1;
             }
-            *frame = [stereo[0].clamp(-1.0, 1.0), stereo[1].clamp(-1.0, 1.0)];
+            *frame = if clip {
+                [stereo[0].clamp(-1.0, 1.0), stereo[1].clamp(-1.0, 1.0)]
+            } else {
+                stereo
+            };
             self.frame_position = self.frame_position.saturating_add(1);
             self.output_position = self.output_position.saturating_add(1);
         }

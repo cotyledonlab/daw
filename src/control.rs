@@ -64,7 +64,8 @@ fn capabilities() -> Value {
             "save_outside_project": false
         },
         "session_schema_version": session::SCHEMA_VERSION,
-        "supported_session_schema_versions": [1, 2, 3],
+        "supported_session_schema_versions": [1, 2, 3, 4],
+        "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": false, "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
         "sequencing": {
             "schema_version": 2, "offline": true,
             "native_requires_matching_sample_rate": true,
@@ -99,14 +100,14 @@ fn capabilities() -> Value {
         },
         "device_metadata": {
             "audio": {
-                "session_schema_versions": [2, 3], "track_modes": ["sequenced"],
+                "session_schema_versions": [2, 3, 4], "track_modes": ["sequenced"],
                 "description": "Preloaded PCM WAV clips on a sequenced v2 track.",
                 "parameters": {"gain": {"type":"number", "unit":"linear", "default":1.0,
                     "minimum":0.0,"maximum":1.0,"finite":true,"required":true,
                     "description":"Track amplitude multiplied by each audio clip gain."}}
             },
             "sine": {
-                "session_schema_versions": [1, 2, 3],
+                "session_schema_versions": [1, 2, 3, 4],
                 "description": "Sine oscillator mixed equally into left and right channels.",
                 "parameters": {
                     "frequency_hz": {
@@ -496,6 +497,16 @@ impl Controller {
                 self.session
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
+                if crate::hosting::has_plugins(&self.session) {
+                    let prepared = crate::plugin_render::prepare(&self.session, p.seconds)
+                        .map_err(|e| ControlError::new("plugin_error", e))?;
+                    let report = write_new(&p.path, |file| {
+                        prepared
+                            .encode(file)
+                            .map_err(|e| ControlError::new("io_error", e))
+                    })?;
+                    return Ok(json!(report));
+                }
                 let mut engine = Engine::prepare(&self.session)
                     .map_err(|e| ControlError::new("asset_error", e))?;
                 let report = write_new(&p.path, |file| {
@@ -561,6 +572,8 @@ impl Controller {
             );
         }
         assets::prepare(&session).map_err(|e| ControlError::new("asset_error", e))?;
+        crate::hosting::prepare_session(&mut session)
+            .map_err(|e| ControlError::new("plugin_error", e))?;
         self.stop_transport()?;
         self.session = session;
         self.revision = next_revision;
@@ -606,6 +619,12 @@ impl Controller {
             _ => {
                 let _: EmptyParams = params(value)?;
             }
+        }
+        if method == "transport.play" && crate::hosting::has_plugins(&self.session) {
+            return Err(ControlError::new(
+                "audio_unavailable",
+                "VST3 sessions support offline rendering only; native plugin playback is unavailable",
+            ));
         }
         if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
             return Err(ControlError::new(

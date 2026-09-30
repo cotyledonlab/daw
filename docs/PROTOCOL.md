@@ -200,4 +200,24 @@ Use fresh output paths for this sequence:
 
 ## Standalone VST3 spike
 
-The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. It adds no JSONL methods, session fields, plugin identities, or DAW processing capabilities. `plugin_hosting` remains false. Fixture processing, third-party offline effect probing, and factory inspection do not imply DAW session integration or live plugin support.
+The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. The original probes add no JSONL methods and remain separate diagnostics. T09c now provides scripted offline session processing as documented below. `plugin_hosting` remains false for live hosting.
+
+## Schema-v4 offline VST3 effects
+
+V4 retains v3 timeline, gain chains, and gain lanes. It adds this effect shape in track `effects` (all fields required; unknown fields and null rejected):
+
+```json
+{"kind":"vst3","id":"echo","bypass":false,"bundle_path":"/absolute/Effect.vst3","class_id":"5653544671456876616C68616C6C6166","state_hex":"","controller_state_hex":"","parameters":[{"id":48,"value":0.2,"points":[{"frame":24000,"value":0.8}]}]}
+```
+
+`class_id` is exactly 32 uppercase hex characters and selects an Audio Module Class in that bundle. `bundle_path` is an absolute `.vst3` path, at most 4096 UTF-8 bytes; relocation/path resolution is not implemented. No executable or shell command is saved in the session. V1–v3 reject VST3 effects. V4 requires track effects like v3, and requires 48 kHz when any plugin appears, including bypassed plugins.
+
+State strings are even-length hex, at most 64 KiB decoded each; aggregate decoded state is at most 256 KiB per session. Empty state means initialize the plugin and capture its initial state during successful load/replace. Nonempty component/controller blobs are restored; empty controller state is allowed when the plugin has none. Preparation fills omitted empty blobs in the committed response, then validates the captured session and its save/load size. Foreign state validation runs in a child; corrupt/incompatible state fails rather than changing the active session. Saved state is the prepared base state, not a snapshot of the last render's DSP history.
+
+At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs per effect. Every parameter requires `id`, normalized finite `value` in 0–1, and `points` (empty allowed). Points require `frame` and normalized `value`; frames strictly increase up to `MAX_FRAME`. Plugin and gain automation together have at most 16384 points. Base values are queued at frame zero; a point at zero overrides the base, and points apply in their containing 256-frame block at the indicated offset. Plugin interpolation/smoothing is plugin-specific. Existing gain automation lanes cannot target plugin effects; plugin automation resides inside `parameters`.
+
+Build `--features vst3-offline` on macOS and build the worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. `plugin_hosting` remains false for live hosting. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
+
+Supported layout is one stereo input/output audio bus, no event buses, float32 offline at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. Native `transport.play` returns `audio_unavailable` before opening a device. GUI editing/upload remains v1-only.
+
+Plugin renders accept 0.001–10 seconds. The renderer preserves headroom between serial effects and across tracks, then clips once at the master to PCM16. Source/assets and all child processing complete before destination creation. Failures create no output and preserve session/revision; the usual fresh-path rule still applies. Each child owns its process group and is terminated/reaped; stdout audio/state and stderr diagnostics are bounded. This is crash containment, not a security sandbox or realtime proof. Plugin code runs with caller permissions. See [the VST3 example](../examples/vst3_demo.py).

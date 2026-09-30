@@ -6,5 +6,7 @@ pub mod audio_buffer;
 pub mod control;
 mod effects;
 pub mod engine;
+pub mod hosting;
+pub mod plugin_render;
 pub mod render;
 pub mod session;

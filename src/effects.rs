@@ -48,7 +48,9 @@ impl PreparedChain {
             .expect("validated effects")
             .iter()
             .map(|effect| {
-                let Effect::Gain { id, gain, bypass } = effect;
+                let Effect::Gain { id, gain, bypass } = effect else {
+                    unreachable!("plugins rejected before native chain preparation")
+                };
                 let points = track
                     .automation
                     .as_deref()
