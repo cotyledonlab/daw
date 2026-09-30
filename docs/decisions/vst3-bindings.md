@@ -1,0 +1,25 @@
+# VST3 host binding comparison
+
+Research snapshot: 2026-09-30. T09 needs discovery, load, process, automation, state, teardown, and crash containment evidence. This note compares implementation starting points; it does not establish DAW plugin support.
+
+## Findings
+
+Steinberg's current SDK source identifies itself as VST 3.8.1. It includes both the API and helper classes, a `sdk_hosting` target (module loading, host classes, event lists, parameter changes, and process data), hosting samples, and the validator. The official audiohost example discovers a module, enumerates its factory classes, selects an Audio Module Class, creates a `PlugProvider`, and obtains component/controller interfaces. This is the broadest authoritative reference and keeps ABI definitions and lifecycle helpers aligned with the SDK. Its cost is a C++/CMake bridge plus the DAW's Rust ownership, command, buffer, and teardown boundary. The GitHub SDK page has no packaged releases, so pin a reviewed commit and recursively pin submodules rather than following `master`.
+
+The `vst3` crate from coupler-rs is version 0.3.0, MIT OR Apache-2.0, and publishes generated bindings from Steinberg headers. Its README explicitly says the API is unsafe and is not abstracted beyond COM object/interface manipulation. Its changelog says bindings are pre-generated and no longer require a local SDK at crate build time. It does not provide discovery, module loading, processor lifecycle, host-side buses/buffers, automation/state orchestration, a scanner, or process isolation. The only example declared in its manifest is a gain plugin (`cdylib`), not a host. This is a useful Rust ABI layer for a hand-written adapter, not a host implementation.
+
+The distinct `vst3-host` Rust project (HelgeSverre/rust-vst3-host) is a candidate adapter, not just bindings. Its project docs describe discovery, load/process, sample-accurate parameters and MIDI, state/presets, teardown, and an optional helper-process isolation path. Its tags show v0.9.0 at commit `ed05490` (2026-07-28); the project declares MIT. Its own platform notes say real third-party plugins are primarily exercised on macOS and that its realtime path is not fully audited. These are project-reported capabilities, not independent T09 results. It may reduce lifecycle work, but integration with DAW-owned snapshot preparation, fixed callback buffers, and command lifecycle remains to be proven.
+
+## Recommendation
+
+The first working path in this repository is a standalone C++ probe using the official 3.8.0 interfaces pinned to `31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c`. It avoids a full SDK/CMake build and uses CoreFoundation module loading plus a project-owned fixture. It verifies offline processing, automation/events, combined controller state, fresh-instance component state restoration, and teardown. See [the hosting record](plugin-hosting.md) for scope and evidence.
+
+This establishes a reference fixture, not a production language choice. Neither Rust candidate has been built here, and the probe is not a Rust shim or DAW adapter. Compare candidates against the same fixture and ownership constraints before selecting one. Low-level bindings alone leave lifecycle orchestration to the application. Discovery isolation must not be described as playback isolation. Exact pinned SDK notices are copied alongside the generated binaries; no SDK source or binaries are committed.
+
+## Primary sources
+
+- [Steinberg VST3 SDK repository and 3.8.x README](https://github.com/steinbergmedia/vst3sdk) (current source reports 3.8.1; repository page reports no packaged releases).
+- [Steinberg public SDK hosting helpers and examples](https://github.com/steinbergmedia/vst3_public_sdk); [hosting target source list](https://github.com/steinbergmedia/vst3_cmake/blob/master/modules/SMTG_VST3_SDK.cmake); [official audiohost example](https://github.com/steinbergmedia/vst3_public_sdk/blob/master/samples/vst-hosting/audiohost/source/audiohost.cpp); [official validator](https://github.com/steinbergmedia/vst3_public_sdk/blob/master/samples/vst-hosting/validator/source/validator.cpp).
+- [Steinberg VST3 license and usage guidance](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST%2B3%2BLicensing/Index.html).
+- [coupler-rs/vst3-rs README](https://github.com/coupler-rs/vst3-rs), [manifest](https://github.com/coupler-rs/vst3-rs/blob/master/Cargo.toml), [changelog](https://github.com/coupler-rs/vst3-rs/blob/master/CHANGELOG.md), and [tags](https://github.com/coupler-rs/vst3-rs/tags).
+- [HelgeSverre/rust-vst3-host README](https://github.com/HelgeSverre/rust-vst3-host), [v0.9.0 tag](https://github.com/HelgeSverre/rust-vst3-host/tree/ed05490), and [platform support notes](https://github.com/HelgeSverre/rust-vst3-host/blob/main/docs/reference/platform-support.md).

@@ -152,6 +152,16 @@ Implemented optional schema-v3 step/hold effect-gain lanes, resolved by track/ef
 
 Compare official SDK plus thin C++ shim against maintained Rust bindings using one known test plugin. Choose from working lifecycle coverage. Scan in a child process with timeouts. Implement buses, buffers, events, automation, state, and teardown before editors. Acceptance: discover/load/process/automate/save/restore one plugin; scanner failure cannot kill the controller. Document playback isolation honestly and verify pinned SDK notices. No blanket compatibility claim.
 
+### T09a: standalone VST3 fixture lifecycle (complete)
+
+`native/vst3` builds a macOS C++ probe against pinned official 3.8.0 interfaces and a project-owned gain plugin. It verifies stereo buses, sample-offset parameters and notes, combined controller metadata and state, component state restore into a fresh instance, and teardown. Scanner tests cover crashes, hangs, oversized output, malformed responses, and continued Rust controller responsiveness. SDK notices accompany ignored build outputs. Dexed and ValhallaFreqEcho factory metadata scans successfully; third-party processing is unverified. See [hosting evidence](decisions/plugin-hosting.md).
+
+### T09b: candidate adapter and third-party offline validation (next)
+
+**Depends on:** T09a. **Owner:** stronger model for lifecycle/ownership, Luna tests/docs.
+
+Use the fixture to compare a maintained Rust host candidate against the C++ reference; Rust candidates remain unbuilt. Support separate controllers and component/controller connections, bounded opaque state, and explicit bus negotiation. Process one known third-party plugin offline through automation, state restore, and repeated teardown before exposing session integration. Record unsupported layouts and restart behavior. Keep scanning in owned children; choose and document playback isolation separately. Acceptance: actual third-party audio/state evidence and a reviewed concrete adapter boundary. Follow with session/native graph integration and callback allocation/timing checks; GUI editors remain deferred. T09 as a whole remains incomplete until DAW processing uses the adapter.
+
 ### T10: Audio Unit host proof of concept
 
 **Depends on:** T09 host contract. **Owner:** stronger model, Luna harness/docs. **Files:** `native/`, `src/hosting/`, macOS integration tests.
@@ -178,4 +188,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T08b is complete. Start T09 with a bounded VST3 host spike and a known test plugin. Compare official SDK and maintained bindings using actual discovery/load/process/teardown evidence. Preserve the existing snapshot preparation and zero-allocation callback requirements. Do not claim plugin support until the adapter processes audio. Browser clip editing remains a separate UI slice. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+T09a is complete. Continue with T09b candidate adapter validation and a known third-party plugin. Preserve snapshot preparation and zero-allocation callback requirements. DAW plugin hosting remains unavailable; the standalone fixture probe is not native playback integration. Browser clip editing remains a separate UI slice. See [hosting evidence](decisions/plugin-hosting.md) and [INTEGRATIONS.md](INTEGRATIONS.md).
