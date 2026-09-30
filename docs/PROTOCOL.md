@@ -193,6 +193,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
+| `runtime_error` | SuperCollider score, executable, owned child or output validation/publication failure |
 | `plugin_error` | VST3 or AU validation, processing worker, or plugin operation failed |
 | `internal_error` | Unexpected session serialization failure |
 
@@ -281,3 +282,19 @@ Plugin renders accept 0.001–10 seconds. The renderer preserves headroom betwee
 ### Standalone Audio Unit lifecycle proof
 
 The original `native/au.probe` AUv2 lifecycle probe remains a separate diagnostic with its own schema-version-1 result envelope and owned process harness. It opens no audio device and is distinct from schema-v5 session processing. See [the worker and proof notes](../native/au/README.md) and [the AU adapter contract](decisions/audio-units.md).
+
+## SuperCollider NRT jobs
+
+`capabilities.supercollider_nrt` reports Unix implementation support, whether `DAW_SCSYNTH` names an existing absolute file, limits and `session_device:false`, `native_playback:false`. Configuration does not prove executable permissions, runtime version or installed UGen compatibility; actual launch and rendering are checked per job. Set `DAW_SCSYNTH` before starting the controller. Windows builds recognize the command but explicitly report unavailable rendering.
+
+```jsonl
+{"protocol_version":1,"id":"sc-render","method":"supercollider.render","params":{"score_path":"/absolute/score.osc","path":"/absolute/fresh.wav","sample_rate":48000}}
+```
+
+Params contain exactly `score_path`, `path`, and integer `sample_rate`. Nonempty UTF-8 paths may be at most 4096 bytes and resolve relative to the controller working directory. Rates are 8000–192000. The result is `{ "path": <requested path>, "frames": <integer>, "sample_rate": <rate>, "channels": 2 }`. The command is synchronous, does not load/change the session or advance its revision, and does not start/stop transport. It has no HTTP GUI route. Wrong JSON params use `invalid_params`; score/executable/worker/output failures use `runtime_error`.
+
+The input is a regular binary score file capped at 1 MiB, snapshotted into a private job directory. Each record is a big-endian 32-bit length and a flat OSC bundle of 16–65516 bytes; at most 16384 records are allowed. Relative timestamps begin at zero, never decrease, and end between 0.001 and ten seconds. Messages use string addresses, zero padding, valid UTF-8 strings and scalar/string/blob type tags; nested bundles, integer command addresses and arrays are unsupported. Nonfinite floating arguments and malformed/trailing data are rejected before launch. See [the score contract](decisions/supercollider.md) for accepted tags and [the fixture writer](../native/supercollider/score.py).
+
+The owned Unix child runs `scsynth -N` with two output channels, no input, 64-frame blocks and a private restricted path for file-accessing OSC commands. Supply SynthDefs using `/d_recv`; automatic defaults and external-file assets are not loaded. No hardware audio or realtime networking starts. The process group is terminated on completion/failure, and the direct child is reaped. Timeout is 15 seconds, with 64 KiB each for stdout/stderr. Captured server error diagnostics fail even if the process returns exit status zero. Output must be bounded, stereo PCM16 at the requested rate. Up to 128 trailing block frames are trimmed to `round(last_timestamp * sample_rate)`. All samples are validated before exclusive destination creation; failure leaves no partial destination and never overwrites an existing output. This is process ownership, not a security sandbox or a live callback design.
+
+OSC validation checks framing and scalar/string/blob encoding, plus the SynthDef file header for `/d_recv`. It does not interpret every server command or UGen graph. A successful result proves that a bounded WAV was produced and validated; NRT provides no per-command completion acknowledgements, and commands that fail silently in the runtime cannot all be detected. Interactive completion handling remains required before claiming the full T11 control contract.

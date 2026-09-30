@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. SuperCollider/Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
+Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. SuperCollider has an owned offline score-rendering command; programmable track devices, Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
 
 ## Run
 
@@ -146,6 +146,19 @@ python3 examples/au_demo.py
 ```
 
 Schema v5 retains the v4 timeline and built-in/VST3 effects, and adds the exact Apple `aufx/lpas/appl` AULowpass effect. Renders require 48 kHz and are limited to ten seconds. `DAW_AU_HOST` may select an absolute worker path; the fallback is `output/au-spike/au-host`. The worker is owned and bounded. AU live playback and GUI imports/edits remain unavailable; the GUI continues to support only its documented v1/v4 continuous sine sessions. See the [AU adapter contract](docs/decisions/audio-units.md) and [protocol](docs/PROTOCOL.md).
+
+## SuperCollider score jobs
+
+```sh
+cargo build --locked
+export DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth
+python3 examples/supercollider_demo.py
+python3 -m unittest native.supercollider.test_daw
+```
+
+On Unix, `supercollider.render` runs a prepared binary OSC score through an explicitly configured `scsynth` executable. It writes a fresh stereo PCM16 WAV, supports 8–192 kHz and scores up to ten seconds, and captures child errors without changing your session or transport. The example creates its own SynthDef and score without starting a language interpreter or audio device. The configured executable and UGens must already be installed; this project bundles neither. The [job contract](docs/decisions/supercollider.md) describes bounds and restrictions.
+
+These are synchronous offline jobs. A script can use the exported WAV in an audio-clip project, but saved programmable track devices and interactive OSC/live audio are still being built. The browser has no SuperCollider controls yet.
 
 ## Develop
 

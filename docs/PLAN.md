@@ -238,6 +238,22 @@ Verification: six real controller tests cover cutoff response, exact saved/state
 
 First launch a configured `scsynth` with a prepared NRT score, fresh WAV path, argument arrays, timeout, and captured errors. Then add owned child-process OSC with completion handling. Never use a shell or terminate unrelated servers. Acceptance: installed engine renders a fixture, missing executable/timeout errors work, interactive create/free is acknowledged. Live audio transport needs separate measured design; OSC success alone is not track integration.
 
+### T11a: owned SuperCollider NRT jobs — complete
+
+The JSONL `supercollider.render` command accepts a bounded binary score snapshot and renders through an explicitly configured Unix `scsynth`. It preserves session/revision/transport, owns its child process group, limits diagnostics and elapsed child time, validates stereo PCM16 output and trims trailing block padding before exclusive publication. The installed 3.14.1 server accepts the generated SCgf-v2 fixture without a language interpreter or audio device. NRT success proves a rendered WAV; per-command completion acknowledgements are not available in this mode. See [the job decision](decisions/supercollider.md).
+
+Verification: 13 controller/native tests pass, including a real 440 Hz stereo render, minimum/non-block-aligned durations, unresolved/invalid definitions, special-file rejection, exclusive output, malformed/oversized child results, timeout and descendant-pipe cleanup. Three parser regressions and portable/combined-feature fmt/clippy/tests pass. Both the baseline script and configured SuperCollider demo export successfully. The existing GUI preview remains untouched. This completes the NRT job slice; T11 overall remains incomplete until saved track devices and interactive completion/audio routing are implemented. No hardware/acoustic or arbitrary UGen compatibility claim is made.
+
+### T11b: saved programmable SuperCollider track source
+
+**Depends on:** T11a, T08b. **Owner:** primary schema/audio preparation; Luna examples, state/parameter tests and independent docs after the contract is fixed.
+
+Derive a saved SynthDef identity/program and native control/event shape from the working score renderer. Validate the actual program, metadata and requested control names before committing. Prepare owned track PCM through NRT outside callbacks, then route it through existing gain/plugin chains and rate-matched native playback. Preserve portable parsing, project assets, revisions and output rollback; bound total runtime/decoded resources. Acceptance: scripts create two tracks with distinct program/control data, save/reload them, export through existing chains, and audition the same prepared audio natively; malformed program/control/runtime jobs preserve the active project. Document that prepared PCM playback does not provide interactive SC DSP.
+
+### T11c: owned interactive OSC and live runtime routing
+
+**Depends on:** T11a/b. Keep T11's remaining interactive create/free acknowledgement and measured audio-routing work explicit. Own only launched servers, use loopback argument arrays and completion responses, and establish an actual track-audio path before claiming live runtime hosting. OSC control alone is insufficient. Keep foreign server work outside the hardware callback.
+
 ### T12: Csound and Pure Data adapters
 
 **Depends on:** T11 job conventions; T08b for embedded devices. **Owner:** Luna offline harnesses, stronger model FFI. **Files:** proposed `src/runtimes/csound.rs`, `src/runtimes/pd.rs`, separate tests.
@@ -252,4 +268,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T10b is complete for scripted offline Apple AULowpass sessions. Continue with T11's bounded SuperCollider NRT job proof, then transactional runtime track integration; install/runtime availability must be verified before claiming support. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
+T11a establishes owned SuperCollider NRT score jobs. Continue with T11b saved programmable track sources; T11c interactive acknowledgements/audio routing and T12/T13 remain outstanding. Preserve the distinction between exported WAV jobs, prepared runtime track audio and live runtime DSP. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.

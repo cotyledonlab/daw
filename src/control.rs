@@ -26,6 +26,7 @@ pub const METHODS: &[&str] = &[
     "session.save",
     "session.load",
     "render",
+    "supercollider.render",
     "transport.status",
     "transport.play",
     "transport.pause",
@@ -42,6 +43,7 @@ fn capabilities() -> Value {
     json!({
         "methods": METHODS,
         "devices": ["sine", "audio"],
+        "supercollider_nrt": {"implemented":cfg!(unix), "configured":std::env::var_os("DAW_SCSYNTH").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()), "session_device":false, "native_playback":false, "command_acknowledgements":false, "max_score_bytes":1048576, "max_seconds":10, "channels":2, "sample_format":"wav_pcm16", "worker_timeout_seconds":15},
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
         "live_parameter_edits": {"implemented":cfg!(all(feature="vst3-live",target_os="macos")),"max_pending":8,"automation_override":false},
@@ -271,6 +273,14 @@ enum Parameter {
     FrequencyHz,
     Gain,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SuperColliderRenderParams {
+    score_path: String,
+    path: String,
+    sample_rate: u32,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenderParams {
@@ -645,6 +655,27 @@ impl Controller {
                 );
                 self.commit_session(replacement)?;
                 Ok(json!(self.session))
+            }
+            "supercollider.render" => {
+                let p: SuperColliderRenderParams = params(value)?;
+                if p.score_path.is_empty()
+                    || p.path.is_empty()
+                    || p.score_path.len() > 4096
+                    || p.path.len() > 4096
+                    || !(8000..=192000).contains(&p.sample_rate)
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "score_path/path must be nonempty paths up to 4096 UTF-8 bytes; sample_rate must be between 8000 and 192000",
+                    ));
+                }
+                let report = crate::supercollider::render_score(
+                    Path::new(&p.score_path),
+                    Path::new(&p.path),
+                    p.sample_rate,
+                )
+                .map_err(|e| ControlError::new("runtime_error", e))?;
+                Ok(json!(report))
             }
             "render" => {
                 let p: RenderParams = params(value)?;

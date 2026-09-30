@@ -11,6 +11,7 @@ pub mod hosting;
 pub mod plugin_render;
 pub mod render;
 pub mod session;
+pub mod supercollider;
 
 #[cfg(all(feature = "vst3-live", target_os = "macos"))]
 mod live_plugins;
