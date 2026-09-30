@@ -176,6 +176,22 @@ Implemented schema-v4 serial track VST3 effects through the owned C++ child, wit
 
 Review the Rust realtime runner and a thin C++ shim against DAW-owned buffers and lifecycle. Choose callback ownership and playback isolation explicitly, prepare instances off callback, and return destruction to the owner thread. Measure allocation, locks, automation/reset behavior, latency handling, and callback bounds before enabling live plugin playback. Acceptance: known effect plays through the DAW native path with saved state and bounded automation; stop/replacement reliably release resources off callback. Hardware/acoustic checks are separate from callback evidence. Editors and instruments remain separate slices.
 
+Implemented optional `vst3-live` with a C++ realtime-mode shim on an owned DSP worker and a fixed 1024-frame SPSC callback consumer. Same-thread initialization/process/destruction, allocation-free consumption, exact fixture automation/state restoration, repeated release, and silent Valhalla native pause/resume/stop/replacement are verified. Zero underruns and zero over-budget callbacks in the short hardware run; no acoustic claim. Seek/loop, editors, instruments, crash isolation, and general plugin compatibility are excluded. Startup/shutdown timeouts report failures; hung foreign workers are detached, requiring an engine restart. See the adapter record for limits.
+
+### T09e: continuous sine effect-chain GUI — complete
+
+**Depends on:** T09d. **Owner:** stronger model integration, Luna HTTP guards/tests/docs.
+
+The browser accepts v1 and schema-v4 continuous, clip-free sine sessions. Add gain explicitly upgrades v1 to v4. Saved VST3 session uploads pass Rust foreign validation before commit; their effects populate a bounded in-memory selector for reuse. Gain and saved normalized plugin parameter values, bypass, removal, native transport, JSON save, and WAV export are supported. Opaque state and saved automation points are preserved; automation-point editing, plugin discovery/windows, notes, audio clips, and v2/v3 editing are excluded. V4 playback uses native audio; plugins need vst3-live and 48 kHz. VST3 renders retain the ten-second cap.
+
+Acceptance verified: thirteen bridge tests and thirteen JavaScript tests pass; browser loaded Valhalla, edited/applied bypass and parameter 48, added serial gain/reused VST3 effects, played/paused/resumed/stopped silently, and downloaded a WAV through the real engine. The existing preview's sine edits were saved and restored during restart.
+
+### T09f: names and metadata for validated plugin parameters
+
+**Depends on:** T09e. Inspect only effects already in the authoritative session through a bounded owned child. Add names/defaults/flags to the protocol and GUI without guessing ParamID meanings or changing opaque state. Keep metadata errors explicit and editing limited to supported automatable parameters. Acceptance: Valhalla's saved parameter displays its actual name, restored base value and automation remain intact, and metadata failures preserve the session. No arbitrary HTTP file browsing or native plugin windows.
+
+Implementation notes for T09f: the primary model owns the protocol/native interface; Luna can add display and bounded fixtures after it is specified. Proposed command `effect.inspect` takes only track/effect IDs from the active session, never client paths. Use the existing owned child/timeouts and bounded state restore. Return bounded parameter metadata with actual UTF-16 names decoded safely, numeric IDs, automatable/read-only flags, and current restored normalized values. Inspect must not process or commit the session, replace playback, or overwrite saved bases/points. Extend the existing controller/child tests for invalid IDs, corrupt metadata and worker failures; GUI shows names but preserves ID-based serialization. Keep snapshot values authoritative and editable parameters limited to the already saved list for this slice.
+
 ### T10: Audio Unit host proof of concept
 
 **Depends on:** T09 host contract. **Owner:** stronger model, Luna harness/docs. **Files:** `native/`, `src/hosting/`, macOS integration tests.
@@ -200,8 +216,6 @@ Use separate commits. Start Csound with CLI rendering, then assess libcsound blo
 
 First add cancellable render jobs with progress and subscriptions. Then build minimal track/clip/device/transport/meter views through the same commands. Optional MCP translates discovery, inspect, edit, and jobs without another session model. Acceptance: Python creates/edits/saves/reloads/renders the arrangement shown by the UI, failed edits preserve state, and cancellation cleans output. Defer a visual patch editor and elaborate mixer.
 
-Implemented optional `vst3-live` with a C++ realtime-mode shim on an owned DSP worker and a fixed 1024-frame SPSC callback consumer. Same-thread initialization/process/destruction, allocation-free consumption, exact fixture automation/state restoration, repeated release, and silent Valhalla native pause/resume/stop/replacement are verified. Zero underruns and zero over-budget callbacks in the short hardware run; no acoustic claim. Seek/loop, editors, instruments, crash isolation, and general plugin compatibility are excluded. Startup/shutdown timeouts report failures; hung foreign workers are detached, requiring an engine restart. See the adapter record for limits.
-
 ## Next starting point
 
-T09d is complete for the experimental scripted native path. Next implement one bounded GUI slice: schema-v4 inspection and selection of a previously validated stereo effect, using Rust capabilities and session.replace as authority. Keep unsupported note/clip editing locked and preserve the play/pause/hold-to-stop interaction. The current GUI remains v1-only until that slice is implemented. Then consider T10 Audio Units. Preserve offline child containment and keep all foreign lifecycle operations off the callback.
+T09e is complete. Continue with T09f parameter names and metadata for validated session effects, then T10 Audio Units. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction.

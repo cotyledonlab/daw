@@ -2,7 +2,7 @@
 
 ## Current result
 
-The reference probes under [`native/vst3`](../../native/vst3/README.md) remain diagnostic tools. T09c now loads and renders scripted schema-v4 VST3 effect sessions through owned children. An optional experimental native player hosts VST3 effects through a dedicated DSP worker; the browser GUI has no plugin controls. The engine remains authoritative, and its offline renderer is not suitable for direct audio-callback use.
+The reference probes under [`native/vst3`](../../native/vst3/README.md) remain diagnostic tools. T09c now loads and renders scripted schema-v4 VST3 effect sessions through owned children. An optional experimental native player hosts VST3 effects through a dedicated DSP worker; the browser GUI exposes controls for effects loaded from saved continuous sine sessions. The engine remains authoritative, and its offline renderer is not suitable for direct audio-callback use.
 
 The spike uses Steinberg's official `pluginterfaces` source pinned to commit `31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c` (`v3.8.0_build_66`). It builds with the system `clang++` and CoreFoundation, without CMake. The build copies the SDK's MIT license notice to `output/vst3-spike/STEINBERG-LICENSE.txt`; generated SDK material and binaries stay under ignored `output/`.
 

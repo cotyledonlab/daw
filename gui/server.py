@@ -20,6 +20,32 @@ class EngineError(Exception):
     pass
 
 
+def validate_editor_session_shape(session):
+    """Limit editor imports to continuous sine sessions before engine replacement.
+
+    Rust remains authoritative for the complete schema and field validation. This
+    preflight only rejects session families the browser editor cannot represent.
+    """
+    if not isinstance(session, dict):
+        return
+    version = session.get("schema_version")
+    if type(version) is int and version in (2, 3):
+        raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
+    if type(version) is not int or version != 4:
+        return
+    tracks = session.get("tracks")
+    if not isinstance(tracks, list):
+        raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+    for track in tracks:
+        if not isinstance(track, dict):
+            raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+        device = track.get("device")
+        if (not isinstance(device, dict) or device.get("kind") != "sine"
+                or track.get("mode") != "continuous"
+                or track.get("clips") != []):
+            raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+
+
 class Engine:
     def __init__(self, binary):
         self.process = subprocess.Popen(
@@ -134,6 +160,7 @@ class Handler(BaseHTTPRequestHandler):
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/live.js": ("live.js", "text/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                  "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
                   "/style.css": ("style.css", "text/css; charset=utf-8")}
         if self.path not in assets:
             self.send_json(404, {"error": "Not found."})
@@ -162,8 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/session":
                 if set(data) != {"session"}:
                     raise ValueError("Expected session only.")
-                if isinstance(data["session"], dict) and data["session"].get("schema_version") in (2, 3):
-                    raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
+                validate_editor_session_shape(data["session"])
                 self.send_json(200, self.server.engine.call("session.replace", data))
             elif self.path == "/api/transport":
                 action = data.pop("action", None)

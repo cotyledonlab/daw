@@ -39,7 +39,7 @@ Live sessions require a 48 kHz session and device, stereo float32 plugin process
 
 The queue holds 1024 frames, about 21.3 ms at 48 kHz, before device latency. An underrun emits silence and leaves the timeline unchanged; `plugin_worker_underruns` is exposed in transport status and CLI output. Startup times out after five seconds. Shutdown waits two seconds; if the worker remains hung, the engine detaches it and reports explicit stop failure. In-process plugin crashes can terminate the engine. Offline plugin rendering remains isolated in owned child processes.
 
-The browser editor continues to support schema v1 only and has no plugin controls. The feature is currently for the native CLI.
+T09e now exposes continuous sine schema-v4 effect chains in the browser, including saved VST3 imports, bypass, saved normalized parameter values, and reuse. DSP remains native; browser Web Audio supports v1 sine audition only. Notes/audio clips and plugin windows are not editable here.
 
 ## Implemented worker boundary
 

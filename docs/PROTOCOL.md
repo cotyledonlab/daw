@@ -43,7 +43,7 @@ Unknown fields, operations, parameters, or missing targets return `invalid_param
 
 Every successful edit, replace, or load advances the revision exactly once, including identical replacements and batches whose final state is unchanged. Reads, saves, renders, and transport commands do not advance it. Errors never advance it. Exhausting the unsigned 64-bit counter returns `revision_exhausted` before playback or session mutation.
 
-`session.replace` and `session.load` accept an optional string `expected_revision`, checked before validation/file access. Without it they retain legacy unconditional behavior. They still return a bare session; use inspect afterward to obtain a fresh paired snapshot. `session.get`, saved JSON, and schema version 1 are unchanged. Explicit null, numeric revisions, and noncanonical strings such as `"01"` or `"+1"` are invalid. Clients sharing an engine should use checked writes consistently; the current browser editor still uses unconditional replacement and should remain in one editing window.
+`session.replace` and `session.load` accept an optional string `expected_revision`, checked before validation/file access. Without it they retain legacy unconditional behavior. They still return a bare session; use inspect afterward to obtain a fresh paired snapshot. `session.get`, saved JSON, and schema version 1 are unchanged. Explicit null, numeric revisions, and noncanonical strings such as `"01"` or `"+1"` are invalid. Clients sharing an engine should use checked writes consistently; the browser editor should remain in one editing window.
 
 ```jsonl
 {"protocol_version":1,"id":"snapshot","method":"session.inspect"}
@@ -93,7 +93,15 @@ Snapshots always contain `state` and `level`. State is `stopped`, `starting` (a 
 
 Playback ends at either the requested frame count or the wall-time deadline, including pauses, followed by a short bounded buffer drain. The owner checks deadlines without needing status requests. Stop releases the stream before acknowledgment; EOF terminates the engine and releases process resources. The control queue holds at most eight messages and commands time out after ten seconds; a timed-out command has an uncertain result, so restart the engine before relying on playback state. Audio callbacks use atomics and never wait on the command queue. Default device selection and host permissions remain platform limitations.
 
-The GUI uses a 60-second native snapshot, locks session edits while active, and retains browser mode for live draft editing. Use one editing window: native transport is shared, while Web Audio players belong to individual tabs. Closing a page requests native stop on a best-effort basis; the engine's duration limit still applies. The GUI remains v1-only and does not expose plugin controls.
+The GUI uses a 60-second native snapshot and locks session edits while native playback is playing or paused. Use one editing window: native transport is shared, while Web Audio players belong to individual tabs. Closing a page requests native stop on a best-effort basis; the engine's duration limit still applies. Browser audition supports schema-v1 sessions only. V4 sessions require native audio for playback, including sessions without plugins; sessions containing VST3 effects also require `vst3-live`. Browser audition never hosts effects.
+
+### GUI session editing
+
+The GUI edits schema-v1 and schema-v4 continuous sine sessions. It does not edit schema-v2 note sessions, schema-v3 effect sessions, notes, or audio clips. The HTTP upload guard accepts only v1/v4 continuous sine session shapes, and Rust performs full authoritative validation before applying a session. Unsupported sessions are rejected and editing is locked when the current session is outside this scope.
+
+Adding a gain effect is an explicit user action that upgrades a v1 session to v4 and initializes the v4 tempo, continuous mode, empty clips, and effect arrays. Other edits preserve the current format; loading or applying a session never silently upgrades it. The GUI can reuse VST3 effects that have already passed validation in loaded or applied sessions. It keeps an in-memory catalog of at most 64 such effects for selection; it does not scan plugins, run an installer, or expose filesystem browsing over HTTP.
+
+VST3 controls use saved normalized parameter IDs with generic labels because plugin metadata is not exposed. Saved base parameter values and automation points remain preserved and read-only in the GUI. Users can bypass or remove an effect; removing an effect also clears only its gain automation lanes. Offline plugin renders are limited to ten seconds. These GUI controls edit saved sessions; they do not imply browser plugin playback or plugin discovery.
 
 ```jsonl
 {"protocol_version":1,"id":"play","method":"transport.play","params":{"seconds":10,"volume":0.25}}
@@ -147,7 +155,7 @@ Points must be nonempty, strictly increasing by integer frame, and within the ex
 
 Seek and wrap restore the last value at or before the destination, or the base gain before the first point. They use prepared data and perform no file loading. Automation is part of the snapshot shared by offline and native rendering. Use revision-checked full replacement to edit lanes: invalid edits preserve session/revision/playback; successful edits stop playback before commit.
 
-`capabilities.automation` reports parameters, interpolation, point/lane limits, and `live_edits:false`. `capabilities.effects.automation` is true. [The automation contract](decisions/automation.md) gives the preparation rules; [the example](../examples/sessions/gain-automation.json) is loadable and playable. The browser remains a v1 editor.
+`capabilities.automation` reports parameters, interpolation, point/lane limits, and `live_edits:false`. `capabilities.effects.automation` is true. [The automation contract](decisions/automation.md) gives the preparation rules; [the example](../examples/sessions/gain-automation.json) is loadable and playable. The GUI can preserve saved v4 gain lanes and removes lanes targeting an effect when that effect is removed; it does not edit automation points.
 
 ## Session schema v1
 
@@ -218,7 +226,7 @@ At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs
 
 Build `--features vst3-offline` on macOS and build the offline worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
 
-Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. GUI editing/upload remains v1-only.
+Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. The GUI upload guard accepts only v1/v4 continuous sine session shapes; plugin sessions still require the Rust validation and preparation described above.
 
 ### Experimental live VST3 playback (macOS)
 

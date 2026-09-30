@@ -37,7 +37,9 @@ Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless 
 
 Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply/save still validate and persist through Rust. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
 
-Browser output is built-in sine audition. Native output below runs the Rust engine. The browser editor supports continuous schema-v1 sine tracks. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate. Plugin playback is available only through the experimental native `vst3-live` build described below; the browser does not host plugins.
+Browser output is built-in sine audition for schema-v1 sessions only. Native output below runs the Rust engine and is required to play v4 sessions, including v4 sessions without plugins; VST3 sessions additionally require the experimental `vst3-live` build. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate.
+
+The GUI edits continuous sine sessions in v1 and v4. It can add serial gain effects, explicitly upgrading a v1 session to v4, and edit validated VST3 effects already present in loaded or applied sessions. The format is otherwise unchanged by editing. VST3 effects can be selected from a 64-entry in-memory catalog of effects seen in those sessions; the GUI does not scan plugins, install them, or browse the filesystem over HTTP. Plugin parameter controls use saved normalized parameter IDs with generic labels; parameter points and base values are preserved as read-only data. Bypass and removal are available, and removing an effect also removes its targeted gain automation lanes. Notes, audio clips, and schema-v2/v3 sessions are outside the GUI editing scope.
 
 ## Native playback (macOS)
 
@@ -47,7 +49,7 @@ target/debug/daw devices
 target/debug/daw play path/to/session.json 2 0.25
 ```
 
-This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. After this build, restart `python3 gui/server.py` and choose **Native audio** in the GUI. Play applies the draft and starts the Rust engine. The same button pauses/resumes; hold it or press Escape to Stop. Track editing is locked during native playback; listening volume remains adjustable. Native playback uses a fixed session snapshot and ends after 60 seconds of wall time, including time paused. Switching output stops the previous player in that window. Browser output remains available for immediate draft edits. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
+This plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. After this build, restart `python3 gui/server.py` and choose **Native audio** in the GUI. Play applies the draft and starts the Rust engine. The same button pauses/resumes; hold it or press Escape to Stop. Track editing is locked while native playback is playing or paused; listening volume remains adjustable. Native playback uses a fixed session snapshot and ends after 60 seconds of wall time, including time paused. Switching output stops the previous player in that window. Browser output remains available for immediate draft edits. See [native audio notes](docs/decisions/live-audio.md) for tested hardware and limitations.
 
 ## Scripted note sequencing
 
@@ -59,7 +61,7 @@ target/debug/daw play examples/sessions/arpeggio.json 2 0.25
 
 The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
 
-The current browser editor rejects note-session uploads and locks editing if it encounters one. There is no piano roll yet. Native seek, loops, and schema-v3 effect automation are available through JSONL.
+The browser editor rejects note-session and audio-clip sessions and locks editing if it encounters them. There is no piano roll or clip editor. Native seek, loops, and schema-v3 effect automation are available through JSONL; the GUI's effect editing is limited to gain chains and existing validated VST3 effects in supported v4 sessions.
 
 To preserve an existing sine session while explicitly upgrading its format:
 
@@ -97,7 +99,7 @@ Play the [gain-chain example](examples/sessions/gain-chain.json) with the native
 target/debug/daw play examples/sessions/gain-chain.json 2 0.25
 ```
 
-Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Saved gain automation is available through JSONL; GUI effect editing remains pending. See the [effect contract](docs/decisions/track-effects.md).
+Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Saved gain automation is available through JSONL, and the GUI clears lanes targeting an effect when that effect is removed. See the [effect contract](docs/decisions/track-effects.md).
 
 ## Saved gain automation
 
@@ -117,7 +119,7 @@ This creates a fresh project under ignored `output/`, captures initial plugin st
 
 V4 preserves v3 track gain chains and adds serial `vst3` effects. Supported plugins have one stereo input/output, no event buses, float32 offline processing, and zero reported latency. Sessions containing plugins require 48 kHz, and plugin renders stop at ten seconds. Parameters are normalized and points use exact frame positions; plugin DSP may smooth changes. State has strict byte limits. Load/replace prepares plugins in owned child processes before committing; failures preserve the active session and revision. Rendering finishes all plugin work before creating the destination WAV. Bypass skips DSP but still validates the plugin on load. See [the protocol](docs/PROTOCOL.md) for the shape and [the adapter record](docs/decisions/vst3-adapter.md) for limits.
 
-The browser editor still supports v1 only and has no plugin controls. Native VST3 playback is an experimental, separate feature requiring both offline VST3 and native audio support. It runs third-party plugin code in-process; a plugin crash can terminate the engine. No plugin picker or editor window is provided.
+The GUI can edit supported v4 sessions and reuse validated VST3 effects already loaded or applied, but it does not scan or install plugins and provides no plugin editor window. Native VST3 playback is an experimental feature requiring both offline VST3 and native audio support. It runs third-party plugin code in-process; a plugin crash can terminate the engine.
 
 ## Experimental live VST3 playback (macOS)
 

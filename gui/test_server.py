@@ -18,6 +18,18 @@ SESSION = {
         {"id": "tone", "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2}}
     ],
 }
+V4_GAIN_SESSION = {
+    "schema_version": 4,
+    "sample_rate": 48000,
+    "tempo_milli_bpm": 120000,
+    "tracks": [{
+        "id": "tone",
+        "mode": "continuous",
+        "clips": [],
+        "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2},
+        "effects": [{"kind": "gain", "id": "trim", "gain": 0.5, "bypass": False}],
+    }],
+}
 
 
 class ServerIntegrationTests(unittest.TestCase):
@@ -132,6 +144,45 @@ class ServerIntegrationTests(unittest.TestCase):
                 self.assertIn(b"scripting interface", body)
                 self.assertEqual(self.get_session(), SESSION)
 
+    def test_schema_v4_continuous_sine_gain_session_replaces_through_rust(self):
+        status, body, _ = self.post("/api/session", {"session": V4_GAIN_SESSION})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body), V4_GAIN_SESSION)
+        self.assertEqual(self.get_session(), V4_GAIN_SESSION)
+
+    def test_unsupported_schema_v4_tracks_preserve_current_session(self):
+        status, _, _ = self.post("/api/session", {"session": SESSION})
+        self.assertEqual(status, 200)
+        unsupported = (
+            {"id": "audio", "mode": "sequenced", "clips": [],
+             "device": {"kind": "audio", "gain": 1}, "effects": []},
+            {"id": "notes", "mode": "sequenced", "clips": [],
+             "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2}, "effects": []},
+            {"id": "malformed", "mode": [], "clips": {},
+             "device": [], "effects": []},
+        )
+        for track in unsupported:
+            with self.subTest(track=track):
+                candidate = {**V4_GAIN_SESSION, "tracks": [track]}
+                status, body, _ = self.post("/api/session", {"session": candidate})
+                self.assertEqual(status, 422, body)
+                self.assertIn(b"continuous sine", body)
+                self.assertEqual(self.get_session(), SESSION)
+
+    def test_malformed_schema_v4_and_legacy_v1_errors_are_safe_and_preserve_session(self):
+        status, _, _ = self.post("/api/session", {"session": SESSION})
+        self.assertEqual(status, 200)
+        malformed_v4 = {"schema_version": 4, "sample_rate": 48000, "tracks": {}}
+        status, body, _ = self.post("/api/session", {"session": malformed_v4})
+        self.assertEqual(status, 422, body)
+        self.assertIsInstance(json.loads(body)["error"], str)
+
+        invalid_v1 = {**SESSION, "tracks": [{"id": "tone", "device": {"kind": "sine"}}]}
+        status, body, _ = self.post("/api/session", {"session": invalid_v1})
+        self.assertEqual(status, 422, body)
+        self.assertIsInstance(json.loads(body)["error"], str)
+        self.assertEqual(self.get_session(), SESSION)
+
     def test_bad_params_and_duration_return_safe_errors(self):
         for path, body in (
             ("/api/session", {"unexpected": True}),
@@ -154,6 +205,9 @@ class ServerIntegrationTests(unittest.TestCase):
             with self.subTest(path=path):
                 status, body, _ = self.request("GET", path)
                 self.assertEqual(status, 404, body)
+        status, body, headers = self.request("GET", "/editor.js")
+        self.assertEqual(status, 200, body)
+        self.assertIn("text/javascript", dict(headers)["Content-Type"])
 
 
 if __name__ == "__main__":

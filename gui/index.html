@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>DAW — Sine studio</title>
+  <title>DAW — Track studio</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
         <span class="brand-name">DAW</span>
       </a>
       <div class="session-meta">
-        <span class="offline-badge"><span class="status-dot"></span>Sine studio</span>
+        <span class="offline-badge"><span class="status-dot"></span>Track studio</span>
         <span class="session-name">Untitled session</span>
       </div>
       <div class="top-actions">
@@ -30,7 +30,7 @@
         <div>
           <p class="eyebrow">Session workspace</p>
           <h1 id="workspace-title">Track editor</h1>
-          <p class="intro">Play your sine tracks, shape the sound live, and export a WAV when ready.</p>
+          <p class="intro">Shape sine tracks, build effect chains, and export your sound.</p>
         </div>
         <div class="sample-rate-wrap">
           <label for="sample-rate">Sample rate</label>
@@ -83,6 +83,7 @@
         </div>
       </section>
 
+      <p id="effects-hint" class="output-hint"></p>
       <section id="tracks" class="tracks" aria-label="Sine tracks"></section>
 
       <section id="empty-state" class="empty-state" aria-labelledby="empty-title" hidden>
@@ -113,10 +114,11 @@
       <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
     </main>
 
-    <footer class="footer"><span>Browser or native sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Plugin hosting coming later</span></footer>
+    <footer class="footer"><span>Browser or native sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Saved VST3 effects · Native playback</span></footer>
   </div>
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>
+  <script src="/editor.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
