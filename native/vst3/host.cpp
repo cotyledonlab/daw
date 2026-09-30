@@ -7,16 +7,21 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivsthostapplication.h"
+#include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <set>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -91,7 +96,7 @@ struct Module {
 
 #define STACK_REFS uint32 PLUGIN_API addRef() override { return ++refs; } \
     uint32 PLUGIN_API release() override { return --refs; } \
-    uint32 refs = 1
+    std::atomic<uint32> refs{1}
 
 struct Host : IHostApplication {
     STACK_REFS;
@@ -114,6 +119,7 @@ struct Host : IHostApplication {
 // No editor or asynchronous restart support in this offline probe.
 struct Handler : IComponentHandler {
     STACK_REFS;
+    std::atomic<int32> restartFlags{0};
     tresult PLUGIN_API queryInterface(const TUID iid,void** obj) override {
         *obj=nullptr;
         if(FUnknownPrivate::iidEqual(iid,IComponentHandler::iid) || FUnknownPrivate::iidEqual(iid,FUnknown::iid)) {
@@ -123,7 +129,13 @@ struct Handler : IComponentHandler {
     tresult PLUGIN_API beginEdit(ParamID) override { return kNotImplemented; }
     tresult PLUGIN_API performEdit(ParamID,ParamValue) override { return kNotImplemented; }
     tresult PLUGIN_API endEdit(ParamID) override { return kNotImplemented; }
-    tresult PLUGIN_API restartComponent(int32) override { return kNotImplemented; }
+    tresult PLUGIN_API restartComponent(int32 flags) override {
+        // No normalized-value cache: every inspection asks the controller again.
+        // Parameter-value notifications require no graph restart; other changes are unsupported.
+        auto unsupported=flags & ~kParamValuesChanged;
+        if(unsupported) { restartFlags.fetch_or(unsupported); return kNotImplemented; }
+        return kResultOk;
+    }
 };
 struct Memory : IBStream {
     STACK_REFS;
@@ -160,14 +172,14 @@ struct Memory : IBStream {
 };
 struct Queue : IParamValueQueue {
     STACK_REFS;
-    int32 offset=16; ParamValue value=.25;
+    int32 offset=16; ParamValue value=.25; ParamID id=0;
     tresult PLUGIN_API queryInterface(const TUID iid,void** obj) override {
         *obj=nullptr;
         if (FUnknownPrivate::iidEqual(iid,IParamValueQueue::iid) || FUnknownPrivate::iidEqual(iid,FUnknown::iid)) {
             *obj=static_cast<IParamValueQueue*>(this); addRef(); return kResultOk;
         } return kNoInterface;
     }
-    ParamID PLUGIN_API getParameterId() override { return 0; }
+    ParamID PLUGIN_API getParameterId() override { return id; }
     int32 PLUGIN_API getPointCount() override { return 1; }
     tresult PLUGIN_API getPoint(int32 index,int32& sampleOffset,ParamValue& result) override {
         if(index!=0) return kInvalidArgument; sampleOffset=offset; result=value; return kResultOk;
@@ -235,7 +247,9 @@ static std::string scan(Module& module) {
     }
     return output+"]}";
 }
+static void verifyStateStream();
 static std::string probe(Module& module) {
+    verifyStateStream();
     const FUID expected(0xDA012345,0x67894ABC,0xBDEF0123,0x456789AB);
     PClassInfo info{};
     check(module.factory->countClasses()==1,"probe accepts only the DAW fixture");
@@ -369,13 +383,16 @@ static std::string probe(Module& module) {
     return "{\"ok\":true,\"frames_checked\":256,\"sample_rate\":48000,\"stereo\":true,\"sample_offset_parameters\":true,\"note_event\":true,\"state_restored\":true,\"new_instance_state\":true,\"terminated\":true,\"combined_controller\":true,\"controller_state\":true,\"controller_ui_independent\":true}";
 }
 
+#include "effect_probe.inc"
+
 int main(int argc,char** argv) {
-    if(argc!=3 || (std::string(argv[1])!="scan" && std::string(argv[1])!="probe")) {
-        std::cout<<"{\"ok\":false,\"error\":\"usage: vst3-host scan|probe BUNDLE\"}\n"; return 2;
+    if(argc!=3 || (std::string(argv[1])!="scan" && std::string(argv[1])!="probe" && std::string(argv[1])!="effect-probe")) {
+        std::cout<<"{\"ok\":false,\"error\":\"usage: vst3-host scan|probe|effect-probe BUNDLE\"}\n"; return 2;
     }
     try {
         std::string result;
-        { Module module(argv[2]); result=std::string(argv[1])=="scan"?scan(module):probe(module);
+        { Module module(argv[2]); result=std::string(argv[1])=="scan"?scan(module):
+              std::string(argv[1])=="probe"?probe(module):effectProbe(module);
           check(module.close(),"plugin bundle exit failed"); }
         std::cout<<result<<"\n"; return 0;
     } catch(const std::exception& error) {

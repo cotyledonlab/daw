@@ -200,4 +200,4 @@ Use fresh output paths for this sequence:
 
 ## Standalone VST3 spike
 
-The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. It adds no JSONL methods, session fields, plugin identities, or DAW processing capabilities. `plugin_hosting` remains false. Fixture processing and factory inspection do not imply live plugin support.
+The macOS probe in [native/vst3](../native/vst3/README.md) has its own child-process scanner output. It adds no JSONL methods, session fields, plugin identities, or DAW processing capabilities. `plugin_hosting` remains false. Fixture processing, third-party offline effect probing, and factory inspection do not imply DAW session integration or live plugin support.

@@ -15,8 +15,8 @@ MAX_OUTPUT_BYTES = 65536
 
 
 def inspect_plugin(path, *, mode="scan", timeout=5.0, host=HOST, env=None):
-    if mode not in ("scan", "probe") or not math.isfinite(timeout) or not 0 < timeout <= 30:
-        raise ValueError("mode must be scan/probe and timeout must be in (0,30]")
+    if mode not in ("scan", "probe", "effect-probe") or not math.isfinite(timeout) or not 0 < timeout <= 30:
+        raise ValueError("mode must be scan/probe/effect-probe and timeout must be in (0,30]")
     path = str(pathlib.Path(path).resolve())
     try:
         process = subprocess.Popen([str(host), mode, path], stdout=subprocess.PIPE,
@@ -92,14 +92,16 @@ def inspect_plugin(path, *, mode="scan", timeout=5.0, host=HOST, env=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", help="explicit VST3 bundle paths; maximum 256")
-    parser.add_argument("--probe", action="store_true", help="process only the DAW test fixture")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--probe", action="store_true", help="process only the DAW test fixture")
+    modes.add_argument("--effect-probe", action="store_true", help="offline stereo effect lifecycle validation")
     parser.add_argument("--timeout", type=float, default=5)
     args = parser.parse_args()
     if len(args.paths) > 256:
         parser.error("at most 256 paths are allowed")
     if not math.isfinite(args.timeout) or not 0 < args.timeout <= 30:
         parser.error("timeout must be in (0,30]")
-    results = [inspect_plugin(path, mode="probe" if args.probe else "scan",
+    results = [inspect_plugin(path, mode="effect-probe" if args.effect_probe else "probe" if args.probe else "scan",
                               timeout=args.timeout) for path in args.paths]
     print(json.dumps({"results": results}))
     return 0 if all(result["ok"] for result in results) else 1

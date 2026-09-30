@@ -156,11 +156,23 @@ Compare official SDK plus thin C++ shim against maintained Rust bindings using o
 
 `native/vst3` builds a macOS C++ probe against pinned official 3.8.0 interfaces and a project-owned gain plugin. It verifies stereo buses, sample-offset parameters and notes, combined controller metadata and state, component state restore into a fresh instance, and teardown. Scanner tests cover crashes, hangs, oversized output, malformed responses, and continued Rust controller responsiveness. SDK notices accompany ignored build outputs. Dexed and ValhallaFreqEcho factory metadata scans successfully; third-party processing is unverified. See [hosting evidence](decisions/plugin-hosting.md).
 
-### T09b: candidate adapter and third-party offline validation (next)
+### T09b: candidate adapter and third-party offline validation (complete)
 
 **Depends on:** T09a. **Owner:** stronger model for lifecycle/ownership, Luna tests/docs.
 
-Use the fixture to compare a maintained Rust host candidate against the C++ reference; Rust candidates remain unbuilt. Support separate controllers and component/controller connections, bounded opaque state, and explicit bus negotiation. Process one known third-party plugin offline through automation, state restore, and repeated teardown before exposing session integration. Record unsupported layouts and restart behavior. Keep scanning in owned children; choose and document playback isolation separately. Acceptance: actual third-party audio/state evidence and a reviewed concrete adapter boundary. Follow with session/native graph integration and callback allocation/timing checks; GUI editors remain deferred. T09 as a whole remains incomplete until DAW processing uses the adapter.
+The C++ effect probe handles separate controllers/connections, bounded opaque state, explicit stereo bus negotiation, and offline ValhallaFreqEcho processing. Automation changes its output; component state restores into fresh instances; repeated normal/sanitizer runs and controller isolation pass. The Rust host candidate at a verified pin builds and completes a short offline render of the same effect, with finite nonzero output. Its automation/state and callback paths remain unverified. Choose the tested C++ child for the next offline slice; native ownership remains undecided. See [hosting evidence](decisions/plugin-hosting.md), [Rust trial](decisions/vst3-rust-trial.md), and [adapter boundary](decisions/vst3-adapter.md). T09 overall remains incomplete until DAW processing uses the adapter.
+
+### T09c: bounded offline effect adapter and session integration (next)
+
+**Depends on:** T09b. **Owner:** stronger model for schema/worker/ownership, Luna example and persistence/error tests.
+
+Turn the tested C++ child into an offline processor for prepared track audio, bounded normalized automation, and opaque component/controller state. Validate exact bundle-path/CID identity, supported stereo layout, 48 kHz rate, and state limits before output creation. Add strict session/protocol shapes with the working adapter, preserve revision rollback and no-overwrite outputs, and keep portable builds independent of native SDK tooling. Reject unsupported events, restart/reconfiguration requests, and unavailable hosts with structured errors. Acceptance: a scripted DAW session renders a track through the known effect, automation changes samples, save/load restores state, failures preserve session/revision and clean partial outputs, and owned worker timeout/crash does not kill the controller. No live plugin capability or editor claim.
+
+### T09d: native effect ownership and callback integration
+
+**Depends on:** T09c. **Owner:** stronger model, Luna bounded fixtures/docs.
+
+Review the Rust realtime runner and a thin C++ shim against DAW-owned buffers and lifecycle. Choose callback ownership and playback isolation explicitly, prepare instances off callback, and return destruction to the owner thread. Measure allocation, locks, automation/reset behavior, latency handling, and callback bounds before enabling live plugin playback. Acceptance: known effect plays through the DAW native path with saved state and bounded automation; stop/replacement reliably release resources off callback. Hardware/acoustic checks are separate from callback evidence. Editors and instruments remain separate slices.
 
 ### T10: Audio Unit host proof of concept
 
@@ -188,4 +200,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T09a is complete. Continue with T09b candidate adapter validation and a known third-party plugin. Preserve snapshot preparation and zero-allocation callback requirements. DAW plugin hosting remains unavailable; the standalone fixture probe is not native playback integration. Browser clip editing remains a separate UI slice. See [hosting evidence](decisions/plugin-hosting.md) and [INTEGRATIONS.md](INTEGRATIONS.md).
+T09b is complete. Continue with T09c using the tested offline C++ child and the [adapter boundary](decisions/vst3-adapter.md). DAW plugin hosting remains unavailable; standalone third-party processing is not session/native playback integration. Preserve snapshot preparation and callback rules. Browser clip editing remains separate. See [hosting evidence](decisions/plugin-hosting.md).

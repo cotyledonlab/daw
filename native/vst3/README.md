@@ -19,9 +19,9 @@ cargo build --locked
 python3 -m unittest native.vst3.test_spike
 ```
 
-The only bundle accepted for processing is the project-owned `DawTestGain.vst3` fixture. It exercises stereo buses, 48 kHz setup, 64-sample processing blocks within a 256-frame maximum block setup, sample-offset parameter changes, a note event at offset 48, state save/restore, restoration into a fresh instance, and orderly teardown. The fixture and test report are offline checks; they provide no evidence about acoustic output or real-time callback suitability.
+The `--probe` mode accepts only the project-owned `DawTestGain.vst3` fixture. It exercises stereo buses, 48 kHz setup, 64-sample processing blocks within a 256-frame maximum block setup, sample-offset parameter changes, a note event at offset 48, state save/restore, restoration into a fresh instance, and orderly teardown. The fixture and test report are offline checks; they provide no evidence about acoustic output or real-time callback suitability.
 
-Factory scanning is separate. Pass explicit bundle paths to `scan.py`; it loads each bundle in a child process and reports factory class identifiers, names, and categories. Scanning does not process third-party audio. For example, Dexed and ValhallaFreqEcho were successfully scanned for factory metadata, but were not processed.
+Factory scanning is separate. Pass explicit bundle paths to `scan.py`; it loads each bundle in a child process and reports factory class identifiers, names, and categories. Scanning does not process third-party audio. For example, Dexed and ValhallaFreqEcho were successfully scanned for factory metadata, and the effect probe now processes ValhallaFreqEcho. Dexed processing remains unverified.
 
 ```sh
 python3 native/vst3/scan.py /path/to/Plugin.vst3
@@ -29,4 +29,15 @@ python3 native/vst3/scan.py /path/to/Plugin.vst3
 
 The child process is bounded by a timeout of at most 30 seconds and stdout/stderr limits of 64 KiB each. Timeout and crash handling kills the child process group and returns a structured result. This is process-level failure containment, not a security sandbox: plugin code runs with the user's permissions. Only the fixture may be passed to `--probe` processing.
 
-The fixture covers a combined component/controller, parameter metadata and text conversion, component-to-controller state synchronization, and UI-only parameter changes that leave DSP untouched until queued automation arrives. Host handler references are cleared before termination. Editors and separate-controller hosting are not covered. Generic third-party processing, real-time callbacks, DAW commands, and a production adapter are not implemented. The choice between production C++ and Rust remains open; the Rust candidates have not been built here, so no comparative runtime evidence exists. See [the binding comparison](../../docs/decisions/vst3-bindings.md) and [the hosting decision record](../../docs/decisions/plugin-hosting.md).
+The fixture covers a combined component/controller, parameter metadata and text conversion, component-to-controller state synchronization, and UI-only parameter changes that leave DSP untouched until queued automation arrives. Host handler references are cleared before termination. The effect probe also handles separate controllers and bidirectional connection points. Editors, instruments, generic layouts, real-time callbacks, DAW commands, and a production adapter remain unimplemented. The pinned Rust host candidate also builds and completes a short offline effect render; see its trial notes for the more limited evidence. See [the binding comparison](../../docs/decisions/vst3-bindings.md) and [the hosting decision record](../../docs/decisions/plugin-hosting.md).
+
+## Third-party stereo effect probe
+
+```sh
+python3 native/vst3/scan.py --effect-probe --timeout 15 /path/to/Effect.vst3
+DAW_VST3_EFFECT=/path/to/Effect.vst3 python3 -m unittest native.vst3.test_spike native.vst3.test_effect
+```
+
+This mode requires exactly one audio class, one stereo input/output bus, no event buses, float32 offline processing at 48 kHz, and maximum blocks of 256 frames. It selects the first continuous automatable parameter (excluding bypass/read-only), queues values at offset 16, and requires measurable output changes. It captures component state and optional controller state, each bounded to 8 MiB; restores a fresh instance; verifies the saved parameter; and compares restored DSP output with an automation override from another fresh instance. It processes 32768 frames in total per run. Parameter-value restart notifications use current controller reads; requests for graph, layout, latency, or metadata changes fail explicitly. Latency is reported, not compensated.
+
+ValhallaFreqEcho passed five repeated probes in both normal and sanitizer builds. Its `wetDry` parameter (ID 48) changed output, and 534 bytes of component state restored the normalized value 0.8. Its separate controller has connection points and returns `kNotImplemented` for component-state synchronization; the host accepts that only when a connection exists and the restored value is already correct before independent controller state is applied. This is evidence for this installed plugin, not general compatibility or exact sample-offset response in third-party DSP. No device was opened.
