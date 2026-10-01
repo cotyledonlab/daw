@@ -37,8 +37,9 @@ class ProtocolError(AssertionError):
 
 
 class JsonlClient:
-    def __init__(self):
+    def __init__(self, overrides=None):
         env = os.environ.copy()
+        env.update(overrides or {})
         env["DAW_CSOUND_LIBRARY"] = str(LIBRARY)
         if SCSYNTH:
             env["DAW_SCSYNTH"] = str(SCSYNTH)

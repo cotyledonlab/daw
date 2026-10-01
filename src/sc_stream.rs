@@ -210,11 +210,11 @@ impl Worker {
                 .as_ref()
                 .is_none_or(|thread| thread.is_finished())
         {
-            return Err("live SC worker has finished".into());
+            return Err("live source worker has finished".into());
         }
         self.updates
             .as_mut()
-            .ok_or("native playback has no live SC sources")?
+            .ok_or("native playback has no live runtime sources")?
             .queue(change)
     }
     pub(crate) fn control_status(&mut self, callback_frame: u64) -> Option<Value> {

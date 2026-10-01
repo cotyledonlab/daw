@@ -56,7 +56,7 @@ def load_job(job_path):
     return validate_job(json.loads(payload))
 
 
-def perform_source(rate, source, library, emit_block, before_dsp=None):
+def perform_source(rate, source, library, emit_block, before_dsp=None, before_block=None):
     """The owning worker copies blocks before passing them to the concrete sink."""
     validate_job({"job_version": 1, "sample_rate": rate, "source": source})
     if not Path(library).is_absolute() or not Path(library).is_file():
@@ -107,6 +107,8 @@ def perform_source(rate, source, library, emit_block, before_dsp=None):
         for frame in range(0, source["duration_frames"], 64):
             for control, value in events.get(frame, ()):
                 set_control(control, value)
+            if before_block is not None:
+                before_block(frame, set_control)
             spin = api.csoundGetSpin(engine)
             if inputs and not spin:
                 raise RuntimeError("Csound source input buffer missing")

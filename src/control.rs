@@ -154,7 +154,7 @@ fn capabilities() -> Value {
     });
     result["supercollider_live_transport"] = sc_live;
     result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
-    result["csound_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":7,"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":false,"requires_queue_bridge":true});
+    result["csound_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":7,"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"max_pending_controls":8,"requires_queue_bridge":true});
     result["csound_sources"] = json!({"implemented":cfg!(unix),"schema_version":7,"preparation":"owned_block_float64","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_controls":64,"max_points":512,"ksmps":64,"native_requires_matching_sample_rate":true,"interactive_dsp":false,"runtime_abi":"csound7_double"});
     result["device_metadata"]["csound"] = json!({"session_schema_versions":[7],"track_modes":["continuous"],"required_fields":["program","duration_frames","gain","controls"],"description":"Embedded CSD program prepared as finite stereo float64 audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"native_scalar_float64","control_points":"saved_step_events","interactive_edits":false});
     result
@@ -448,49 +448,81 @@ impl Controller {
                     .iter_mut()
                     .find(|track| track.id == p.track_id)
                     .ok_or_else(|| ControlError::new("invalid_params", "track not found"))?;
-                let session::Device::Supercollider(source) = &mut track.device else {
-                    return Err(ControlError::new(
-                        "invalid_params",
-                        "track is not a SuperCollider source",
-                    ));
+                let native_index = match &mut track.device {
+                    session::Device::Supercollider(source) => {
+                        let program = crate::synthdef::inspect(
+                            &crate::synthdef::decode_hex(&source.synthdef_hex)
+                                .map_err(|e| ControlError::new("invalid_params", e))?,
+                        )
+                        .map_err(|e| ControlError::new("invalid_params", e))?;
+                        let native = program
+                            .controls
+                            .iter()
+                            .find(|control| control.name == p.control_name)
+                            .ok_or_else(|| {
+                                ControlError::new("invalid_params", "native control not found")
+                            })?;
+                        if program.scalar_parameters
+                            [native.index..native.index + native.default_values.len()]
+                            .iter()
+                            .any(|value| *value)
+                        {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "initialization-rate controls cannot change while playing",
+                            ));
+                        }
+                        let control = source
+                            .controls
+                            .iter_mut()
+                            .find(|control| control.name == p.control_name)
+                            .ok_or_else(|| {
+                                ControlError::new("invalid_params", "saved control not found")
+                            })?;
+                        if !control.points.is_empty() {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "live edits cannot override saved control automation",
+                            ));
+                        }
+                        control.values = p.values.clone();
+                        source.prepared = None;
+                        Some(native.index)
+                    }
+                    session::Device::Csound(source) => {
+                        if p.values.len() != 1 || !p.values[0].is_finite() {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "Csound controls require one finite float64 value",
+                            ));
+                        }
+                        let control = source
+                            .controls
+                            .iter_mut()
+                            .find(|control| control.name == p.control_name)
+                            .ok_or_else(|| {
+                                ControlError::new(
+                                    "invalid_params",
+                                    "saved Csound control not found",
+                                )
+                            })?;
+                        if !control.points.is_empty() {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "live edits cannot override saved control automation",
+                            ));
+                        }
+                        control.value = p.values[0];
+                        source.prepared = None;
+                        None
+                    }
+                    _ => {
+                        return Err(ControlError::new(
+                            "invalid_params",
+                            "track is not a runtime source",
+                        ));
+                    }
                 };
-                let program = crate::synthdef::inspect(
-                    &crate::synthdef::decode_hex(&source.synthdef_hex)
-                        .map_err(|e| ControlError::new("invalid_params", e))?,
-                )
-                .map_err(|e| ControlError::new("invalid_params", e))?;
-                let native = program
-                    .controls
-                    .iter()
-                    .find(|control| control.name == p.control_name)
-                    .ok_or_else(|| {
-                        ControlError::new("invalid_params", "native control not found")
-                    })?;
-                if program.scalar_parameters
-                    [native.index..native.index + native.default_values.len()]
-                    .iter()
-                    .any(|value| *value)
-                {
-                    return Err(ControlError::new(
-                        "invalid_params",
-                        "initialization-rate controls cannot change while playing",
-                    ));
-                }
-                let control = source
-                    .controls
-                    .iter_mut()
-                    .find(|control| control.name == p.control_name)
-                    .ok_or_else(|| {
-                        ControlError::new("invalid_params", "saved control not found")
-                    })?;
-                if !control.points.is_empty() {
-                    return Err(ControlError::new(
-                        "invalid_params",
-                        "live edits cannot override saved control automation",
-                    ));
-                }
-                control.values = p.values.clone();
-                source.prepared = None;
                 updated
                     .validate()
                     .map_err(|e| ControlError::new("invalid_params", e))?;
@@ -501,7 +533,7 @@ impl Controller {
                 {
                     return Err(ControlError::new(
                         "invalid_params",
-                        "updated SC session exceeds size limit",
+                        "updated runtime session exceeds size limit",
                     ));
                 }
                 #[cfg(all(feature = "native-audio", target_os = "macos"))]
@@ -509,8 +541,17 @@ impl Controller {
                     self.transport
                         .source_control(crate::sc_session::ParameterChange {
                             track_id: p.track_id,
-                            index: native.index as u32,
-                            values: p.values.iter().map(|value| *value as f32).collect(),
+                            target: if let Some(index) = native_index {
+                                crate::sc_session::ControlTarget::Supercollider {
+                                    index: index as u32,
+                                    values: p.values.iter().map(|value| *value as f32).collect(),
+                                }
+                            } else {
+                                crate::sc_session::ControlTarget::Csound {
+                                    name: p.control_name,
+                                    value: p.values[0],
+                                }
+                            },
                             revision,
                         })
                         .map_err(|e| ControlError::new("audio_error", e))?;
@@ -522,7 +563,7 @@ impl Controller {
                 }
                 #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
                 {
-                    let _ = revision;
+                    let _ = (revision, native_index);
                     Err(ControlError::new(
                         "audio_unavailable",
                         "live source edits require native-audio on macOS",

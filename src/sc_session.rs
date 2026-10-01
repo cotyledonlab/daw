@@ -1,5 +1,5 @@
-//! Owned live SC source playback from the saved v6 model. Each source gets an
-//! isolated server/queue so program names and hard-coded bus zero cannot collide.
+//! Owned live SC/Csound source playback from saved v6/v7 models. Each source
+//! gets an isolated process/queue; callbacks consume only the final fixed ring.
 use crate::{
     effects::PreparedChain,
     engine::Engine,
@@ -65,9 +65,13 @@ pub(crate) const MAX_PENDING_CONTROLS: usize = 8;
 #[derive(Clone)]
 pub(crate) struct ParameterChange {
     pub(crate) track_id: String,
-    pub(crate) index: u32,
-    pub(crate) values: Vec<f32>,
+    pub(crate) target: ControlTarget,
     pub(crate) revision: u64,
+}
+#[derive(Clone)]
+pub(crate) enum ControlTarget {
+    Supercollider { index: u32, values: Vec<f32> },
+    Csound { name: String, value: f64 },
 }
 pub(crate) struct Updates {
     sender: mpsc::SyncSender<ParameterChange>,
@@ -85,11 +89,11 @@ impl Updates {
     pub(crate) fn queue(&mut self, change: ParameterChange) -> Result<(), String> {
         self.collect();
         if self.pending >= MAX_PENDING_CONTROLS {
-            return Err("SC control queue full; poll status before retrying".into());
+            return Err("source control queue full; poll status before retrying".into());
         }
         self.sender
             .try_send(change)
-            .map_err(|_| "SC control queue unavailable".to_string())?;
+            .map_err(|_| "source control queue unavailable".to_string())?;
         self.pending += 1;
         Ok(())
     }
@@ -128,16 +132,36 @@ impl SourceProcess {
             Self::Csound(server) => server.check(),
         }
     }
-    fn begin_control(&mut self, index: u32, values: &[f32]) -> Result<(), String> {
-        match self {
-            Self::Supercollider(server) => server.begin_control(index, values),
-            Self::Csound(_) => Err("live Csound control edits are not implemented yet".into()),
+    fn begin_control(&mut self, change: &ParameterChange) -> Result<(), String> {
+        match (self, &change.target) {
+            (Self::Supercollider(server), ControlTarget::Supercollider { index, values }) => {
+                server.begin_control(*index, values)
+            }
+            (Self::Csound(server), ControlTarget::Csound { name, value }) => {
+                server.begin_control(name, *value, change.revision)
+            }
+            _ => Err("live control target does not match its runtime".into()),
         }
     }
-    fn poll_control(&mut self, index: u32, values: &[f32]) -> Result<bool, String> {
-        match self {
-            Self::Supercollider(server) => server.poll_control(index, values),
-            Self::Csound(_) => Err("live Csound control edits are not implemented yet".into()),
+    fn poll_control(
+        &mut self,
+        change: &ParameterChange,
+        queue: &Queue,
+    ) -> Result<Option<u64>, String> {
+        match (self, &change.target) {
+            (Self::Supercollider(server), ControlTarget::Supercollider { index, values }) => {
+                Ok(server
+                    .poll_control(*index, values)?
+                    .then_some((u64::from(queue.written()) + 1) * 64))
+            }
+            (Self::Csound(server), ControlTarget::Csound { value, .. }) => {
+                let frame = server.poll_control(*value, change.revision)?;
+                if frame.is_some_and(|frame| frame > u64::from(queue.written()) * 64) {
+                    return Err("Csound acknowledgment precedes queue publication".into());
+                }
+                Ok(frame)
+            }
+            _ => Err("live control target does not match its runtime".into()),
         }
     }
 }
@@ -356,14 +380,13 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                     let runtime = runtimes
                         .iter_mut()
                         .find(|runtime| runtime.track.id == change.track_id)
-                        .ok_or("live SC track not found")?;
-                    if runtime.server.poll_control(change.index, &change.values)? {
-                        let target = (u64::from(runtime.queue.written()) + 1) * 64;
+                        .ok_or("live source track not found")?;
+                    if let Some(target) = runtime.server.poll_control(change, &runtime.queue)? {
                         let target = target.max(pending_acks.back().map_or(0, |(_, frame)| *frame));
                         pending_acks.push_back((change.revision, target));
                         in_flight = None;
                     } else if sent.elapsed() > Duration::from_secs(2) {
-                        return Err("SC control readback timed out".into());
+                        return Err("source control readback timed out".into());
                     }
                 }
                 if in_flight.is_none() {
@@ -371,14 +394,13 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                         let runtime = runtimes
                             .iter_mut()
                             .find(|runtime| runtime.track.id == change.track_id)
-                            .ok_or("live SC track not found")?;
-                        let Device::Supercollider(source) = &runtime.track.device else {
-                            return Err("live controls require a SuperCollider source".into());
-                        };
-                        if u64::from(runtime.queue.written()) * 64 >= source.duration_frames {
-                            return Err("live SC source ended before control delivery".into());
+                            .ok_or("live source track not found")?;
+                        if u64::from(runtime.queue.written()) * 64
+                            >= runtime.duration_gain().0.min(frames)
+                        {
+                            return Err("live source ended before control delivery".into());
                         }
-                        runtime.server.begin_control(change.index, &change.values)?;
+                        runtime.server.begin_control(&change)?;
                         in_flight = Some((change, Instant::now()));
                     }
                 }
@@ -568,8 +590,10 @@ mod tests {
         };
         let change = |revision| ParameterChange {
             track_id: "source".into(),
-            index: 0,
-            values: vec![0.1],
+            target: ControlTarget::Supercollider {
+                index: 0,
+                values: vec![0.1],
+            },
             revision,
         };
         for revision in 1..=8 {
