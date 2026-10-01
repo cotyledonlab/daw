@@ -41,7 +41,7 @@ pub fn prepare(session: &Session, seconds: f64) -> Result<PreparedPluginRender, 
 
     for source_track in &session.tracks {
         let mut one_track = session.clone();
-        one_track.schema_version = 3;
+        one_track.schema_version = session.schema_version.max(3);
         one_track.tracks = vec![source_track.clone()];
         let track = &mut one_track.tracks[0];
         let effects = track.effects.take().unwrap_or_default();

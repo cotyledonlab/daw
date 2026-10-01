@@ -10,6 +10,7 @@ pub mod engine;
 pub mod hosting;
 pub mod plugin_render;
 pub mod render;
+pub mod sc_source;
 pub mod session;
 pub mod supercollider;
 pub mod synthdef;

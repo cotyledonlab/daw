@@ -6,6 +6,7 @@ pub const SCHEMA_VERSION_2: u32 = 2;
 pub const SCHEMA_VERSION_3: u32 = 3;
 pub const SCHEMA_VERSION_4: u32 = 4;
 pub const SCHEMA_VERSION_5: u32 = 5;
+pub const SCHEMA_VERSION_6: u32 = 6;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -174,6 +175,7 @@ pub enum TrackMode {
 pub enum Device {
     Sine { frequency_hz: f64, gain: f64 },
     Audio { gain: f64 },
+    Supercollider(crate::sc_source::Source),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -323,9 +325,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_5).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_6).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1, 2, 3, 4, or 5",
+                "unsupported schema_version {}; expected 1, 2, 3, 4, 5, or 6",
                 self.schema_version
             ));
         }
@@ -362,6 +364,9 @@ impl Session {
         let mut foreign_plugin_count = 0usize;
         let mut foreign_state_bytes = 0usize;
         let mut continuous_voices = 0usize;
+        let mut sc_sources = 0;
+        let mut sc_frames = 0;
+        let mut sc_points = 0;
         let mut lifetimes: Vec<(u64, i32)> = Vec::new();
         for track in &self.tracks {
             if !valid_id(&track.id) || !track_ids.insert(&track.id) {
@@ -389,6 +394,30 @@ impl Session {
                         return Err("schema_version 1 does not support audio devices".into());
                     }
                 }
+                Device::Supercollider(ref source) => {
+                    if self.schema_version != SCHEMA_VERSION_6 {
+                        return Err("SuperCollider sources require schema_version 6".into());
+                    }
+                    source.validate(self.sample_rate)?;
+                    if track.mode != Some(TrackMode::Continuous) {
+                        return Err(
+                            "SuperCollider sources require continuous mode and empty clips".into(),
+                        );
+                    }
+                    sc_sources += 1;
+                    sc_frames += source.duration_frames;
+                    sc_points += source
+                        .controls
+                        .iter()
+                        .map(|c| c.points.len())
+                        .sum::<usize>();
+                    if sc_sources > crate::sc_source::MAX_SOURCES
+                        || sc_frames > u64::from(self.sample_rate) * 10
+                        || sc_points > crate::sc_source::MAX_POINTS
+                    {
+                        return Err("SuperCollider session exceeds four sources, ten total source seconds or 512 control points".into());
+                    }
+                }
             }
             if self.schema_version == SCHEMA_VERSION {
                 continue;
@@ -397,7 +426,10 @@ impl Session {
                 (SCHEMA_VERSION_2, Some(_)) => {
                     return Err("schema_version 2 does not accept effects".into());
                 }
-                (SCHEMA_VERSION_3 | SCHEMA_VERSION_4 | SCHEMA_VERSION_5, None) => {
+                (
+                    SCHEMA_VERSION_3 | SCHEMA_VERSION_4 | SCHEMA_VERSION_5 | SCHEMA_VERSION_6,
+                    None,
+                ) => {
                     return Err(format!(
                         "schema_version {} requires track effects",
                         self.schema_version
@@ -429,8 +461,8 @@ impl Session {
                             ));
                         }
                         Effect::Gain { .. } => {}
-                        Effect::Au { .. } if self.schema_version != SCHEMA_VERSION_5 => {
-                            return Err("AU effects require schema_version 5".into());
+                        Effect::Au { .. } if self.schema_version < SCHEMA_VERSION_5 => {
+                            return Err("AU effects require schema_version 5 or later".into());
                         }
                         Effect::Au {
                             component_type,
@@ -475,7 +507,7 @@ impl Session {
                             }
                         }
                         Effect::Vst3 { .. } if self.schema_version < SCHEMA_VERSION_4 => {
-                            return Err("VST3 effects require schema_version 4 or 5".into());
+                            return Err("VST3 effects require schema_version 4 or later".into());
                         }
                         Effect::Vst3 {
                             bundle_path,
@@ -636,7 +668,10 @@ impl Session {
             })?;
             match mode {
                 TrackMode::Continuous => {
-                    if !matches!(&track.device, Device::Sine { .. }) {
+                    if !matches!(
+                        &track.device,
+                        Device::Sine { .. } | Device::Supercollider(_)
+                    ) {
                         return Err("audio tracks require sequenced mode".into());
                     }
                     continuous_voices += 1;

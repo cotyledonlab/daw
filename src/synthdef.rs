@@ -15,6 +15,8 @@ pub struct Program {
     pub name: String,
     pub controls: Vec<Control>,
     pub ugen_count: usize,
+    #[serde(skip)]
+    pub(crate) scalar_parameters: Vec<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,9 +97,10 @@ pub fn inspect(bytes: &[u8]) -> Result<Program, String> {
     let ugen_count = input.count(MAX_UGENS, "UGens")?;
     let mut outputs = Vec::with_capacity(ugen_count);
     let mut total_ports = 0usize;
+    let mut scalar_parameters = vec![false; parameters];
     for ugen_index in 0..ugen_count {
         let class = input.name()?;
-        input.rate()?;
+        let calculation_rate = input.rate()?;
         let inputs = input.count(4096, "UGen inputs")?;
         let output_count = input.count(MAX_PARAMETERS, "UGen outputs")?;
         total_ports += inputs + output_count;
@@ -126,8 +129,15 @@ pub fn inspect(bytes: &[u8]) -> Result<Program, String> {
                 return Err("UGen input index exceeds source outputs/constants".into());
             }
         }
-        for _ in 0..output_count {
-            input.rate()?;
+        for output in 0..output_count {
+            let output_rate = input.rate()?;
+            if matches!(
+                class.as_str(),
+                "Control" | "AudioControl" | "TrigControl" | "LagControl"
+            ) {
+                scalar_parameters[special as usize + output] |=
+                    calculation_rate == 0 || output_rate == 0;
+            }
         }
         outputs.push(output_count);
     }
@@ -141,6 +151,7 @@ pub fn inspect(bytes: &[u8]) -> Result<Program, String> {
         name,
         controls,
         ugen_count,
+        scalar_parameters,
     })
 }
 
@@ -190,11 +201,12 @@ impl<'a> Reader<'a> {
         }
         String::from_utf8(bytes.to_vec()).map_err(|_| "SynthDef name is not UTF-8".into())
     }
-    fn rate(&mut self) -> Result<(), String> {
-        if self.take(1)?[0] > 3 {
+    fn rate(&mut self) -> Result<u8, String> {
+        let rate = self.take(1)?[0];
+        if rate > 3 {
             return Err("UGen calculation rates must be 0..3".into());
         }
-        Ok(())
+        Ok(rate)
     }
 }
 

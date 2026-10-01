@@ -61,7 +61,10 @@ impl Engine {
         if crate::hosting::has_plugins(session) {
             return Err("VST3 sessions support offline rendering only; native plugin playback is unavailable".into());
         }
-        let audio = assets::prepare(session)?;
+        let mut audio =
+            assets::prepare_with_budget(session, crate::sc_source::decoded_bytes(session))?;
+        audio.extend(crate::sc_source::prepare_clips(session)?);
+        crate::sc_source::check_budget(audio.iter())?;
         let mut audio_starts: Vec<_> = (0..audio.len()).collect();
         audio_starts.sort_by_key(|&index| (audio[index].start, index));
         let rate = f64::from(session.sample_rate);

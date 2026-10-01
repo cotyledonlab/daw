@@ -32,6 +32,13 @@ struct AudioReference<'a> {
 }
 
 pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
+    prepare_with_budget(session, 0)
+}
+
+pub(crate) fn prepare_with_budget(
+    session: &Session,
+    reserved_bytes: usize,
+) -> Result<Vec<PreparedAudioClip>, String> {
     session.validate()?;
     let mut references = Vec::new();
     for (track_index, track) in session.tracks.iter().enumerate() {
@@ -67,7 +74,7 @@ pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
         .map_err(|e| format!("cannot resolve asset root {}: {e}", root.display()))?;
 
     let mut decoded = BTreeMap::<PathBuf, Arc<Vec<[f64; 2]>>>::new();
-    let mut decoded_bytes = 0usize;
+    let mut decoded_bytes = reserved_bytes;
     let mut prepared = Vec::with_capacity(references.len());
     for reference in references {
         let relative = Path::new(reference.source_path);

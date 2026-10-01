@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. SuperCollider has an owned offline score-rendering command; programmable track devices, Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
+Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. Schema-v6 SuperCollider programs can be saved as tracks and prepared through owned offline jobs for rendering and rate-matched native playback. Interactive SuperCollider DSP, Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
 
 ## Run
 
@@ -177,3 +177,12 @@ node --test gui/test_live.cjs
 `gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/replacement, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
 
 T09a/b provide a [standalone macOS VST3 lifecycle spike](native/vst3/README.md) with a project-owned fixture, child-process scanning, and real ValhallaFreqEcho offline automation/state checks. T09c connects VST3 effects to scripted session save/load and WAV rendering. T09d adds experimental native live playback; short silent hardware checks verify callbacks and transport, while acoustic output remains unverified. T09f adds bounded read-only metadata inspection and actual saved-parameter labels in the GUI. [AGENTS.md](AGENTS.md) gives future agents the working rules.
+
+## Saved SuperCollider tracks
+
+```sh
+cargo build --locked --features native-audio
+DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_tracks_demo.py
+```
+
+This creates a schema-v6 project with two embedded SynthDefs, saved named control values/events and serial gain effects; it saves, reloads and exports the arrangement. Add `--native` for a bounded silent hardware smoke test. Preparation captures floating-point source audio outside callbacks, then the DAW routes it through its effects. A source has a finite duration; at most four sources and ten seconds of summed source duration are allowed. Reload regenerates audio, while playback/rendering reuse the prepared snapshot. Native playback requires a matching sample rate. Runtime/control failures preserve the active session. The browser editor does not import or edit these sessions yet, and prepared playback does not provide interactive SuperCollider DSP. See the [schema-v6 contract](docs/PROTOCOL.md#schema-v6-prepared-supercollider-sources).

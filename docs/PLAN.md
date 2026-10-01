@@ -246,17 +246,21 @@ Verification: 13 controller/native tests pass, including a real 440 Hz stereo re
 
 ### T11b: saved programmable SuperCollider track source
 
-Split into T11b1 program inspection and T11b2 saved sources. T11b1 adds portable inspection of one bounded SCgf-v2 SynthDef, including named control array defaults and graph references. This is a prerequisite; T11b remains incomplete until T11b2 completes session preparation, routing and native audition below.
+Split into T11b1 program inspection and T11b2 saved sources. T11b1 adds portable inspection of one bounded SCgf-v2 SynthDef, including named control array defaults and graph references. Both source slices are complete. T11c retains interactive completion and measured live runtime audio routing.
 
 #### T11b1: bounded SynthDef inspection — complete
 
 Implement `supercollider.inspect` without runtime launch or session/transport mutation. Read control names/default arrays from actual binary data; reject malformed/oversized definitions, invalid graph references and unsupported variants. Keep structural inspection distinct from runtime compatibility. Verification: four same-process controller tests cover metadata/array spans, every truncated program prefix, malformed graph/count/name/rate/hex fields and preservation of a populated session/revision/transport. Two portable Rust parser tests pass. Baseline and all-feature fmt/clippy/tests pass; 13 NRT job tests still pass, and the updated example inspects and renders the real one-second stereo fixture. Inspection is structural; saved devices and runtime preparation remain pending.
 
-#### T11b2: saved sources — pending
+#### T11b2: saved sources — complete
 
 **Depends on:** T11a, T08b. **Owner:** primary schema/audio preparation; Luna examples, state/parameter tests and independent docs after the contract is fixed.
 
 Derive a saved SynthDef identity/program and native control/event shape from the working score renderer. Validate the actual program, metadata and requested control names before committing. Prepare owned track PCM through NRT outside callbacks, then route it through existing gain/plugin chains and rate-matched native playback. Preserve portable parsing, project assets, revisions and output rollback; bound total runtime/decoded resources. Acceptance: scripts create two tracks with distinct program/control data, save/reload them, export through existing chains, and audition the same prepared audio natively; malformed program/control/runtime jobs preserve the active project. Document that prepared PCM playback does not provide interactive SC DSP.
+
+Implemented schema v6 with embedded single SynthDefs, native control arrays, saved frame events, finite source durations and track gain. Structural validation and full float32 NRT preparation occur before commit; owned PCM is keyed by program/control/event/rate inputs and reused for render/native snapshots. Creation supplies all bases and frame-zero overrides in /s_new; known init-rate slots reject subsequent points. Up to four sources share ten seconds total duration and 512 points; runtime PCM reserves part of the existing asset budget before decode. Sources route through gain automation and offline VST3/AU; live VST preparation captures runtime audio on the caller before starting its owner worker. GUI v6 import/editing remains unsupported.
+
+Verification: ten source/controller tests cover save/reload, timed controls, init-rate bases/frame-zero behavior, schema/control/runtime rollback, float headroom and cache reuse/invalidation. Three routing tests cover VST3 scaling/state, Apple lowpass processing and opt-in live VST3 playback. The opt-in source/routing suite passed all 13 tests with silent host audio access. The two-source example saved/reloaded/rendered and submitted native callback frames before clean stop. A portable cached-PCM regression covers gain chains, source end, seek and loop. Baseline, native-only, live-VST and combined-feature Rust fmt/clippy/tests pass; both ignored live worker tests pass, 17 score/inspection regressions pass, and 41 plugin/routing regressions pass with eight documented optional skips. Malformed float output cases preserve the project; acoustic delivery and arbitrary UGen compatibility remain unverified.
 
 ### T11c: owned interactive OSC and live runtime routing
 
@@ -276,4 +280,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T11a establishes owned SuperCollider NRT score jobs. T11b1 adds portable SynthDef inspection. Continue with T11b2 saved programmable track sources; T11c interactive acknowledgements/audio routing and T12/T13 remain outstanding. Preserve the distinction between exported WAV jobs, prepared runtime track audio and live runtime DSP. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
+T11a establishes owned SuperCollider NRT score jobs; T11b adds inspected saved sources and prepared native playback. Continue with T11c interactive runtime ownership and actual audio routing; T11c interactive acknowledgements/audio routing and T12/T13 remain outstanding. Preserve the distinction between exported WAV jobs, prepared runtime track audio and live runtime DSP. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.

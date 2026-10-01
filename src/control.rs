@@ -43,8 +43,9 @@ pub const METHODS: &[&str] = &[
 fn capabilities() -> Value {
     json!({
         "methods": METHODS,
-        "devices": ["sine", "audio"],
-        "supercollider_programs": {"inspection":true,"format":"scgf_v2","max_bytes":crate::synthdef::MAX_BYTES,"max_controls":crate::synthdef::MAX_CONTROLS,"max_parameters":crate::synthdef::MAX_PARAMETERS,"max_ugens":crate::synthdef::MAX_UGENS,"runtime_validation":false,"session_device":false},
+        "devices": ["sine", "audio", "supercollider"],
+        "supercollider_sources": {"implemented":cfg!(unix),"schema_version":6,"preparation":"owned_nrt_float32","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_points":512,"native_requires_matching_sample_rate":true,"interactive_dsp":false},
+        "supercollider_programs": {"inspection":true,"format":"scgf_v2","max_bytes":crate::synthdef::MAX_BYTES,"max_controls":crate::synthdef::MAX_CONTROLS,"max_parameters":crate::synthdef::MAX_PARAMETERS,"max_ugens":crate::synthdef::MAX_UGENS,"runtime_validation":false,"session_device":true},
         "supercollider_nrt": {"implemented":cfg!(unix), "configured":std::env::var_os("DAW_SCSYNTH").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()), "session_device":false, "native_playback":false, "command_acknowledgements":false, "max_score_bytes":1048576, "max_seconds":10, "channels":2, "sample_format":"wav_pcm16", "worker_timeout_seconds":15},
         "live_audio": cfg!(all(feature = "native-audio", target_os = "macos")),
         "plugin_hosting": cfg!(all(feature = "vst3-live", target_os = "macos")),
@@ -73,7 +74,7 @@ fn capabilities() -> Value {
             "save_outside_project": false
         },
         "session_schema_version": session::SCHEMA_VERSION,
-        "supported_session_schema_versions": [1, 2, 3, 4, 5],
+        "supported_session_schema_versions": [1, 2, 3, 4, 5, 6],
         "offline_au": {"implemented":cfg!(all(feature="au-offline", target_os="macos")), "schema_version":5, "sample_rate":48000, "max_seconds":10, "native_playback":false, "supported_components":[{"type":"aufx","subtype":"lpas","manufacturer":"appl"}], "parameter_values":"native", "automation":false, "max_state_bytes":65536, "worker_timeout_seconds":15},
         "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": cfg!(all(feature = "vst3-live", target_os = "macos")), "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
         "sequencing": {
@@ -109,15 +110,22 @@ fn capabilities() -> Value {
             "unknown_fields": "reject"
         },
         "device_metadata": {
+            "supercollider": {
+                "session_schema_versions":[6], "track_modes":["continuous"],
+                "description":"Embedded SCgf-v2 program, prepared offline as finite stereo audio.",
+                "required_fields":["synthdef_hex","synth_name","duration_frames","gain","controls"],
+                "parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},
+                "control_values":"native_float32_arrays", "control_points":"saved_step_events", "interactive_edits":false
+            },
             "audio": {
-                "session_schema_versions": [2, 3, 4, 5], "track_modes": ["sequenced"],
+                "session_schema_versions": [2, 3, 4, 5, 6], "track_modes": ["sequenced"],
                 "description": "Preloaded PCM WAV clips on a sequenced v2 track.",
                 "parameters": {"gain": {"type":"number", "unit":"linear", "default":1.0,
                     "minimum":0.0,"maximum":1.0,"finite":true,"required":true,
                     "description":"Track amplitude multiplied by each audio clip gain."}}
             },
             "sine": {
-                "session_schema_versions": [1, 2, 3, 4, 5],
+                "session_schema_versions": [1, 2, 3, 4, 5, 6],
                 "description": "Sine oscillator mixed equally into left and right channels.",
                 "parameters": {
                     "frequency_hz": {
@@ -582,10 +590,16 @@ impl Controller {
                                     Device::Sine { gain, .. } | Device::Audio { gain },
                                     Parameter::Gain,
                                 ) => *gain = value,
-                                (Device::Audio { .. }, Parameter::FrequencyHz) => {
+                                (Device::Supercollider(source), Parameter::Gain) => {
+                                    source.gain = value
+                                }
+                                (
+                                    Device::Audio { .. } | Device::Supercollider(_),
+                                    Parameter::FrequencyHz,
+                                ) => {
                                     return Err(ControlError::new(
                                         "invalid_params",
-                                        "audio tracks do not have frequency_hz",
+                                        "frequency_hz is available only on sine devices",
                                     ));
                                 }
                             }
@@ -774,7 +788,10 @@ impl Controller {
                     .map_err(|e| ControlError::new("io_error", e))?,
             );
         }
-        assets::prepare(&session).map_err(|e| ControlError::new("asset_error", e))?;
+        assets::prepare_with_budget(&session, crate::sc_source::decoded_bytes(&session))
+            .map_err(|e| ControlError::new("asset_error", e))?;
+        crate::sc_source::prepare_session(&mut session)
+            .map_err(|e| ControlError::new("runtime_error", e))?;
         crate::hosting::prepare_session(&mut session)
             .map_err(|e| ControlError::new("plugin_error", e))?;
         self.stop_transport()?;

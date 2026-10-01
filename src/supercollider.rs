@@ -24,6 +24,25 @@ pub fn render_score(
     destination: &Path,
     sample_rate: u32,
 ) -> Result<Report, String> {
+    render_owned(score_path, Some(destination), sample_rate).map(|(report, _)| report)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn render_float(_: &Path, _: u32) -> Result<Vec<[f64; 2]>, String> {
+    Err("SuperCollider NRT rendering is unavailable on this platform".into())
+}
+
+#[cfg(unix)]
+pub(crate) fn render_float(score_path: &Path, sample_rate: u32) -> Result<Vec<[f64; 2]>, String> {
+    render_owned(score_path, None, sample_rate).map(|(_, audio)| audio)
+}
+
+#[cfg(unix)]
+fn render_owned(
+    score_path: &Path,
+    destination: Option<&Path>,
+    sample_rate: u32,
+) -> Result<(Report, Vec<[f64; 2]>), String> {
     use std::{
         fs::OpenOptions,
         os::unix::{fs::PermissionsExt, process::CommandExt},
@@ -41,7 +60,7 @@ pub fn render_score(
     if !(8_000..=192_000).contains(&sample_rate) {
         return Err("sample rate must be between 8000 and 192000".into());
     }
-    if fs::symlink_metadata(destination).is_ok() {
+    if destination.is_some_and(|path| fs::symlink_metadata(path).is_ok()) {
         return Err("destination already exists".into());
     }
     if !fs::metadata(score_path)
@@ -95,7 +114,11 @@ pub fn render_score(
             wav_path.to_str().ok_or("temporary path is not UTF-8")?,
             &sample_rate.to_string(),
             "WAV",
-            "int16",
+            if destination.is_some() {
+                "int16"
+            } else {
+                "float"
+            },
             "-i",
             "0",
             "-o",
@@ -178,54 +201,90 @@ pub fn render_score(
 
     let wav_meta =
         fs::symlink_metadata(&wav_path).map_err(|e| format!("scsynth WAV missing: {e}"))?;
-    let max_bytes = (MAX_DURATION * sample_rate as f64 * 4.0) as u64 + 65_536;
+    let bytes_per_frame = if destination.is_some() { 4.0 } else { 8.0 };
+    let max_bytes = (MAX_DURATION * sample_rate as f64 * bytes_per_frame) as u64 + 65_536;
     if !wav_meta.file_type().is_file() || wav_meta.len() > max_bytes {
         return Err("scsynth WAV is not a regular file within the output limit".into());
     }
     let reader =
         hound::WavReader::open(&wav_path).map_err(|e| format!("invalid scsynth WAV: {e}"))?;
     let spec = reader.spec();
+    let pcm16 = destination.is_some();
     if spec.channels != 2
         || spec.sample_rate != sample_rate
-        || spec.bits_per_sample != 16
-        || spec.sample_format != hound::SampleFormat::Int
+        || spec.bits_per_sample != if pcm16 { 16 } else { 32 }
+        || spec.sample_format
+            != if pcm16 {
+                hound::SampleFormat::Int
+            } else {
+                hound::SampleFormat::Float
+            }
     {
-        return Err("scsynth WAV must be stereo PCM16 at the requested sample rate".into());
+        return Err("scsynth WAV must be stereo at the requested rate and sample format".into());
     }
     let padded_frames = reader.duration() as u64;
     if padded_frames < frames || padded_frames > frames + 128 {
         return Err("scsynth WAV frame count does not match score duration".into());
     }
-    let mut samples = reader
-        .into_samples::<i16>()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("invalid scsynth PCM samples: {e}"))?;
-    if samples.len() != (padded_frames * 2) as usize {
-        return Err("scsynth WAV is truncated".into());
+    let samples: Vec<f64> = if pcm16 {
+        reader
+            .into_samples::<i16>()
+            .map(|sample| sample.map(|v| f64::from(v) / 32768.0))
+            .collect::<Result<_, _>>()
+    } else {
+        reader
+            .into_samples::<f32>()
+            .map(|sample| sample.map(f64::from))
+            .collect::<Result<_, _>>()
     }
-    samples.truncate((frames * 2) as usize);
-
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|e| format!("destination create failed: {e}"))?;
-    let write_result = {
-        let mut buffered = std::io::BufWriter::new(&mut output);
-        write_pcm16(&mut buffered, sample_rate, &samples)
+    .map_err(|e| format!("invalid scsynth samples: {e}"))?;
+    if samples.len() != (padded_frames * 2) as usize || samples.iter().any(|v| !v.is_finite()) {
+        return Err("scsynth WAV is truncated or contains nonfinite samples".into());
     }
-    .and_then(|()| output.sync_all());
-    if let Err(error) = write_result {
-        drop(output);
-        let _ = fs::remove_file(destination);
-        return Err(format!("destination write failed: {error}"));
+    if let Some(destination) = destination {
+        let pcm: Vec<i16> = samples[..(frames * 2) as usize]
+            .iter()
+            .map(|v| (v * 32768.0).round() as i16)
+            .collect();
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(|e| format!("destination create failed: {e}"))?;
+        let write_result = {
+            let mut buffered = std::io::BufWriter::new(&mut output);
+            write_pcm16(&mut buffered, sample_rate, &pcm)
+        }
+        .and_then(|()| output.sync_all());
+        if let Err(error) = write_result {
+            drop(output);
+            let _ = fs::remove_file(destination);
+            return Err(format!("destination write failed: {error}"));
+        }
+        Ok((
+            Report {
+                frames,
+                sample_rate,
+                channels: 2,
+                path: destination.to_string_lossy().into_owned(),
+            },
+            Vec::new(),
+        ))
+    } else {
+        let audio = samples[..(frames * 2) as usize]
+            .chunks_exact(2)
+            .map(|s| [s[0], s[1]])
+            .collect();
+        Ok((
+            Report {
+                frames,
+                sample_rate,
+                channels: 2,
+                path: String::new(),
+            },
+            audio,
+        ))
     }
-    Ok(Report {
-        frames,
-        sample_rate,
-        channels: 2,
-        path: destination.to_string_lossy().into_owned(),
-    })
 }
 
 #[cfg(unix)]

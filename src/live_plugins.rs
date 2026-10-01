@@ -214,7 +214,7 @@ fn prepare<'a>(
     let mut tracks = Vec::new();
     for track in &session.tracks {
         let mut source = session.clone();
-        source.schema_version = 3;
+        source.schema_version = session.schema_version.max(3);
         source.tracks = vec![track.clone()];
         source.tracks[0].effects = Some(Vec::new());
         source.tracks[0].automation = None;
@@ -337,7 +337,8 @@ pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerG
         })?;
     let lease = WorkerLease;
     let (mut producer, consumer, control) = live_ring::pair();
-    let session = session.clone();
+    let mut session = session.clone();
+    crate::sc_source::prepare_session(&mut session)?;
     let (ready, prepared) = std::sync::mpsc::sync_channel(1);
     let (commands, updates) =
         std::sync::mpsc::sync_channel::<ParameterChange>(MAX_PENDING_PARAMETERS);
