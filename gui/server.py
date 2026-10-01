@@ -31,31 +31,45 @@ def validate_editor_session_shape(session):
     if not isinstance(session, dict):
         return
     version = session.get("schema_version")
-    if type(version) is int and version == 7:
-        raise ValueError("Schema-v7 sessions, including Csound sources, require the scripting interface; this editor cannot edit them yet.")
     if type(version) is int and version in (2, 3, 5):
         raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
-    if type(version) is not int or version not in (4, 6):
+    if type(version) is not int or version not in (4, 6, 7):
         return
+    if version == 4:
+        supported = ("sine",)
+        message = "This editor supports continuous sine tracks in v4."
+    elif version == 6:
+        supported = ("sine", "supercollider")
+        message = "This editor supports continuous sine/SuperCollider tracks with gain effects in v6."
+    else:
+        supported = ("sine", "supercollider", "csound")
+        message = "This editor supports continuous sine/SuperCollider/Csound tracks with gain effects in v7."
     tracks = session.get("tracks")
     if not isinstance(tracks, list):
-        raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
+        raise ValueError(message)
     for track in tracks:
         if not isinstance(track, dict):
-            raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
+            raise ValueError(message)
         device = track.get("device")
-        if (not isinstance(device, dict) or device.get("kind") not in (("sine", "supercollider") if version == 6 else ("sine",))
+        if (not isinstance(device, dict) or device.get("kind") not in supported
                 or track.get("mode") != "continuous"
                 or track.get("clips") != []):
-            raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
+            raise ValueError(message)
 
-        if version == 6 and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
-            raise ValueError("Schema-v6 GUI sessions support gain effects only.")
+        if version in (6, 7) and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
+            raise ValueError(f"Schema-v{version} GUI sessions support gain effects only.")
 
 
 def validate_revision(value):
     if not isinstance(value, str) or re.fullmatch(r"0|[1-9][0-9]{0,19}", value) is None or int(value) > 0xFFFFFFFFFFFFFFFF:
         raise ValueError("expected_revision must be a canonical unsigned 64-bit decimal string.")
+
+
+def _finite_number(value):
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
 
 
 class Engine:
@@ -167,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
                 method = {"/api/session": "session.get", "/api/session/inspect": "session.inspect", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
                 result = self.server.engine.call(method)
                 if self.path == "/api/capabilities":
-                    result = {**result, "gui_bridge": {"checked_replacement": True, "supercollider_sources": True}}
+                    result = {**result, "gui_bridge": {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True}}
                 self.send_json(200, result)
             except EngineError as error:
                 self.send_json(422, {"error": str(error)})
@@ -229,8 +243,12 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(value, str) or not 0 < len(value.encode("utf-8")) <= limit:
                         raise ValueError(f"{key} must be a nonempty string of at most {limit} UTF-8 bytes.")
                 values = data["values"]
-                if not isinstance(values, list) or not 1 <= len(values) <= 256 or any(type(value) not in (int, float) or abs(value) > 3.4028234663852886e38 or not math.isfinite(value) for value in values):
-                    raise ValueError("values must contain 1–256 finite float32 numbers.")
+                if (not isinstance(values, list) or not 1 <= len(values) <= 256
+                        or any(type(value) not in (int, float) or not _finite_number(value)
+                               for value in values)
+                        or (len(values) > 1 and any(abs(value) > 3.4028234663852886e38
+                                                   for value in values))):
+                    raise ValueError("values must contain 1–256 finite numbers; array values must fit float32.")
                 self.send_json(200, self.server.engine.call("source.set_control", data))
             elif self.path == "/api/effect/inspect":
                 if set(data) != {"track_id", "effect_id"}:

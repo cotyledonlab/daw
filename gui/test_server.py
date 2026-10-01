@@ -40,6 +40,18 @@ def schema_v6_session():
             "tracks": [make_track("low", 220.0, 0.12, 0.5, 1.5, 0.6)]}
 
 
+def schema_v7_session():
+    from examples.csound_tracks_demo import track as make_csound_track
+
+    return {"schema_version": 7, "sample_rate": 48000, "tempo_milli_bpm": 120000,
+            "tracks": [
+                make_csound_track("csound", 440.0, 0.2),
+                {"id": "tone", "mode": "continuous", "clips": [],
+                 "device": {"kind": "sine", "frequency_hz": 220.0, "gain": 0.1},
+                 "effects": [{"kind": "gain", "id": "trim", "gain": 0.5, "bypass": False}]},
+            ]}
+
+
 class ServerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -151,7 +163,7 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         capabilities = json.loads(body)
         self.assertIn("transport.status", capabilities["methods"])
-        self.assertEqual(capabilities["gui_bridge"], {"checked_replacement": True, "supercollider_sources": True})
+        self.assertEqual(capabilities["gui_bridge"], {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True})
         self.assertIsInstance(capabilities["parameter_metadata"]["implemented"], bool)
 
         status, _, _ = self.request("GET", "/api/transport", token=False)
@@ -292,7 +304,7 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(call.call_args.args, ("source.set_control", payload))
         self.assertEqual(json.loads(body), accepted)
 
-    def test_source_control_rejects_invalid_fields_and_f32_values_before_engine(self):
+    def test_source_control_rejects_invalid_fields_and_array_f32_values_before_engine(self):
         good = {"expected_revision": "12", "track_id": "low", "control_name": "freq",
                 "values": [220.0]}
         invalid = (
@@ -302,7 +314,7 @@ class ServerIntegrationTests(unittest.TestCase):
             {**good, "control_name": ""}, {**good, "control_name": "é" * 128},
             {**good, "control_name": "x" * 256}, {**good, "values": []},
             {**good, "values": [True]}, {**good, "values": [float("nan")]},
-            {**good, "values": [float("inf")]}, {**good, "values": [1e100]},
+            {**good, "values": [float("inf")]}, {**good, "values": [1e100, 0.5]},
             {**good, "values": [0.0] * 257},
         )
         with patch.object(self.server.engine, "call") as call:
@@ -311,6 +323,28 @@ class ServerIntegrationTests(unittest.TestCase):
                     status, body, _ = self.post("/api/source/control", payload)
                     self.assertEqual(status, 422, body)
             call.assert_not_called()
+
+    def test_source_control_forwards_finite_csound_float64_scalar_to_rust(self):
+        payload = {"expected_revision": "12", "track_id": "csound", "control_name": "amplitude",
+                   "values": [1e100]}
+        accepted = {"revision": "13", "queued": True}
+        with patch.object(self.server.engine, "call", return_value=accepted) as call:
+            status, body, _ = self.post("/api/source/control", payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("source.set_control", payload))
+        self.assertEqual(json.loads(body), accepted)
+
+    def test_source_control_rust_rejection_does_not_change_session(self):
+        self.assertEqual(self.post("/api/session", {"session": SESSION})[0], 200)
+        before = self.get_session()
+        payload = {"expected_revision": "0", "track_id": "csound", "control_name": "amplitude",
+                   "values": [1e100]}
+        with patch.object(self.server.engine, "call", side_effect=EngineError("Csound control value rejected.")) as call:
+            status, body, _ = self.post("/api/source/control", payload)
+        self.assertEqual(status, 422, body)
+        self.assertEqual(call.call_args.args, ("source.set_control", payload))
+        self.assertEqual(json.loads(body)["error"], "Csound control value rejected.")
+        self.assertEqual(self.get_session(), before)
 
     def test_source_control_engine_rejection_preserves_session(self):
         self.assertEqual(self.post("/api/session", {"session": SESSION})[0], 200)
@@ -346,7 +380,8 @@ class ServerIntegrationTests(unittest.TestCase):
             unsupported.append({**valid, "tracks": [track]})
         unsupported.extend((
             {**valid, "schema_version": 2},
-            {**valid, "schema_version": 7},
+            {**valid, "tracks": [{**valid["tracks"][0],
+                                   "device": {"kind": "csound", "program": "opaque"}}]},
             {**valid, "expected_revision": "00"},
         ))
         with patch.object(self.server.engine, "call") as call:
@@ -357,6 +392,39 @@ class ServerIntegrationTests(unittest.TestCase):
                     body["session"] = {k: v for k, v in candidate.items() if k != "expected_revision"}
                 status, response, _ = self.post("/api/session", body)
                 self.assertEqual(status, 422, response)
+            call.assert_not_called()
+        self.assertEqual(self.get_session(), SESSION)
+
+    def test_v7_session_preflight_forwards_csound_program_unchanged(self):
+        session = schema_v7_session()
+        payload = {"session": session, "expected_revision": "0"}
+        program = session["tracks"][0]["device"]["program"]
+        with patch.object(self.server.engine, "call", return_value=session) as call:
+            status, body, _ = self.post("/api/session", payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("session.replace", payload))
+        accepted = json.loads(body)
+        self.assertEqual(accepted["tracks"][0]["device"]["program"], program)
+        self.assertEqual(accepted, session)
+
+    def test_v7_preflight_rejects_unsupported_shapes_before_engine_and_preserves_session(self):
+        self.assertEqual(self.post("/api/session", {"session": SESSION})[0], 200)
+        valid = schema_v7_session()
+        csound = valid["tracks"][0]
+        unsupported = (
+            {**valid, "tracks": [{**csound, "clips": [{"start_frame": 0}]}]},
+            {**valid, "tracks": [{**csound, "mode": "sequenced"}]},
+            {**valid, "tracks": [{**csound, "effects": [{"kind": "vst3", "id": "x"}]}]},
+            {**valid, "tracks": [{**csound, "effects": [{"kind": "au", "id": "x"}]}]},
+            {**valid, "tracks": [{**csound, "device": {"kind": "unknown"}}]},
+            {**valid, "tracks": ["malformed"]},
+            {**valid, "tracks": [{k: v for k, v in csound.items() if k != "effects"}]},
+        )
+        with patch.object(self.server.engine, "call") as call:
+            for candidate in unsupported:
+                with self.subTest(candidate=candidate):
+                    status, body, _ = self.post("/api/session", {"session": candidate})
+                    self.assertEqual(status, 422, body)
             call.assert_not_called()
         self.assertEqual(self.get_session(), SESSION)
 

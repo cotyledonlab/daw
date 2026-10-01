@@ -15,6 +15,9 @@
   let sessionRevision = null;
   let liveParameterEditsAvailable = false;
   let liveSourceEditsAvailable = false;
+  let csoundLiveEditsAvailable = false;
+  let csoundLiveAvailable = false;
+  let csoundBridgeAvailable = false;
   let liveSourcesAvailable = false;
   let checkedReplacementAvailable = false;
   let bridgeDiscovered = false;
@@ -90,11 +93,14 @@
   }
 
   function sourceEligible(trackId, name) {
-    const track = applied?.tracks?.find(item => item.id === trackId);
+    const track = (nativeLocked() ? applied : draft)?.tracks?.find(item => item.id === trackId);
     const control = track?.device?.controls?.find(item => item.name === name);
-    return control && SessionEditor.sourceControlsEditable(control, sourceMetadata.get(trackId)) &&
-      (!nativeLocked() || (liveSourceEditsAvailable && nativeSnapshot.source_mode === 'live' && nativeSnapshot.state === 'playing'));
+    if (control && track.device.kind === 'csound' && !nativeLocked()) return Array.isArray(control.points) && control.points.length === 0;
+    return control && SessionEditor.sourceControlsEditable(control, sourceMetadata.get(trackId), track.device.kind) &&
+      (!nativeLocked() || ((track.device.kind === 'csound' ? csoundLiveEditsAvailable : liveSourceEditsAvailable) && nativeSnapshot.source_mode === 'live' && nativeSnapshot.state === 'playing'));
   }
+
+  function canPlaySources() { return SessionEditor.sources(draft).every(track => track.device.kind === 'csound' ? csoundLiveAvailable : liveSourcesAvailable); }
 
   function hasSources() { return SessionEditor.sources(draft).length > 0; }
 
@@ -199,6 +205,9 @@
       bridgeDiscovered = true;
       checkedReplacementAvailable = capabilities.gui_bridge?.checked_replacement === true;
       sourceBridgeAvailable = capabilities.gui_bridge?.supercollider_sources === true;
+      csoundBridgeAvailable = capabilities.gui_bridge?.csound_sources === true;
+      csoundLiveAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.implemented === true;
+      csoundLiveEditsAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.live_control_edits === true;
       nativeAvailable = capabilities.live_audio === true;
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
@@ -359,7 +368,7 @@
   function requestSourceMetadata() {
     if (!sourceBridgeAvailable) return;
     const generation = appliedGeneration;
-    for (const track of SessionEditor.sources(applied)) {
+    for (const track of SessionEditor.sources(applied).filter(track => track.device.kind === 'supercollider')) {
       const pendingKey = `${generation}:source:${track.id}`;
       if (sourceMetadata.has(track.id) || metadataPending.has(pendingKey)) continue;
       metadataPending.add(pendingKey);
@@ -434,25 +443,28 @@
     playButton.textContent = unsupportedSession && nativeActive() ? 'Stop' : nativeSelected
       ? nativeSnapshot.state === 'starting' ? 'Stop' : nativeSnapshot.state === 'playing' ? (nativeSnapshot.source_mode === 'live' ? 'Stop' : 'Pause') : 'Play'
       : starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
-    playButton.title = hasSources() ? 'Click to play or stop live SuperCollider. Escape also stops.' : 'Click to play or pause. Hold to stop. Escape also stops.';
+    playButton.title = hasSources() ? 'Click to play or stop live sources. Escape also stops.' : 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
+    const addCsound = $('#add-csound-button');
+    addCsound.disabled = unsupportedSession || busy || locked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0;
+    addCsound.title = csoundBridgeAvailable ? 'Add a CSD program as a Csound track (format 7).' : 'Restart the local server to enable Csound imports.';
     tracksEl.querySelectorAll('button, input').forEach(control => {
       const row = control.closest('.effect-row');
       const source = control.closest('[data-source-control]');
       const sourceEditable = source && sourceEligible(source.dataset.trackId, source.dataset.sourceControl);
       const live = control.type === 'range' && row && control.closest('[data-parameter-id]') &&
         liveParameterEligible(row.dataset.trackId, row.dataset.effectId, control.closest('[data-parameter-id]').dataset.parameterId);
-      control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true';
+      control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true' || (locked && control.dataset.structural === 'true');
     });
     rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0 || hasSources();
-    if ([4, 6].includes(draft.schema_version)) {
+    if ([4, 6, 7].includes(draft.schema_version)) {
       outputMode.querySelector('option[value="browser"]').disabled = true;
       playButton.disabled ||= !nativeAvailable || (SessionEditor.plugins(draft).length > 0 && !nativePluginsAvailable);
     }
-    if (hasSources()) playButton.disabled ||= !liveSourcesAvailable || draft.sample_rate !== 48000;
+    if (hasSources()) playButton.disabled ||= !canPlaySources() || draft.sample_rate !== 48000;
     renderButton.disabled ||= SessionEditor.plugins(draft).length > 0 && !offlinePluginsAvailable;
     tracksEl.querySelectorAll('select').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
     tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable; });
@@ -557,13 +569,13 @@
   }
 
   function configureSessionMode() {
-    const effectsMode = [4, 6].includes(draft.schema_version);
+    const effectsMode = [4, 6, 7].includes(draft.schema_version);
     outputMode.querySelector('option[value="browser"]').disabled = effectsMode;
     if (effectsMode && nativeAvailable) outputMode.value = 'native';
     durationInput.max = hasSources() || SessionEditor.plugins(draft).length ? '10' : '60';
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
-    $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live SuperCollider. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved controls without automation or initialization-rate slots can change live. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
-    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live SuperCollider requires a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : liveSourcesAvailable ? 'SuperCollider · live native sources with gain effects. Programs, duration and automation are preserved. Controls are inspected before editing; structural edits require stopped playback.' : 'Live SuperCollider requires a native-audio build, configured scsynth and the capture plugin. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
+    $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live sources. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved scalar/array controls without automation can change live; SC initialization-rate slots remain read-only. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
+    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
   }
 
   function makeId() {
@@ -685,27 +697,32 @@
 
   function makeSourceCard(track, index) {
     const source = track.device;
+    const csound = source.kind === 'csound';
+    const kind = csound ? 'Csound' : 'SuperCollider';
     const card = element('article', 'track-card source-card');
     card.dataset.sourceTrackId = track.id;
-    card.setAttribute('aria-label', `SuperCollider track ${index + 1}`);
+    card.setAttribute('aria-label', `${kind} track ${index + 1}`);
     const ident = element('div', 'track-ident');
     const title = element('div', 'track-title');
-    title.append(element('h2', '', `SuperCollider ${String(index + 1).padStart(2, '0')}`), element('p', '', track.id));
-    ident.append(element('span', 'track-icon', 'SC'), title);
-    const summary = element('p', 'source-summary', `${source.synth_name} · ${(source.duration_frames / draft.sample_rate).toLocaleString()} sec · source gain ${source.gain}`);
-    card.append(ident, summary);
+    title.append(element('h2', '', `${kind} ${String(index + 1).padStart(2, '0')}`), element('p', '', track.id));
+    ident.append(element('span', 'track-icon', csound ? 'CS' : 'SC'), title);
+    const summary = element('p', 'source-summary', `${csound ? 'Embedded CSD' : source.synth_name} · ${(source.duration_frames / draft.sample_rate).toLocaleString()} sec · source gain ${source.gain}`);
+    const remove = element('button', 'button button-quiet', 'Remove track');
+    remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${track.id}`);
+    remove.addEventListener('click', () => { draft.tracks.splice(index, 1); renderTracks(); markEdited(); });
+    card.append(ident, summary, remove);
     const panel = element('section', 'source-controls');
     panel.setAttribute('aria-label', `Saved controls on ${track.id}`);
     panel.append(element('h3', '', 'Saved source controls'));
     const metadata = sourceMetadata.get(track.id);
-    if (!metadata) panel.append(element('p', 'output-hint', sourceBridgeAvailable ? 'Inspecting control rates…' : 'Restart the local server to inspect source controls.'));
-    if (metadata?.error) panel.append(element('p', 'metadata-error', `Controls are read-only. ${metadata.error}`));
+    if (!csound && !metadata) panel.append(element('p', 'output-hint', sourceBridgeAvailable ? 'Inspecting control rates…' : 'Restart the local server to inspect source controls.'));
+    if (!csound && metadata?.error) panel.append(element('p', 'metadata-error', `Controls are read-only. ${metadata.error}`));
     for (const control of source.controls) {
       const row = element('div', 'source-control');
       row.dataset.sourceControl = control.name;
       row.dataset.trackId = track.id;
       row.append(element('span', 'parameter-name', control.name));
-      control.values.forEach((value, slot) => {
+      (csound ? [control.value] : control.values).forEach((value, slot) => {
         const label = element('label', 'source-slot');
         label.append(element('span', 'sr-only', `${track.id}, ${control.name}, value ${slot + 1}`));
         const input = element('input', 'number-input');
@@ -714,15 +731,15 @@
         input.addEventListener('input', () => {
           const number = input.value.trim() ? Number(input.value) : NaN;
           const target = draft.tracks.find(item => item.id === track.id).device.controls.find(item => item.name === control.name);
-          target.values[slot] = number;
-          if (!Number.isFinite(number) || !Number.isFinite(Math.fround(number))) {
-            input.setCustomValidity('Enter a finite float32 value.');
-            announceError('Source controls require finite float32 values.');
-            return;
+          if (csound) target.value = number; else target.values[slot] = number;
+          if (!Number.isFinite(number) || (!csound && !Number.isFinite(Math.fround(number)))) {
+            input.setCustomValidity(csound ? 'Enter a finite scalar value.' : 'Enter a finite float32 value.');
+            announceError(csound ? 'Csound controls require finite scalar values.' : 'Source controls require finite float32 values.');
+            syncStatus(); return;
           }
           input.setCustomValidity('');
           if (nativeLocked() && sourceEligible(track.id, control.name)) {
-            scheduleLiveParameter({track_id: track.id, control_name: control.name, values: [...target.values]}, number);
+            scheduleLiveParameter({track_id: track.id, control_name: control.name, values: csound ? [target.value] : [...target.values]}, number);
             setNotice('Sending live source control…');
             syncStatus();
           } else markEdited();
@@ -732,11 +749,51 @@
       const native = metadata?.controls?.find(item => item.name === control.name);
       if (control.points.length) row.append(element('span', 'output-hint', `${control.points.length} saved automation points · read-only`));
       else if (native?.initialization_rate) row.append(element('span', 'output-hint', 'Initialization rate · read-only'));
+      if (csound && !control.points.length) {
+        const remove = element('button', 'button button-quiet', 'Remove control');
+        remove.type = 'button'; remove.dataset.structural = 'true';
+        remove.setAttribute('aria-label', `Remove ${track.id}, ${control.name}`);
+        remove.addEventListener('click', () => {
+          source.controls = source.controls.filter(item => item.name !== control.name);
+          renderTracks(); markEdited();
+        });
+        row.append(remove);
+      }
       panel.append(row);
     }
     if (!source.controls.length) panel.append(element('p', 'output-hint', 'No saved native controls. Program defaults are preserved.'));
+    if (csound) {
+      panel.append(element('p', 'output-hint', 'Scalar input channels are verified on Apply. Automated controls remain read-only.'));
+      const settings = element('div', 'source-control');
+      for (const [labelText, value, update, step] of [
+        ['Duration (seconds)', source.duration_frames / draft.sample_rate, number => { source.duration_frames = Math.round(number * draft.sample_rate); }, 'any'],
+        ['Source gain', source.gain, number => { source.gain = number; }, '0.01'],
+      ]) {
+        const label = element('label', 'source-slot', labelText);
+        const input = element('input', 'number-input'); input.type = 'number'; input.step = step; input.value = String(value);
+        input.setAttribute('aria-label', `${track.id}, ${labelText}`);
+        input.addEventListener('input', () => { update(input.value.trim() ? Number(input.value) : NaN); markEdited(); });
+        label.append(input); settings.append(label);
+      }
+      panel.append(settings);
+      const add = element('div', 'source-control');
+      const nameLabel = element('label', 'source-slot', 'Channel name');
+      const name = element('input', 'number-input'); name.type = 'text'; name.setAttribute('aria-label', `${track.id}, new channel name`); nameLabel.append(name);
+      const valueLabel = element('label', 'source-slot', 'Base value');
+      const value = element('input', 'number-input'); value.type = 'number'; value.step = 'any'; value.value = '0'; value.setAttribute('aria-label', `${track.id}, new channel base value`); valueLabel.append(value);
+      const button = element('button', 'button button-quiet', 'Add scalar control'); button.type = 'button';
+      button.addEventListener('click', () => {
+        try {
+          draft = SessionEditor.addCsoundControl(draft, index, name.value, value.value.trim() ? Number(value.value) : NaN);
+          renderTracks(); markEdited();
+        } catch (error) { announceError(error.message); }
+      });
+      add.append(nameLabel, valueLabel, button); panel.append(add);
+    }
     const details = element('details', 'effect-identity');
-    details.append(element('summary', '', 'Saved program'), element('p', '', `${source.synth_name} · ${source.synthdef_hex.length / 2} bytes · embedded SynthDef. Edit program, duration and automation through scripts.`));
+    details.append(element('summary', '', 'Saved program'));
+    if (csound) details.append(element('pre', 'source-program', source.program));
+    else details.append(element('p', '', `${source.synth_name} · ${source.synthdef_hex.length / 2} bytes · embedded SynthDef. Edit program, duration and automation through scripts.`));
     panel.append(details); card.append(panel, makeEffectPanel(track, index));
     return card;
   }
@@ -825,7 +882,7 @@
     const vst = element('button', 'button button-quiet add-vst3', 'Add VST3'); vst.type = 'button';
     vst.addEventListener('click', () => { const effect = effectCatalog[Number(select.value)]; if (effect) add(effect); });
     actions.append(gain);
-    if (draft.schema_version !== 6) actions.append(select, vst);
+    if (![6, 7].includes(draft.schema_version)) actions.append(select, vst);
     panel.append(actions);
     return panel;
   }
@@ -840,7 +897,7 @@
 
   function renderTracks() {
     configureSessionMode();
-    tracksEl.replaceChildren(...draft.tracks.map((track, index) => (track.device.kind === 'supercollider' ? makeSourceCard(track, index) : makeTrackCard(track, index))));
+    tracksEl.replaceChildren(...draft.tracks.map((track, index) => (['supercollider', 'csound'].includes(track.device.kind) ? makeSourceCard(track, index) : makeTrackCard(track, index))));
     const empty = draft.tracks.length === 0;
     emptyEl.hidden = !empty;
     tracksEl.hidden = empty;
@@ -857,10 +914,23 @@
   function addTrack() {
     if (busy || draft.tracks.length >= 64) return;
     const track = { id: makeId(), device: { kind: 'sine', frequency_hz: 440, gain: 0.15 } };
-    if ([4, 6].includes(draft.schema_version)) Object.assign(track, {mode: 'continuous', clips: [], effects: []});
+    if ([4, 6, 7].includes(draft.schema_version)) Object.assign(track, {mode: 'continuous', clips: [], effects: []});
     draft.tracks.push(track);
     renderTracks();
     markEdited();
+  }
+
+  async function addCsoundFile(file) {
+    if (!file || busy || nativeLocked()) return;
+    if (file.size > 61440) { announceError('Csound programs must be at most 60 KiB.'); return; }
+    setBusy(true);
+    try {
+      const program = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
+      draft = SessionEditor.addCsound(draft, program, makeId(), draft.sample_rate);
+      stopLive(); configureSessionMode(); renderTracks(); markEdited();
+      setNotice('Csound track added as format 7. Add declared scalar controls, then Apply to validate the program.');
+    } catch (error) { announceError(`Could not add Csound program. ${error.message}`); }
+    finally { setBusy(false); }
   }
 
   function updateDraftFromControls() {
@@ -1048,7 +1118,7 @@
     $('#output-level').value = 0;
     if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a sine track, then press Play.'); return; }
     nativeSnapshot = { state: 'starting' };
-    if (hasSources()) setNotice('Starting live SuperCollider…');
+    if (hasSources()) setNotice('Starting live sources…');
     playState.textContent = 'Starting native audio…';
     syncStatus();
     try {
@@ -1127,6 +1197,10 @@
   }
 
   $('#add-track-button').addEventListener('click', addTrack);
+  $('#add-csound-button').addEventListener('click', () => $('#csound-file').click());
+  $('#csound-file').addEventListener('change', event => {
+    const file = event.target.files[0]; event.target.value = ''; void addCsoundFile(file);
+  });
   async function toggleLive() {
     if (starting) { stopLive(); return; }
     if (!player.context || paused) { await playLive(); return; }

@@ -79,6 +79,8 @@
         </div>
         <div class="toolbar-actions">
           <button class="button button-quiet apply-button" id="apply-button" type="button" disabled>Apply changes</button>
+          <input id="csound-file" type="file" accept=".csd,text/plain" hidden>
+          <button class="button button-quiet" id="add-csound-button" type="button" disabled>Add Csound</button>
           <button class="button button-primary" id="add-track-button" type="button"><span class="plus" aria-hidden="true">+</span> Add sine track</button>
         </div>
       </section>
@@ -114,7 +116,7 @@
       <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
     </main>
 
-    <footer class="footer"><span>Browser or native sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Saved VST3 / SuperCollider · Native playback</span></footer>
+    <footer class="footer"><span>Browser or native sine playback · Rust WAV export</span><span class="footer-sep">·</span><span>Saved VST3 / SuperCollider / Csound · Native playback</span></footer>
   </div>
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>
