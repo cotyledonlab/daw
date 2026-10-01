@@ -262,9 +262,14 @@ Implemented schema v6 with embedded single SynthDefs, native control arrays, sav
 
 Verification: ten source/controller tests cover save/reload, timed controls, init-rate bases/frame-zero behavior, schema/control/runtime rollback, float headroom and cache reuse/invalidation. Three routing tests cover VST3 scaling/state, Apple lowpass processing and opt-in live VST3 playback. The opt-in source/routing suite passed all 13 tests with silent host audio access. The two-source example saved/reloaded/rendered and submitted native callback frames before clean stop. A portable cached-PCM regression covers gain chains, source end, seek and loop. Baseline, native-only, live-VST and combined-feature Rust fmt/clippy/tests pass; both ignored live worker tests pass, 17 score/inspection regressions pass, and 41 plugin/routing regressions pass with eight documented optional skips. Malformed float output cases preserve the project; acoustic delivery and arbitrary UGen compatibility remain unverified.
 
-### T11c: owned interactive OSC and live runtime routing
+### T11c: owned interactive OSC and live runtime routing — in progress
 
 **Depends on:** T11a/b. Keep T11's remaining interactive create/free acknowledgement and measured audio-routing work explicit. Own only launched servers, use loopback argument arrays and completion responses, and establish an actual track-audio path before claiming live runtime hosting. OSC control alone is insufficient. Keep foreign server work outside the hardware callback.
+
+T11c1 provides an owned macOS live-server diagnostic: loopback port ownership, definition/buffer completion, node create/free notifications, native control readback, finite private-bus stereo capture and acknowledged clean quit. Two installed-server cycles measured 440 -> 660 Hz and approximately half RMS gain, with captured output buses silent. Portable OSC reply validation and opt-in child timeout/crash/diagnostic-overflow cleanup tests pass. This is independent of DAW transport and adds no live-runtime capability claim.
+
+T11c2 remains pending: prototype a project-owned UGen/shared-memory SPSC stream, verify initialization thread context and bounded callback processing, then route sequenced PCM into the DAW's fixed callback queue with real control/transport acknowledgments. Built-in scope buffers publish snapshots and are unsuitable as an assumed lossless transport. Read the [streaming decision and gates](decisions/supercollider.md#streaming-decision-and-remaining-gates-t11c2) before implementation.
+
 
 ### T12: Csound and Pure Data adapters
 
@@ -280,4 +285,4 @@ First add cancellable render jobs with progress and subscriptions. Then build mi
 
 ## Next starting point
 
-T11a establishes owned SuperCollider NRT score jobs; T11b adds inspected saved sources and prepared native playback. Continue with T11c interactive runtime ownership and actual audio routing; T11c interactive acknowledgements/audio routing and T12/T13 remain outstanding. Preserve the distinction between exported WAV jobs, prepared runtime track audio and live runtime DSP. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
+T11a establishes owned SuperCollider NRT score jobs; T11b adds inspected saved sources and prepared native playback. T11c1 proves owned OSC lifecycle and finite live-server capture. Continue with T11c2 measured streaming audio routing; T11c interactive acknowledgements/audio routing and T12/T13 remain outstanding. Preserve the distinction between exported WAV jobs, prepared runtime track audio and live runtime DSP. Keep notes/audio clips and v2/v3 sessions locked in the GUI, and preserve native callback ownership, offline containment, and the play/pause/hold-to-stop interaction. Eligible saved VST3 bases can change during native playback; automated targets and structural edits require stopped playback.
