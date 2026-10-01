@@ -171,7 +171,6 @@ impl Control {
         self.shared.stop.store(true, Ordering::Release);
     }
 
-    #[cfg(test)]
     pub(crate) fn failed(&self) -> bool {
         self.shared.failed.load(Ordering::Acquire)
     }

@@ -220,7 +220,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                     runtimes.push(Runtime::prepare(track, directory.path(), index)?);
                 }
             }
-            let _ = opened.send(Ok(()));
+            let _ = opened.send(Ok(json!({"owned_pids":runtimes.iter().map(|runtime|runtime.server.pid()).collect::<Vec<_>>(),"runtime_sources":runtimes.len()})));
             starting
                 .recv_timeout(Duration::from_secs(5))
                 .map_err(|_| "SC session start handshake timed out".to_string())?;
@@ -363,7 +363,10 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
     let mut guard = Worker::new(control, prepared, worker, Some(begin))
         .with_stop_timeout(Duration::from_secs(20));
     match opening.recv_timeout(Duration::from_secs(20)) {
-        Ok(Ok(())) => Ok((consumer, guard)),
+        Ok(Ok(metadata)) => {
+            guard.metadata = metadata;
+            Ok((consumer, guard))
+        }
         outcome => {
             let error = match outcome {
                 Ok(Err(error)) => error,

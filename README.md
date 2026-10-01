@@ -187,7 +187,26 @@ DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 e
 
 This creates a schema-v6 project with two embedded SynthDefs, saved named control values/events and serial gain effects; it saves, reloads and exports the arrangement. Add `--native` for a bounded silent hardware smoke test. Preparation captures floating-point source audio outside callbacks, then the DAW routes it through its effects. A source has a finite duration; at most four sources and ten seconds of summed source duration are allowed. Reload regenerates audio, while playback/rendering reuse the prepared snapshot. Native playback requires a matching sample rate. Runtime/control failures preserve the active session. The browser editor does not import or edit these sessions yet, and prepared playback does not provide interactive SuperCollider DSP. See the [schema-v6 contract](docs/PROTOCOL.md#schema-v6-prepared-supercollider-sources).
 
-Saved v6 sources can now run live without offline preparation through a separate finite macOS CLI:
+Saved v6 sources can run in live mode through JSONL native transport as well as through the standalone CLI below. Prepared playback remains the default. Select live mode explicitly:
+
+```jsonl
+{"protocol_version":1,"id":"play","method":"transport.play","params":{"seconds":1,"volume":0,"source_mode":"live"}}
+{"protocol_version":1,"id":"status","method":"transport.status"}
+```
+
+The JSONL live mode requires a macOS `native-audio` build, the project capture plugin, and an absolute `DAW_SCSYNTH` path. It supports schema v6 at 48 kHz for up to ten seconds, with gain effects only and SuperCollider stereo sources routed through buses 0/1. Loading or replacing a session still validates and NRT-prepares it before commit; live transport then starts fresh owned SuperCollider servers without another NRT render. Status reports startup, source count/PIDs, callback source digest and peak, live-source underruns, and the final source report after natural completion or stop. Monitor volume can change while playing. Pause/resume, seek, loop, and live SuperCollider control edits are unavailable. Session editing remains through JSONL; the browser editor does not import schema v6.
+
+Run the bounded two-track example with:
+
+```sh
+cargo build --locked --features native-audio
+python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollider-3.14.1
+DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_live_demo.py
+```
+
+The example uses a muted monitor and checks one second of source audio, ordering digests, underruns, and server/queue release. The `serve` process cleans up owned servers when its JSONL input closes; it does not install CLI SIGINT/SIGTERM handlers.
+
+The standalone finite macOS CLI remains available for direct saved-session playback:
 
 ```sh
 cargo build --locked --features native-audio
@@ -195,10 +214,10 @@ python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollid
 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth target/debug/daw sc-session-play path/to/session.json 1 0
 ```
 
-The last argument is monitor volume (0 for a muted callback check; default 0.25). This mode requires a 48 kHz default output device, schema v6 and at most ten seconds. It starts a separate owned server per SuperCollider track, preserving same-name programs, captures stereo buses 0/1 and clears them before SuperCollider hardware output. Saved native control points, source duration/gain, serial gain effects (including automation/bypass), built-in sine/notes and rate-matched PCM clips feed the DAW's fixed native callback queue. AU/VST3 effects are rejected in this mode. Final JSON reports frame counts, source/callback sample-order fingerprints, quarter RMS, output-bus peaks and released server PIDs; readiness uses stderr. Ctrl+C or SIGTERM performs owned cleanup. Abrupt process termination (SIGKILL) cannot run that cleanup. This mode is separate from JSONL transport and the browser; pause/seek/loop, interactive control edits, clock-drift/latency characterization and long playback remain pending. Verified with SuperCollider 3.14.1 on macOS arm64 using a muted monitor; acoustic delivery and arbitrary UGens are unverified.
+The last argument is monitor volume (0 for a muted callback check; default 0.25). This CLI requires a 48 kHz default output device, schema v6 and at most ten seconds. It starts a separate owned server per SuperCollider track, preserving same-name programs, captures stereo buses 0/1 and clears them before SuperCollider hardware output. Saved native control points, source duration/gain, serial gain effects (including automation/bypass), built-in sine/notes and rate-matched PCM clips feed the DAW's fixed native callback queue. AU/VST3 effects are rejected in this mode. Final JSON reports frame counts, source/callback sample-order fingerprints, quarter RMS, output-bus peaks and released server PIDs; readiness uses stderr. Ctrl+C or SIGTERM performs owned cleanup. Abrupt process termination (SIGKILL) cannot run that cleanup. This CLI remains separate from JSONL transport. Clock-drift/latency characterization and long playback remain pending. Verified with SuperCollider 3.14.1 on macOS arm64 using a muted monitor; acoustic delivery and arbitrary UGens are unverified.
 
 The separate macOS [interactive SC probe](native/supercollider/live_probe.py) verifies owned OSC lifecycle and a control change reaching finite private-bus audio capture. It keeps output buses silent and does not add live runtime playback to the DAW. The [streaming gates](docs/decisions/supercollider.md#streaming-decision-and-remaining-gates-t11c2) remain outstanding.
 
 A custom SuperCollider UGen/shared-memory streaming diagnostic is also available under `native/supercollider/`; it verifies finite stereo streaming and live control changes into a separate reader process. It is not connected to DAW transport or GUI controls. See [build, evidence and remaining routing gates](docs/decisions/supercollider.md#fixed-queue-prototype-t11c2a).
 
-The [native streaming diagnostic](native/supercollider/native_probe.py) now routes a live SC source through the Rust gain effect and native callback. It requires the built queue bridge and a `native-audio` binary, defaults to a muted monitor, and reports exact frame counts, sample-order fingerprints and underruns. Saved SuperCollider sessions still use prepared PCM; interactive session control and GUI editing remain pending. See [native routing evidence](docs/decisions/supercollider.md#source-to-native-diagnostic-t11c2b1).
+The [native streaming diagnostic](native/supercollider/native_probe.py) now routes a live SC source through the Rust gain effect and native callback. It requires the built queue bridge and a `native-audio` binary, defaults to a muted monitor, and reports exact frame counts, sample-order fingerprints and underruns. Default SuperCollider playback still uses prepared PCM; explicit live transport is described above. Live control edits and GUI editing remain pending. See [native routing evidence](docs/decisions/supercollider.md#source-to-native-diagnostic-t11c2b1).

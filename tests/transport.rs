@@ -302,3 +302,48 @@ fn successful_replacement_updates_session_and_failed_replacement_preserves_it() 
     let stopped = request(&mut controller, "status", "transport.status", json!({}));
     assert_eq!(ok(&stopped)["state"], "stopped");
 }
+
+#[test]
+fn source_mode_is_strict_discoverable_and_rejections_preserve_revision() {
+    let mut controller = Controller::default();
+    ok(&request(
+        &mut controller,
+        "set",
+        "session.replace",
+        json!({"session":session("sine")}),
+    ));
+    let before = inspected(&mut controller, "before-live");
+    for value in [json!("unknown"), json!(null), json!(1), json!(true)] {
+        let response = request(
+            &mut controller,
+            "invalid-live",
+            "transport.play",
+            json!({"seconds":1,"volume":0,"source_mode":value}),
+        );
+        assert_eq!(error_code(&response), "invalid_params");
+    }
+    let response = request(
+        &mut controller,
+        "live-sine",
+        "transport.play",
+        json!({"seconds":1,"volume":0,"source_mode":"live"}),
+    );
+    assert_eq!(
+        error_code(&response),
+        if cfg!(all(feature = "native-audio", target_os = "macos")) {
+            "audio_error"
+        } else {
+            "audio_unavailable"
+        }
+    );
+    assert_eq!(inspected(&mut controller, "after-live"), before);
+    let capabilities = request(&mut controller, "caps-live", "capabilities", json!({}));
+    let live = &ok(&capabilities)["supercollider_live_transport"];
+    assert_eq!(
+        live["implemented"],
+        cfg!(all(feature = "native-audio", target_os = "macos"))
+    );
+    assert_eq!(live["source_mode"], "live");
+    assert_eq!(live["pause"], false);
+    assert_eq!(live["live_control_edits"], false);
+}

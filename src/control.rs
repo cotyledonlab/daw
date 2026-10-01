@@ -41,7 +41,8 @@ pub const METHODS: &[&str] = &[
 // Discovery is additive to protocol v1. Defaults are construction suggestions;
 // required session/device fields remain required during deserialization.
 fn capabilities() -> Value {
-    json!({
+    let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":false,"requires_capture_plugin":true});
+    let mut result = json!({
         "methods": METHODS,
         "devices": ["sine", "audio", "supercollider"],
         "supercollider_sources": {"implemented":cfg!(unix),"schema_version":6,"preparation":"owned_nrt_float32","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_points":512,"native_requires_matching_sample_rate":true,"interactive_dsp":false},
@@ -148,7 +149,9 @@ fn capabilities() -> Value {
             "relative_paths": "process_working_directory", "overwrite": false,
             "parent_directories": "must_exist", "max_session_bytes": MAX_MESSAGE_BYTES
         }
-    })
+    });
+    result["supercollider_live_transport"] = sc_live;
+    result
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,7 +312,17 @@ struct RenderParams {
 struct PlayParams {
     seconds: f64,
     volume: f64,
+    #[serde(default)]
+    source_mode: SourceMode,
 }
+#[derive(Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum SourceMode {
+    #[default]
+    Prepared,
+    Live,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SeekParams {
@@ -805,11 +818,19 @@ impl Controller {
         let mut region = None;
         let mut seconds = 0.0;
         let mut volume = 0.25;
+        let mut source_mode = SourceMode::Prepared;
         match method {
             "transport.play" => {
                 let p: PlayParams = params(value)?;
                 seconds = p.seconds;
                 volume = p.volume;
+                source_mode = p.source_mode;
+                if source_mode == SourceMode::Live && seconds > 10.0 {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "live SuperCollider playback is limited to ten seconds",
+                    ));
+                }
                 render::validate_duration(seconds)
                     .map_err(|e| ControlError::new("invalid_params", e))?;
             }
@@ -864,6 +885,9 @@ impl Controller {
         #[cfg(all(feature = "native-audio", target_os = "macos"))]
         {
             let result = match method {
+                "transport.play" if source_mode == SourceMode::Live => {
+                    self.transport.start_live(&self.session, seconds, volume)
+                }
                 "transport.play" => self.transport.start(&self.session, seconds, volume),
                 "transport.pause" => self.transport.pause(),
                 "transport.resume" => self.transport.resume(),
@@ -877,7 +901,7 @@ impl Controller {
         }
         #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
         {
-            let _ = (seconds, frame, region);
+            let _ = (seconds, frame, region, source_mode);
             if matches!(method, "transport.status" | "transport.stop") {
                 Ok(json!({"state":"stopped","level":0}))
             } else {

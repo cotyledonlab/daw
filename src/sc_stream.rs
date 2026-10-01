@@ -151,6 +151,7 @@ pub(crate) struct Worker {
     thread: Option<JoinHandle<Result<Value, String>>>,
     begin: Option<mpsc::SyncSender<()>>,
     stop_timeout: Duration,
+    pub(crate) metadata: Value,
 }
 impl Worker {
     pub(crate) fn new(
@@ -165,6 +166,7 @@ impl Worker {
             thread: Some(thread),
             begin,
             stop_timeout: Duration::from_secs(2),
+            metadata: Value::Null,
         }
     }
     pub(crate) fn with_stop_timeout(mut self, timeout: Duration) -> Self {
@@ -285,6 +287,7 @@ pub(crate) fn start(
         thread: Some(worker),
         begin: None,
         stop_timeout: Duration::from_secs(2),
+        metadata: Value::Null,
     };
     match opening.recv_timeout(Duration::from_secs(2)) {
         Ok(Ok(())) => Ok((consumer, guard)),

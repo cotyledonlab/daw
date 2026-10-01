@@ -331,10 +331,12 @@ fn stream<T: SizedSample + FromSample<f64>>(
 #[derive(Default)]
 pub struct Transport {
     sender: Option<std::sync::mpsc::SyncSender<Envelope>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 enum Action {
     Play(Session, f64, f64),
+    PlayLive(Session, f64, f64),
     Pause,
     Resume,
     Stop,
@@ -353,6 +355,7 @@ struct Active {
     _stream: cpal::Stream,
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
     plugin_worker: Option<crate::live_plugins::WorkerGuard>,
+    sc_worker: Option<crate::sc_stream::Worker>,
     stats: Arc<Stats>,
     device: String,
     rate: u32,
@@ -402,6 +405,7 @@ impl Active {
             _stream: stream,
             #[cfg(all(feature = "vst3-live", target_os = "macos"))]
             plugin_worker,
+            sc_worker: None,
             stats,
             device: name,
             rate: config.sample_rate.0,
@@ -410,14 +414,68 @@ impl Active {
             loop_region: None,
         })
     }
-    fn release(self) -> Result<(), String> {
+    fn start_live(session: &Session, seconds: f64, volume: f64) -> Result<Self, String> {
+        let frames = crate::sc_session::validate(session, seconds)?;
+        validate_volume(volume)?;
+        let (device, format, config) = sc_device()?;
+        let name = device.name().map_err(|e| e.to_string())?;
+        let (consumer, mut worker) = crate::sc_session::start(session, seconds)?;
+        let renderer =
+            PlaybackBuffer::from_stream(consumer, frames, config.channels as usize, 1.0)?;
+        let stats = Arc::new(Stats::default());
+        stats.volume.store(volume.to_bits(), Relaxed);
+        stats.paused.store(true, Relaxed);
+        let stream = match format {
+            cpal::SampleFormat::F32 => stream::<f32>(&device, &config, renderer, stats.clone()),
+            cpal::SampleFormat::F64 => stream::<f64>(&device, &config, renderer, stats.clone()),
+            cpal::SampleFormat::I16 => stream::<i16>(&device, &config, renderer, stats.clone()),
+            cpal::SampleFormat::U16 => stream::<u16>(&device, &config, renderer, stats.clone()),
+            _ => return Err(format!("unsupported device format: {format:?}")),
+        }?;
+        worker.begin()?;
+        worker.wait_ready()?;
+        stats.paused.store(false, Release);
+        stream.play().map_err(|e| e.to_string())?;
+        Ok(Self {
+            _stream: stream,
+            #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+            plugin_worker: None,
+            sc_worker: Some(worker),
+            stats,
+            device: name,
+            rate: 48000,
+            // A source failure cannot be disguised as a wall-clock completion.
+            deadline: Instant::now() + Duration::from_secs_f64(seconds + 3.0),
+            drain: None,
+            loop_region: None,
+        })
+    }
+    fn release(mut self) -> Result<Value, String> {
+        let mut report = self.snapshot();
         // Stream destruction releases the callback consumer before stopping DSP.
         drop(self._stream);
+        // Collect final scalar telemetry only after callbacks have stopped.
+        report["submitted_frames"] = json!(self.stats.frames.load(Relaxed));
+        report["timeline_frame"] = json!(self.stats.timeline.load(Relaxed));
+        report["callbacks"] = json!(self.stats.calls.load(Relaxed));
+        if let Some(worker) = &self.sc_worker {
+            report["live_source_underruns"] = json!(worker.control.underruns());
+            report["callback_signal_peak"] =
+                json!(f64::from_bits(self.stats.pre_monitor_peak.load(Relaxed)));
+            report["callback_source_digest"] =
+                json!(format!("{:016x}", self.stats.source_digest.load(Relaxed)));
+        }
         #[cfg(all(feature = "vst3-live", target_os = "macos"))]
         if let Some(mut worker) = self.plugin_worker {
             worker.finish()?;
         }
-        Ok(())
+        if let Some(mut worker) = self.sc_worker.take() {
+            report["source"] = worker.finish()?;
+        }
+        report["state"] = json!("stopped");
+        report["level"] = json!(0);
+        report["resources_released"] = json!(true);
+        Ok(report)
     }
     fn snapshot(&mut self) -> Value {
         #[cfg(all(feature = "vst3-live", target_os = "macos"))]
@@ -442,7 +500,7 @@ impl Active {
             (false, 1) => "playing",
             _ => "starting",
         };
-        json!({"state":state,"device":self.device,"sample_rate":self.rate,
+        let mut report = json!({"state":state,"device":self.device,"sample_rate":self.rate,
             "level":f64::from_bits(self.stats.level.load(Relaxed)),
             "submitted_frames":self.stats.frames.load(Relaxed),
             "timeline_frame":self.stats.timeline.load(Relaxed),
@@ -451,7 +509,23 @@ impl Active {
             "callbacks_over_buffer_budget":self.stats.over_budget.load(Relaxed),
             "timeline_command_pending":pending,"plugin_worker_underruns":underruns,"plugin_parameter_update":parameter_status,
             "loop_region":self.loop_region.map(|(start,end)| json!({"start_frame":start,"end_frame":end})),
-            "volume":f64::from_bits(self.stats.volume.load(Relaxed))})
+            "volume":f64::from_bits(self.stats.volume.load(Relaxed))});
+        report["source_mode"] = json!(if self.sc_worker.is_some() {
+            "live"
+        } else {
+            "prepared"
+        });
+        if let Some(worker) = &self.sc_worker {
+            report["runtime"] = json!("supercollider");
+            report["startup"] = json!("prefilled");
+            report["source"] = worker.metadata.clone();
+            report["live_source_underruns"] = json!(worker.control.underruns());
+            report["callback_signal_peak"] =
+                json!(f64::from_bits(self.stats.pre_monitor_peak.load(Relaxed)));
+            report["callback_source_digest"] =
+                json!(format!("{:016x}", self.stats.source_digest.load(Relaxed)));
+        }
+        report
     }
 }
 fn validate_volume(volume: f64) -> Result<(), String> {
@@ -468,12 +542,19 @@ impl Transport {
                 return Ok(json!({"state":"stopped","level":0}));
             }
             let (sender, receiver) = std::sync::mpsc::sync_channel::<Envelope>(8);
-            std::thread::Builder::new()
-                .name("daw-audio-owner".into())
-                .spawn(move || owner(receiver))
-                .map_err(|e| e.to_string())?;
+            self.thread = Some(
+                std::thread::Builder::new()
+                    .name("daw-audio-owner".into())
+                    .spawn(move || owner(receiver))
+                    .map_err(|e| e.to_string())?,
+            );
             self.sender = Some(sender);
         }
+        let timeout = match &action {
+            Action::PlayLive(..) => 60,
+            Action::Stop => 25,
+            _ => 10,
+        };
         let (reply, result) = std::sync::mpsc::sync_channel(1);
         self.sender
             .as_ref()
@@ -481,7 +562,7 @@ impl Transport {
             .try_send(Envelope { action, reply })
             .map_err(|e| format!("native control unavailable: {e}"))?;
         result
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(Duration::from_secs(timeout))
             .map_err(|_| "native control timed out; restart the engine".to_string())?
     }
     pub fn start(&mut self, session: &Session, seconds: f64, volume: f64) -> Result<Value, String> {
@@ -489,6 +570,16 @@ impl Transport {
         crate::render::validate_duration(seconds)?;
         validate_volume(volume)?;
         self.request(Action::Play(session.clone(), seconds, volume))
+    }
+    pub fn start_live(
+        &mut self,
+        session: &Session,
+        seconds: f64,
+        volume: f64,
+    ) -> Result<Value, String> {
+        crate::sc_session::validate(session, seconds)?;
+        validate_volume(volume)?;
+        self.request(Action::PlayLive(session.clone(), seconds, volume))
     }
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
     pub(crate) fn parameter(
@@ -526,17 +617,35 @@ impl Transport {
         self.request(Action::Volume(volume))
     }
 }
+fn stopped_error(live: bool, error: String) -> Value {
+    if live {
+        json!({"state":"stopped","level":0,"source_mode":"live","resources_released":!error.contains("stop timed out"),"error":{"code":"runtime_error","message":error}})
+    } else {
+        json!({"state":"error","level":0,"error":error})
+    }
+}
 fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
     let mut active: Option<Active> = None;
     let mut idle = json!({"state":"stopped","level":0});
     loop {
         if let Some(current) = active.as_mut() {
             let now = Instant::now();
-            if current.stats.error.load(Relaxed) {
-                active = None;
-                idle = json!({"state":"error","level":0,"error":"Audio device failed. Playback stopped."});
+            if current.stats.error.load(Relaxed)
+                || current
+                    .sc_worker
+                    .as_ref()
+                    .is_some_and(|worker| worker.control.failed())
+            {
+                let live = current.sc_worker.is_some();
+                let result = active.take().expect("active stream").release();
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| "Audio device failed. Playback stopped.".into());
+                idle = stopped_error(live, error);
             } else {
-                if now >= current.deadline {
+                if now >= current.deadline && current.sc_worker.is_some() {
+                    current.stats.error.store(true, Relaxed);
+                } else if now >= current.deadline {
                     current.stats.done.store(true, Relaxed);
                 }
                 if current.stats.done.load(Relaxed) && current.drain.is_none() {
@@ -545,10 +654,11 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                     current.drain = Some(now + Duration::from_secs_f64(tail.min(1.0) + 0.1));
                 }
                 if current.drain.is_some_and(|deadline| now >= deadline) {
+                    let live = current.sc_worker.is_some();
                     let result = active.take().expect("active stream").release();
                     idle = match result {
-                        Ok(()) => json!({"state":"stopped","level":0}),
-                        Err(error) => json!({"state":"error","level":0,"error":error}),
+                        Ok(report) => report,
+                        Err(error) => stopped_error(live, error),
                     };
                 }
             }
@@ -566,14 +676,26 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                     }
                     active = Some(Active::start(&session, seconds, volume)?);
                 }
+                Action::PlayLive(session, seconds, volume) => {
+                    if active.is_some() {
+                        return Err("stop native playback before starting again".into());
+                    }
+                    active = Some(Active::start_live(&session, seconds, volume)?);
+                }
                 Action::Stop => {
                     if let Some(current) = active.take() {
-                        if let Err(error) = current.release() {
-                            idle = json!({"state":"error","level":0,"error":error});
-                            return Err(error);
+                        let live = current.sc_worker.is_some();
+                        match current.release() {
+                            Ok(report) => idle = report,
+                            Err(error) => {
+                                idle = stopped_error(live, error.clone());
+                                return Err(error);
+                            }
                         }
                     }
-                    idle = json!({"state":"stopped","level":0});
+                    if idle["state"] != "stopped" {
+                        idle = json!({"state":"stopped","level":0});
+                    }
                 }
                 #[cfg(all(feature = "vst3-live", target_os = "macos"))]
                 Action::Parameter(change) => {
@@ -594,6 +716,9 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                 Action::Status => {}
                 Action::Pause | Action::Resume => {
                     let current = active.as_ref().ok_or("native playback is stopped")?;
+                    if current.sc_worker.is_some() {
+                        return Err("live SuperCollider playback does not support pause or resume; stop and restart".into());
+                    }
                     current.stats.observed.store(0, Relaxed);
                     current
                         .stats
@@ -602,6 +727,11 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                 }
                 Action::Seek(_) | Action::Loop(_) => {
                     let current = active.as_mut().ok_or("native playback is stopped")?;
+                    if current.sc_worker.is_some() {
+                        return Err(
+                            "live SuperCollider playback does not support seek or loops".into()
+                        );
+                    }
                     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
                     if current.plugin_worker.is_some() {
                         return Err("live VST3 playback does not support seek or loops".into());
@@ -638,9 +768,31 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                 .map_or_else(|| idle.clone(), Active::snapshot)
         });
         if envelope.reply.send(result).is_err() {
-            active = None;
+            if let Some(current) = active.take() {
+                let _ = current.release();
+            }
             idle = json!({"state":"error","level":0,"error":"Native command caller disconnected; playback stopped."});
         }
     }
-    // Dropping the active stream on this owner thread releases hardware on EOF.
+    if let Some(current) = active.take() {
+        let _ = current.release();
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        if self.sender.is_some() {
+            let _ = self.stop();
+        }
+        self.sender.take();
+        if let Some(thread) = self.thread.take() {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !thread.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            }
+        }
+    }
 }

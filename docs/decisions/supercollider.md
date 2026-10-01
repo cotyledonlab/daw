@@ -103,3 +103,19 @@ DAW_TEST_SC_SAVED=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resourc
 Verification: nine saved-session tests pass against the installed runtime/native callback, including a hard-coded bus-zero fixture, same-name programs, native control changes, gain automation/bypass, child crash/log overflow/OSC timeout, SIGINT and actual owned producer death. Saved JSON stays unchanged on failure; successful playback submits 48,000 frames with matching fingerprints, zero underruns, captured output-bus peaks zero and all reported child PIDs reaped. Seven bridge ABI tests and the three existing native-stream tests pass. Baseline/native/all-feature fmt/clippy/test checks, the scripting demo and 13 browser regressions pass.
 
 The ordinary JSONL transport still prepares v6 PCM, and `interactive_dsp` stays false there. T11c2b2b must add native transport ownership, revision-checked live edits and DSP acknowledgment semantics; measure control latency/drift; define pause/seek/loop; and integrate foreign effect routing. Browser editing remains a separate subsequent slice. Keep these boundaries in capabilities and documentation.
+
+
+### Owned live native transport (T11c2b2b1)
+
+Explicit `transport.play` with `source_mode:"live"` now retains the saved-source worker on the native audio owner. Prepared remains the default. The owner builds the callback under a silent startup gate, arms SC sources, waits for real queue prefill, and then starts playback. Status distinguishes `startup:"prefilled"` from callback-observed `starting`/`playing`; it reports PIDs, frame counts, signal peaks, digests and underruns. Stop destroys the callback before worker finish; final scalar telemetry is collected after callbacks stop. Natural completion retains full continuity/release evidence. The protocol engine now retains and joins the transport owner during EOF cleanup instead of letting process exit race detached child cleanup.
+
+The owner checks source failure atomics independently of status calls. Actual child death stops playback, joins cleanup, and publishes a stopped snapshot with an asynchronous structured runtime error. Pause/resume/seek/loop are explicitly unavailable for this mode: pausing only the callback would allow SC to overrun its fixed queue, so no pause promise is made before actual server/automation clock semantics are measured. Volume remains a callback atomic. Default prepared and live VST behavior stay distinct.
+
+Six opt-in installed-runtime tests pass for two saved sources: repeated start/stop, natural 48,000-frame completion with matching callback/source fingerprints and zero underruns, invalid mode/overlength preservation, unsupported control preservation, exact owned producer kill with all sources reaped, and protocol EOF cleanup. The new two-source scripting example also passes. Baseline/native/all-feature/live-VST Rust checks, both real VST worker regressions, 20 GUI bridge tests, 13 browser regressions and five native VST parameter tests pass. Source preparation still validates through NRT at session commit; live transport starts fresh sources without another NRT job. Acoustic delivery, arbitrary UGens, latency/drift and browser access are not claimed.
+
+```sh
+DAW_TEST_SC_TRANSPORT=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 -m unittest native.supercollider.test_live_transport
+DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_live_demo.py
+```
+
+T11c2b2b2 remains revision-checked named control edits with real DSP acknowledgment and measured response; T11c2b2b3 remains browser integration. Live transport is bounded to ten seconds and gain-only effects until separate acceptance gates expand those limits.
