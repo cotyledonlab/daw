@@ -10,7 +10,10 @@ from pathlib import Path
 import struct
 import sys
 
-from block_probe import _bind
+if __package__:
+    from .block_probe import _bind
+else:
+    from block_probe import _bind
 
 
 def validate_job(job):
@@ -45,14 +48,19 @@ def validate_job(job):
     return rate, source
 
 
-def prepare(job_path, output, library):
-    if not Path(library).is_absolute() or not Path(library).is_file():
-        raise ValueError("Csound library must be an existing absolute file")
+def load_job(job_path):
     with open(job_path, "rb") as stream:
         payload = stream.read(1048577)
     if len(payload) > 1048576:
         raise ValueError("Csound source job exceeds 1 MiB")
-    rate, source = validate_job(json.loads(payload))
+    return validate_job(json.loads(payload))
+
+
+def perform_source(rate, source, library, emit_block):
+    """The owning worker copies blocks before passing them to the concrete sink."""
+    validate_job({"job_version": 1, "sample_rate": rate, "source": source})
+    if not Path(library).is_absolute() or not Path(library).is_file():
+        raise ValueError("Csound library must be an existing absolute file")
     api = _bind(library)
     fn = api.csoundGetChannelPtr
     fn.restype, fn.argtypes = C.c_int32, [C.c_void_p, C.POINTER(C.c_void_p), C.c_char_p, C.c_int32]
@@ -94,34 +102,40 @@ def prepare(job_path, output, library):
         inputs = api.csoundGetChannels(engine, 1)
         if api.csoundGetSr(engine) != rate or api.csoundGetKsmps(engine) != 64 or api.csoundGetChannels(engine, 0) != 2 or inputs > 2 or api.csoundGet0dBFS(engine) != 1.0:
             raise RuntimeError("Csound sources require requested rate, ksmps=64, stereo output, 0..2 input channels and 0dbfs=1")
-        with open(output, "xb") as stream:
-            stream.write(b"DCS1" + struct.pack("<IQI", rate, source["duration_frames"], 2))
-            for frame in range(0, source["duration_frames"], 64):
-                for control, value in events.get(frame, ()):
-                    set_control(control, value)
-                spin = api.csoundGetSpin(engine)
-                if inputs and not spin:
-                    raise RuntimeError("Csound source input buffer missing")
-                for index in range(inputs*64):
-                    spin[index] = 0.0
-                status = api.csoundPerformKsmps(engine)
-                if status:
-                    raise RuntimeError(f"Csound score ended before saved duration at frame {frame} (code {status})")
-                spout = api.csoundGetSpout(engine)
-                if not spout:
-                    raise RuntimeError("Csound source output buffer missing")
-                block = bytearray()
-                for index in range(min(64, source["duration_frames"] - frame)):
-                    left, right = spout[index*2], spout[index*2+1]
-                    if not math.isfinite(left) or not math.isfinite(right):
-                        raise RuntimeError("Csound source produced nonfinite PCM")
-                    block.extend(struct.pack("<dd", left, right))
-                stream.write(block)
+        for frame in range(0, source["duration_frames"], 64):
+            for control, value in events.get(frame, ()):
+                set_control(control, value)
+            spin = api.csoundGetSpin(engine)
+            if inputs and not spin:
+                raise RuntimeError("Csound source input buffer missing")
+            for index in range(inputs*64):
+                spin[index] = 0.0
+            status = api.csoundPerformKsmps(engine)
+            if status:
+                raise RuntimeError(f"Csound score ended before saved duration at frame {frame} (code {status})")
+            spout = api.csoundGetSpout(engine)
+            if not spout:
+                raise RuntimeError("Csound source output buffer missing")
+            block = bytearray()
+            for index in range(min(64, source["duration_frames"] - frame)):
+                left, right = spout[index*2], spout[index*2+1]
+                if not math.isfinite(left) or not math.isfinite(right):
+                    raise RuntimeError("Csound source produced nonfinite PCM")
+                block.extend(struct.pack("<dd", left, right))
+            spin = spout = None
+            emit_block(frame, bytes(block))
     finally:
         # No borrowed buffers survive the last perform scope into teardown.
         spin = spout = None
         api.csoundReset(engine)
         api.csoundDestroy(engine)
+
+
+def prepare(job_path, output, library):
+    rate, source = load_job(job_path)
+    with open(output, "xb") as stream:
+        stream.write(b"DCS1" + struct.pack("<IQI", rate, source["duration_frames"], 2))
+        perform_source(rate, source, library, lambda frame, block: stream.write(block))
 
 
 if __name__ == "__main__":
