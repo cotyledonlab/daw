@@ -1,5 +1,7 @@
 # Control protocol v1
 
+The separate SuperCollider shared-memory stream diagnostic does not add protocol commands or change runtime capabilities. Schema-v6 sources still prepare PCM offline for native playback; live SC control/audio routing into DAW transport remains pending.
+
 Run `daw serve`. Each UTF-8 input line receives one JSON response in the same order. The last line may end at EOF. Flush after each request; the server flushes each response. Stdout contains protocol responses only; process diagnostics use stderr. Invalid requests do not terminate the server. EOF exits normally. Command errors return `ok: false` but do not set the process exit code; clients must inspect every response.
 
 The envelope is `{ "protocol_version": 1, "id": "caller-id", "method": "session.get", "params": {} }`. IDs must contain 1–128 UTF-8 bytes. Omitted params default to `{}`. Unknown fields are rejected. Protocol version and session schema version are independent.

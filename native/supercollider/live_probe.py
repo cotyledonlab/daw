@@ -90,7 +90,7 @@ def capture_synthdef(bus=16, name="daw_private_capture"):
 
 class OwnedServer:
     """Only the launched server is contacted or terminated; no attach mode."""
-    def __init__(self, executable, seconds=10):
+    def __init__(self, executable, seconds=10, stream_plugin=None, stream_path=None, stream_nonce=None):
         if sys.platform != "darwin":
             raise RuntimeError("this hardware/socket-ownership proof currently requires macOS")
         if not math.isfinite(seconds) or not 0 < seconds <= 15:
@@ -98,6 +98,23 @@ class OwnedServer:
         executable = Path(executable)
         if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
             raise ValueError("select an existing absolute scsynth executable")
+        stream_args = []
+        environment = os.environ.copy()
+        environment.pop("DAW_SC_STREAM_PATH", None)
+        environment.pop("DAW_SC_STREAM_NONCE", None)
+        if any(value is not None for value in (stream_plugin, stream_path, stream_nonce)):
+            if not all(value is not None for value in (stream_plugin, stream_path, stream_nonce)):
+                raise ValueError("stream diagnostic needs plugin, queue and nonce")
+            plugin = Path(stream_plugin)
+            queue_path = Path(stream_path)
+            builtins = executable.parent / "plugins"
+            if not plugin.is_absolute() or not plugin.is_dir() or not builtins.is_dir() or ":" in str(plugin):
+                raise ValueError("stream diagnostic requires private and bundled plugin directories")
+            if not queue_path.is_absolute() or not queue_path.is_file() or not 0 < stream_nonce < 2**64:
+                raise ValueError("invalid stream queue/nonce")
+            stream_args = ["-U", str(builtins) + ":" + str(plugin)]
+            environment["DAW_SC_STREAM_PATH"] = str(queue_path)
+            environment["DAW_SC_STREAM_NONCE"] = str(stream_nonce)
         self.temp = tempfile.TemporaryDirectory(prefix="daw-sc-live-")
         self.process = None
         self.socket = None
@@ -113,9 +130,9 @@ class OwnedServer:
             self.process = subprocess.Popen([
                 str(executable), "-u", "0", "-B", "127.0.0.1", "-i", "0", "-o", "2",
                 "-S", "48000", "-z", "64", "-a", "32", "-b", "16", "-n", "64",
-                "-d", "16", "-D", "0", "-R", "0", "-P", self.temp.name,
+                "-d", "16", "-D", "0", "-R", "0", "-P", self.temp.name, *stream_args,
             ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-               start_new_session=True)
+               start_new_session=True, env=environment)
             for stream in (self.process.stdout, self.process.stderr):
                 thread = threading.Thread(target=self._drain, args=(stream,), daemon=True)
                 thread.start()
