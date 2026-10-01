@@ -43,7 +43,7 @@ pub const METHODS: &[&str] = &[
 // Discovery is additive to protocol v1. Defaults are construction suggestions;
 // required session/device fields remain required during deserialization.
 fn capabilities() -> Value {
-    let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos")),"max_pending_controls":8,"requires_capture_plugin":true});
+    let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos")),"max_pending_controls":8,"requires_capture_plugin":true,"session_schema_versions":[6,7]});
     let mut result = json!({
         "methods": METHODS,
         "devices": ["sine", "audio", "supercollider", "csound"],
@@ -154,6 +154,7 @@ fn capabilities() -> Value {
     });
     result["supercollider_live_transport"] = sc_live;
     result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
+    result["csound_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":7,"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":false,"requires_queue_bridge":true});
     result["csound_sources"] = json!({"implemented":cfg!(unix),"schema_version":7,"preparation":"owned_block_float64","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_controls":64,"max_points":512,"ksmps":64,"native_requires_matching_sample_rate":true,"interactive_dsp":false,"runtime_abi":"csound7_double"});
     result["device_metadata"]["csound"] = json!({"session_schema_versions":[7],"track_modes":["continuous"],"required_fields":["program","duration_frames","gain","controls"],"description":"Embedded CSD program prepared as finite stereo float64 audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"native_scalar_float64","control_points":"saved_step_events","interactive_edits":false});
     result

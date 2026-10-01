@@ -56,7 +56,7 @@ def load_job(job_path):
     return validate_job(json.loads(payload))
 
 
-def perform_source(rate, source, library, emit_block):
+def perform_source(rate, source, library, emit_block, before_dsp=None):
     """The owning worker copies blocks before passing them to the concrete sink."""
     validate_job({"job_version": 1, "sample_rate": rate, "source": source})
     if not Path(library).is_absolute() or not Path(library).is_file():
@@ -102,6 +102,8 @@ def perform_source(rate, source, library, emit_block):
         inputs = api.csoundGetChannels(engine, 1)
         if api.csoundGetSr(engine) != rate or api.csoundGetKsmps(engine) != 64 or api.csoundGetChannels(engine, 0) != 2 or inputs > 2 or api.csoundGet0dBFS(engine) != 1.0:
             raise RuntimeError("Csound sources require requested rate, ksmps=64, stereo output, 0..2 input channels and 0dbfs=1")
+        if before_dsp is not None:
+            before_dsp()
         for frame in range(0, source["duration_frames"], 64):
             for control, value in events.get(frame, ()):
                 set_control(control, value)

@@ -523,7 +523,11 @@ impl Active {
             report["source_control_update"] = worker
                 .control_status(self.stats.timeline.load(Relaxed))
                 .unwrap();
-            report["runtime"] = json!("supercollider");
+            report["runtime"] = worker
+                .metadata
+                .get("runtime")
+                .cloned()
+                .unwrap_or(json!("supercollider"));
             report["startup"] = json!("prefilled");
             report["source"] = worker.metadata.clone();
             report["live_source_underruns"] = json!(worker.control.underruns());

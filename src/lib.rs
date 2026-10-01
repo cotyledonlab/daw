@@ -28,3 +28,6 @@ mod sc_server;
 mod sc_session;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 mod sc_stream;
+
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+mod csound_server;

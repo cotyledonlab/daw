@@ -39,6 +39,13 @@ impl Queue {
             .unwrap_or_else(|| {
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("output/sc-stream/libdaw-sc-queue.dylib")
             });
+        Self::open_with_library(path, nonce, &library_path)
+    }
+    pub(crate) fn open_with_library(
+        path: &Path,
+        nonce: u64,
+        library_path: &Path,
+    ) -> Result<Self, String> {
         if !library_path.is_absolute() || !library_path.is_file() {
             return Err("SC queue library unavailable; build_stream.py required".into());
         }
@@ -110,12 +117,20 @@ impl Queue {
 }
 
 pub(crate) fn create_queue(path: &Path, nonce: u64) -> Result<(), String> {
-    type Create = unsafe extern "C" fn(*const c_char, u64, *mut c_char, usize) -> c_int;
     let library_path = std::env::var_os("DAW_SC_QUEUE_LIBRARY")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("output/sc-stream/libdaw-sc-queue.dylib")
         });
+    create_queue_with_library(path, nonce, &library_path)
+}
+
+pub(crate) fn create_queue_with_library(
+    path: &Path,
+    nonce: u64,
+    library_path: &Path,
+) -> Result<(), String> {
+    type Create = unsafe extern "C" fn(*const c_char, u64, *mut c_char, usize) -> c_int;
     if !library_path.is_absolute() || !library_path.is_file() {
         return Err("SC queue library unavailable; build_stream.py required".into());
     }

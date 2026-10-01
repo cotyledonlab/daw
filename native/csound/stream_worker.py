@@ -23,7 +23,7 @@ def publish_json(path, value):
     os.unlink(temporary)
 
 
-def stream(job, queue, nonce, bridge, library, ready, report):
+def stream(job, queue, nonce, bridge, library, ready, report, gate=None):
     resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
     rate, source = load_job(job)
     if rate != 48000:
@@ -48,6 +48,8 @@ def stream(job, queue, nonce, bridge, library, ready, report):
         pcm = struct.pack('<128f', *samples)
         deadline = time.monotonic() + 2
         while True:
+            if gate is not None and Path(gate + '.stop').exists():
+                raise InterruptedError('Csound stream stopped by owner')
             accepted = api.daw_cs_queue_push(producer, samples)
             if accepted == 1:
                 break
@@ -61,8 +63,19 @@ def stream(job, queue, nonce, bridge, library, ready, report):
         count += 1
         if count == prefill:
             publish_json(ready, {'version': 1, 'prefill_blocks': prefill})
+    def before_dsp():
+        if gate is None:
+            return
+        publish_json(gate + '.compiled', {'version': 1, 'sample_rate': rate, 'ksmps': 64, 'channels': 2})
+        deadline = time.monotonic() + 30
+        while not Path(gate).exists():
+            if Path(gate + '.stop').exists():
+                raise InterruptedError('Csound stream stopped before DSP')
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Csound owner start handshake timed out')
+            time.sleep(.001)
     try:
-        perform_source(rate, source, library, emit)
+        perform_source(rate, source, library, emit, before_dsp)
     finally:
         api.daw_cs_queue_close(producer)
     publish_json(report, {'version': 1, 'published_blocks': count,
@@ -73,8 +86,8 @@ def stream(job, queue, nonce, bridge, library, ready, report):
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 8:
-            raise ValueError('Usage: stream_worker.py JOB QUEUE NONCE BRIDGE CSOUND READY REPORT')
+        if len(sys.argv) not in (8, 9):
+            raise ValueError('Usage: stream_worker.py JOB QUEUE NONCE BRIDGE CSOUND READY REPORT [GATE]')
         stream(*sys.argv[1:])
     except Exception as error:
         print(json.dumps({'ok': False, 'error': {'code': 'runtime_error', 'message': str(error)}}), file=sys.stderr)

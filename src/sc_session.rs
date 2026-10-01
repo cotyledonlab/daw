@@ -111,15 +111,60 @@ fn renamed(bytes: &[u8]) -> Result<Vec<u8>, String> {
     synthdef::inspect(&result)?;
     Ok(result)
 }
+enum SourceProcess {
+    Supercollider(Server),
+    Csound(crate::csound_server::Server),
+}
+impl SourceProcess {
+    fn pid(&self) -> u32 {
+        match self {
+            Self::Supercollider(server) => server.pid(),
+            Self::Csound(server) => server.pid(),
+        }
+    }
+    fn check(&mut self) -> Result<(), String> {
+        match self {
+            Self::Supercollider(server) => server.check(),
+            Self::Csound(server) => server.check(),
+        }
+    }
+    fn begin_control(&mut self, index: u32, values: &[f32]) -> Result<(), String> {
+        match self {
+            Self::Supercollider(server) => server.begin_control(index, values),
+            Self::Csound(_) => Err("live Csound control edits are not implemented yet".into()),
+        }
+    }
+    fn poll_control(&mut self, index: u32, values: &[f32]) -> Result<bool, String> {
+        match self {
+            Self::Supercollider(server) => server.poll_control(index, values),
+            Self::Csound(_) => Err("live Csound control edits are not implemented yet".into()),
+        }
+    }
+}
 struct Runtime {
     // Mapping is released before its server/temp files on all exit paths.
     queue: Queue,
-    server: Server,
+    server: SourceProcess,
     track: Track,
     chain: PreparedChain,
 }
 impl Runtime {
-    fn prepare(track: &Track, directory: &std::path::Path, index: usize) -> Result<Self, String> {
+    fn prepare(
+        track: &Track,
+        directory: &std::path::Path,
+        index: usize,
+        frames: u64,
+    ) -> Result<Self, String> {
+        if let Device::Csound(source) = &track.device {
+            let (server, queue) =
+                crate::csound_server::Server::start(source, directory, index, frames)?;
+            return Ok(Self {
+                queue,
+                server: SourceProcess::Csound(server),
+                track: track.clone(),
+                chain: PreparedChain::prepare(track),
+            });
+        }
         let Device::Supercollider(source) = &track.device else {
             return Err("expected SC source".into());
         };
@@ -164,18 +209,28 @@ impl Runtime {
         let queue = Queue::open(&path, nonce)?;
         Ok(Self {
             queue,
-            server,
+            server: SourceProcess::Supercollider(server),
             track: track.clone(),
             chain: PreparedChain::prepare(track),
         })
     }
+    fn duration_gain(&self) -> (u64, f64) {
+        match &self.track.device {
+            Device::Supercollider(source) => (source.duration_frames, source.gain),
+            Device::Csound(source) => (source.duration_frames, source.gain),
+            _ => unreachable!(),
+        }
+    }
     fn arm(&mut self, start: f64, frames: u64) -> Result<(), String> {
+        let server = match &mut self.server {
+            SourceProcess::Csound(server) => return server.arm(),
+            SourceProcess::Supercollider(server) => server,
+        };
         let Device::Supercollider(source) = &self.track.device else {
             unreachable!()
         };
         let metadata = synthdef::inspect(&synthdef::decode_hex(&source.synthdef_hex)?)?;
-        self.server
-            .schedule(start, "/n_run", &[Arg::Int(1), Arg::Int(1)])?;
+        server.schedule(start, "/n_run", &[Arg::Int(1), Arg::Int(1)])?;
         for control in &source.controls {
             let index = metadata
                 .controls
@@ -194,18 +249,17 @@ impl Runtime {
                     Arg::Int(point.values.len() as i32),
                 ];
                 values.extend(point.values.iter().map(|&value| Arg::Float(value as f32)));
-                self.server
-                    .schedule(start + point.frame as f64 / 48000.0, "/n_setn", &values)?;
+                server.schedule(start + point.frame as f64 / 48000.0, "/n_setn", &values)?;
             }
         }
         if source.duration_frames <= frames {
-            self.server.schedule(
+            server.schedule(
                 start + source.duration_frames as f64 / 48000.0,
                 "/n_free",
                 &[Arg::Int(1000)],
             )?;
         }
-        self.server.sync()?;
+        server.sync()?;
         Ok(())
     }
 }
@@ -213,15 +267,17 @@ impl Runtime {
 pub(crate) fn validate(session: &Session, seconds: f64) -> Result<u64, String> {
     session.validate()?;
     crate::render::validate_duration(seconds)?;
-    if session.schema_version != 6 || session.sample_rate != 48000 || seconds > 10.0 {
-        return Err("live SC sessions require schema v6, 48000 Hz and at most ten seconds".into());
+    if !matches!(session.schema_version, 6 | 7) || session.sample_rate != 48000 || seconds > 10.0 {
+        return Err(
+            "live runtime sessions require schema v6/v7, 48000 Hz and at most ten seconds".into(),
+        );
     }
     if !session
         .tracks
         .iter()
-        .any(|track| matches!(track.device, Device::Supercollider(_)))
+        .any(|track| matches!(track.device, Device::Supercollider(_) | Device::Csound(_)))
     {
-        return Err("live SC session requires a SuperCollider source".into());
+        return Err("live session requires a SuperCollider or Csound source".into());
     }
     if session
         .tracks
@@ -229,7 +285,7 @@ pub(crate) fn validate(session: &Session, seconds: f64) -> Result<u64, String> {
         .flat_map(|track| track.effects.as_deref().unwrap_or_default())
         .any(|effect| !matches!(effect, Effect::Gain { .. }))
     {
-        return Err("live SC session effect routing currently supports gain only".into());
+        return Err("live runtime effect routing currently supports gain only".into());
     }
     Ok((seconds * 48000.0).round() as u64)
 }
@@ -247,20 +303,31 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
         let result: Result<Value, String> = (|| {
             let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
             let mut builtin = session.clone();
-            builtin
-                .tracks
-                .retain(|track| !matches!(track.device, Device::Supercollider(_)));
+            builtin.tracks.retain(|track| {
+                !matches!(track.device, Device::Supercollider(_) | Device::Csound(_))
+            });
             let mut engine = Engine::prepare(&builtin)?;
             let mut runtimes = Vec::new();
             for (index, track) in session.tracks.iter().enumerate() {
                 if producer.stop_requested() || interrupted() {
                     return Err("SC session stopped during preparation".into());
                 }
-                if matches!(track.device, Device::Supercollider(_)) {
-                    runtimes.push(Runtime::prepare(track, directory.path(), index)?);
+                if matches!(track.device, Device::Supercollider(_) | Device::Csound(_)) {
+                    runtimes.push(Runtime::prepare(track, directory.path(), index, frames)?);
                 }
             }
-            let _ = opened.send(Ok(json!({"owned_pids":runtimes.iter().map(|runtime|runtime.server.pid()).collect::<Vec<_>>(),"runtime_sources":runtimes.len()})));
+            let csound_count = runtimes
+                .iter()
+                .filter(|runtime| matches!(runtime.server, SourceProcess::Csound(_)))
+                .count();
+            let runtime_name = if csound_count == 0 {
+                "supercollider"
+            } else if csound_count == runtimes.len() {
+                "csound"
+            } else {
+                "mixed"
+            };
+            let _ = opened.send(Ok(json!({"owned_pids":runtimes.iter().map(|runtime|runtime.server.pid()).collect::<Vec<_>>(),"runtime_sources":runtimes.len(),"runtime":runtime_name})));
             starting
                 .recv_timeout(Duration::from_secs(5))
                 .map_err(|_| "SC session start handshake timed out".to_string())?;
@@ -306,7 +373,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                             .find(|runtime| runtime.track.id == change.track_id)
                             .ok_or("live SC track not found")?;
                         let Device::Supercollider(source) = &runtime.track.device else {
-                            unreachable!()
+                            return Err("live controls require a SuperCollider source".into());
                         };
                         if u64::from(runtime.queue.written()) * 64 >= source.duration_frames {
                             return Err("live SC source ended before control delivery".into());
@@ -320,29 +387,42 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 engine.render_block_unclipped(&mut mixed[..count]);
                 for runtime in &mut runtimes {
                     let mut buffer = [0.0f32; 128];
-                    loop {
-                        if producer.stop_requested() || interrupted() {
-                            break 'play;
+                    let (duration_frames, gain) = runtime.duration_gain();
+                    let needs_block = !matches!(runtime.server, SourceProcess::Csound(_))
+                        || position < duration_frames;
+                    if needs_block {
+                        loop {
+                            if producer.stop_requested() || interrupted() {
+                                break 'play;
+                            }
+                            if Instant::now() >= deadline {
+                                return Err("SC session production deadline exceeded".into());
+                            }
+                            runtime.server.check()?;
+                            if runtime.queue.pop(&mut buffer)? {
+                                break;
+                            }
+                            if matches!(runtime.server, SourceProcess::Csound(_))
+                                && u64::from(runtime.queue.written()) * 64
+                                    >= duration_frames.min(frames)
+                            {
+                                // The final publication can race the empty pop above.
+                                // Recheck after observing its release watermark.
+                                if runtime.queue.pop(&mut buffer)? {
+                                    break;
+                                }
+                                return Err("Csound source ended with missing queue blocks".into());
+                            }
+                            thread::sleep(Duration::from_millis(1));
                         }
-                        if Instant::now() >= deadline {
-                            return Err("SC session production deadline exceeded".into());
-                        }
-                        runtime.server.check()?;
-                        if runtime.queue.pop(&mut buffer)? {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(1));
                     }
-                    let Device::Supercollider(source) = &runtime.track.device else {
-                        unreachable!()
-                    };
                     for (index, sample) in mixed[..count].iter_mut().enumerate() {
-                        let mut stem = if position + index as u64 >= source.duration_frames {
+                        let mut stem = if position + index as u64 >= duration_frames {
                             [0.0; 2]
                         } else {
                             [
-                                f64::from(buffer[index * 2]) * source.gain,
-                                f64::from(buffer[index * 2 + 1]) * source.gain,
+                                f64::from(buffer[index * 2]) * gain,
+                                f64::from(buffer[index * 2 + 1]) * gain,
                             ]
                         };
                         runtime.chain.process(&mut stem, position + index as u64);
@@ -403,7 +483,14 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 .map(|runtime| runtime.server.pid())
                 .collect();
             for runtime in &mut runtimes {
-                let samples = runtime.server.read_buffer(0, 0, 128)?;
+                if let SourceProcess::Csound(server) = &mut runtime.server {
+                    server.stop()?;
+                    continue;
+                }
+                let SourceProcess::Supercollider(server) = &mut runtime.server else {
+                    unreachable!()
+                };
+                let samples = server.read_buffer(0, 0, 128)?;
                 let bus_peak = samples
                     .iter()
                     .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
@@ -411,8 +498,8 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                     return Err("SC source hardware buses were not muted".into());
                 }
                 hardware_bus_peaks.push(bus_peak);
-                runtime.server.node("/n_free", 1, &[])?;
-                runtime.server.done("/b_free", &[Arg::Int(0)])?;
+                server.node("/n_free", 1, &[])?;
+                server.done("/b_free", &[Arg::Int(0)])?;
             }
             drop(runtimes);
             let rms_quarters: Vec<_> = energies
@@ -427,7 +514,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 })
                 .collect();
             Ok(
-                json!({"source_frames":position,"source_digest":format!("{digest:016x}"),"pre_master_peak":peak,"runtime_sources":count,"owned_pids":owned_pids,"hardware_bus_peaks":hardware_bus_peaks,"rms_quarters":rms_quarters,"owned_servers_released":true,"queue_released":true}),
+                json!({"source_frames":position,"source_digest":format!("{digest:016x}"),"pre_master_peak":peak,"runtime_sources":count,"owned_pids":owned_pids,"hardware_bus_peaks":hardware_bus_peaks,"rms_quarters":rms_quarters,"owned_servers_released":true,"owned_processes_released":true,"queue_released":true}),
             )
         })();
         if let Err(error) = &result {
