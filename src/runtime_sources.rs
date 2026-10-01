@@ -7,11 +7,12 @@ use std::{collections::HashSet, sync::Arc};
 
 pub fn prepare_session(session: &mut Session) -> Result<(), String> {
     session.validate()?;
-    if !session
-        .tracks
-        .iter()
-        .any(|track| matches!(track.device, Device::Supercollider(_) | Device::Csound(_)))
-    {
+    if !session.tracks.iter().any(|track| {
+        matches!(
+            track.device,
+            Device::Supercollider(_) | Device::Csound(_) | Device::Puredata(_)
+        )
+    }) {
         return Ok(());
     }
     if serde_json::to_vec_pretty(session)
@@ -27,6 +28,9 @@ pub fn prepare_session(session: &mut Session) -> Result<(), String> {
             source.prepared = Some(source.prepare(session.sample_rate)?);
         }
         if let Device::Csound(source) = &mut track.device {
+            source.prepared = Some(source.prepare(session.sample_rate)?);
+        }
+        if let Device::Puredata(source) = &mut track.device {
             source.prepared = Some(source.prepare(session.sample_rate)?);
         }
     }
@@ -46,6 +50,9 @@ pub(crate) fn decoded_bytes(session: &Session) -> usize {
             Device::Csound(source) => {
                 source.duration_frames as usize * std::mem::size_of::<[f64; 2]>()
             }
+            Device::Puredata(source) => {
+                source.duration_frames as usize * std::mem::size_of::<[f64; 2]>()
+            }
             _ => 0,
         })
         .sum()
@@ -61,6 +68,11 @@ pub fn prepare_clips(session: &Session) -> Result<Vec<PreparedAudioClip>, String
                 Arc::clone(&source.prepare(session.sample_rate)?.audio),
             ),
             Device::Csound(source) => (
+                source.duration_frames,
+                source.gain,
+                Arc::clone(&source.prepare(session.sample_rate)?.audio),
+            ),
+            Device::Puredata(source) => (
                 source.duration_frames,
                 source.gain,
                 Arc::clone(&source.prepare(session.sample_rate)?.audio),

@@ -8,6 +8,7 @@ pub const SCHEMA_VERSION_4: u32 = 4;
 pub const SCHEMA_VERSION_5: u32 = 5;
 pub const SCHEMA_VERSION_6: u32 = 6;
 pub const SCHEMA_VERSION_7: u32 = 7;
+pub const SCHEMA_VERSION_8: u32 = 8;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -178,6 +179,7 @@ pub enum Device {
     Audio { gain: f64 },
     Supercollider(crate::sc_source::Source),
     Csound(crate::csound_source::Source),
+    Puredata(crate::puredata_source::Source),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -327,9 +329,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_7).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_8).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1, 2, 3, 4, 5, 6, or 7",
+                "unsupported schema_version {}; expected 1, 2, 3, 4, 5, 6, 7, or 8",
                 self.schema_version
             ));
         }
@@ -396,7 +398,7 @@ impl Session {
                         return Err("schema_version 1 does not support audio devices".into());
                     }
                 }
-                Device::Csound(_) => {}
+                Device::Csound(_) | Device::Puredata(_) => {}
                 Device::Supercollider(ref source) => {
                     if self.schema_version < SCHEMA_VERSION_6 {
                         return Err(
@@ -419,12 +421,28 @@ impl Session {
                 }
             }
             if let Device::Csound(ref source) = track.device {
-                if self.schema_version != SCHEMA_VERSION_7 {
-                    return Err("Csound sources require schema_version 7".into());
+                if self.schema_version < SCHEMA_VERSION_7 {
+                    return Err("Csound sources require schema_version 7 or later".into());
                 }
                 source.validate(self.sample_rate)?;
                 if track.mode != Some(TrackMode::Continuous) {
                     return Err("Csound sources require continuous mode and empty clips".into());
+                }
+                sc_sources += 1;
+                sc_frames += source.duration_frames;
+                sc_points += source
+                    .controls
+                    .iter()
+                    .map(|c| c.points.len())
+                    .sum::<usize>();
+            }
+            if let Device::Puredata(ref source) = track.device {
+                if self.schema_version < SCHEMA_VERSION_8 {
+                    return Err("Pure Data sources require schema_version 8".into());
+                }
+                source.validate(self.sample_rate)?;
+                if track.mode != Some(TrackMode::Continuous) {
+                    return Err("Pure Data sources require continuous mode and empty clips".into());
                 }
                 sc_sources += 1;
                 sc_frames += source.duration_frames;
@@ -449,7 +467,7 @@ impl Session {
                 }
                 (
                     SCHEMA_VERSION_3 | SCHEMA_VERSION_4 | SCHEMA_VERSION_5 | SCHEMA_VERSION_6
-                    | SCHEMA_VERSION_7,
+                    | SCHEMA_VERSION_7 | SCHEMA_VERSION_8,
                     None,
                 ) => {
                     return Err(format!(
@@ -692,7 +710,10 @@ impl Session {
                 TrackMode::Continuous => {
                     if !matches!(
                         &track.device,
-                        Device::Sine { .. } | Device::Supercollider(_) | Device::Csound(_)
+                        Device::Sine { .. }
+                            | Device::Supercollider(_)
+                            | Device::Csound(_)
+                            | Device::Puredata(_)
                     ) {
                         return Err("audio tracks require sequenced mode".into());
                     }

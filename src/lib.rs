@@ -11,6 +11,7 @@ mod effects;
 pub mod engine;
 pub mod hosting;
 pub mod plugin_render;
+pub mod puredata_source;
 pub mod render;
 pub mod runtime_sources;
 pub mod sc_source;
