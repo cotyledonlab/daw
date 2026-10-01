@@ -12,8 +12,27 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 
-from native.csound.stream_probe import BRIDGE, ROOT, WORKER, fixture_job, probe
+from native.csound.stream_probe import BRIDGE, ROOT, WORKER, fixture_job, probe, reap_worker
+
+
+class WorkerReapingTests(unittest.TestCase):
+    def test_terminal_worker_permission_race_still_reaps_child(self):
+        child = Mock(pid=123)
+        with patch('native.csound.stream_probe.os.killpg', side_effect=PermissionError):
+            reap_worker(child)
+        child.wait.assert_called_once_with(timeout=.2)
+        child.kill.assert_not_called()
+
+    def test_live_worker_signal_denial_is_not_hidden(self):
+        child = Mock(pid=123)
+        child.wait.side_effect = [subprocess.TimeoutExpired('worker', .2), -9]
+        with patch('native.csound.stream_probe.os.killpg', side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                reap_worker(child)
+        child.kill.assert_called_once_with()
+        self.assertEqual(child.wait.call_args_list[-1].kwargs, {'timeout': 2})
 
 
 @unittest.skipUnless(sys.platform == 'darwin' and platform.machine() == 'arm64' and BRIDGE.is_file(),

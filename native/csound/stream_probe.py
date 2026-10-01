@@ -27,6 +27,24 @@ WORKER = Path(__file__).with_name('stream_worker.py')
 MAX_LOG = 65536
 
 
+def reap_worker(child):
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError as signal_error:
+        # The observed macOS exit transition can still report poll()==None.
+        # Only tolerate the denial after waitpid confirms terminal ownership.
+        try:
+            child.wait(timeout=.2)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=2)
+            raise signal_error
+        return
+    child.wait(timeout=2)
+
+
 def fixture_job():
     return {'job_version': 1, 'sample_rate': 48000, 'source': {
         'program': Path(__file__).with_name('source_fixture.csd').read_text(),
@@ -186,11 +204,7 @@ def probe(library, bridge=BRIDGE, *, job=None, worker=WORKER, paced=True,
         finally:
             try:
                 if child is not None:
-                    try:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    child.wait(timeout=2)
+                    reap_worker(child)
             finally:
                 api.daw_sc_queue_close(consumer)
 
