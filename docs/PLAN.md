@@ -298,6 +298,12 @@ Clock drift, source synchronization, AU/VST3 chains and longer playback remain s
 
 Use separate commits. Start Csound with CLI rendering, then assess libcsound blocks. Spike libpd with one patch, explicit search paths, controlled externals, block sizes, and thread ownership. Acceptance for each: known audio fixture, state/parameters, missing-runtime errors, cleanup, capability flag, and preserved dependency notices. Do not claim arbitrary externals/opcodes work. No general sandbox.
 
+### T12a: owned Csound CLI render jobs (implemented)
+
+`csound.render` snapshots a bounded CSD and runs an explicit Unix executable in an owned process group. It validates exact-duration stereo PCM16 output before exclusive publication, preserving session/revision/transport. Capabilities separate implementation/configuration from track/live support. The two-fixture demo measures saved frequency/gain changes against the official 7.0.0-beta.17 runtime; no system installation or binaries are included. See [the contract and next tickets](decisions/csound.md).
+
+Verification: all 13 Csound integration tests pass, including three real-runtime tests for signal, 44.1 kHz override/ignored device options and invalid-program rollback. Portable and all-feature fmt/clippy/tests/build and both demos pass; two existing opt-in live VST3 Rust tests remain ignored. Coverage includes strict params/input, missing runtime, timeout/descendant cleanup, malformed/oversized output and destination preservation. Dependency notices are recorded. Csound 6/other platforms, arbitrary opcodes, assets, live block processing and saved track devices remain unverified or pending. T12 overall remains open; proceed to the bounded libcsound diagnostic (T12a2) or independent libpd patch proof (T12b), with stronger-model FFI review.
+
 ### T13: agent jobs and thin UI
 
 **Depends on:** T02, T07b, T08b, one native plugin, one runtime device. **Owner:** separate Luna tasks after interface review.

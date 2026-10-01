@@ -29,6 +29,7 @@ pub const METHODS: &[&str] = &[
     "render",
     "supercollider.render",
     "supercollider.inspect",
+    "csound.render",
     "transport.status",
     "transport.play",
     "transport.pause",
@@ -152,6 +153,7 @@ fn capabilities() -> Value {
         }
     });
     result["supercollider_live_transport"] = sc_live;
+    result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
     result
 }
 
@@ -307,6 +309,15 @@ struct SuperColliderRenderParams {
 #[serde(deny_unknown_fields)]
 struct SuperColliderInspectParams {
     synthdef_hex: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CsoundRenderParams {
+    csd_path: String,
+    path: String,
+    sample_rate: u32,
+    duration_frames: u64,
 }
 
 #[derive(Deserialize)]
@@ -828,6 +839,32 @@ impl Controller {
                     Path::new(&p.score_path),
                     Path::new(&p.path),
                     p.sample_rate,
+                )
+                .map_err(|e| ControlError::new("runtime_error", e))?;
+                Ok(json!(report))
+            }
+            "csound.render" => {
+                let p: CsoundRenderParams = params(value)?;
+                if p.csd_path.is_empty()
+                    || p.path.is_empty()
+                    || p.csd_path.len() > 4096
+                    || p.path.len() > 4096
+                    || p.csd_path.contains('\0')
+                    || p.path.contains('\0')
+                    || !(8000..=192000).contains(&p.sample_rate)
+                    || p.duration_frames == 0
+                    || p.duration_frames > u64::from(p.sample_rate) * 10
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "csd_path/path must be nonempty paths up to 4096 UTF-8 bytes without NUL; sample_rate must be 8000..192000; duration_frames must be 1..sample_rate*10",
+                    ));
+                }
+                let report = crate::csound::render(
+                    Path::new(&p.csd_path),
+                    Path::new(&p.path),
+                    p.sample_rate,
+                    p.duration_frames,
                 )
                 .map_err(|e| ControlError::new("runtime_error", e))?;
                 Ok(json!(report))

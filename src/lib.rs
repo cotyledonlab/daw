@@ -5,6 +5,7 @@ mod au_hosting;
 pub mod audio;
 pub mod audio_buffer;
 pub mod control;
+pub mod csound;
 mod effects;
 pub mod engine;
 pub mod hosting;

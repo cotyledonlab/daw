@@ -234,7 +234,7 @@ Requests and loaded session files are limited to 1 MiB; the terminating newline 
 | `asset_error` | Missing, invalid, oversized, or out-of-project WAV asset; preparation failed |
 | `audio_unavailable` | Native playback is not enabled for this build/platform |
 | `audio_error` | Native device/setup/control failure or invalid transport state |
-| `runtime_error` | SuperCollider program/score validation, executable, owned child or output validation/publication failure |
+| `runtime_error` | SuperCollider/Csound input, executable, owned child or output validation/publication failure |
 | `plugin_error` | VST3 or AU validation, processing worker, or plugin operation failed |
 | `internal_error` | Unexpected session serialization failure |
 
@@ -386,3 +386,19 @@ Saved native control bases/frame-zero points are applied before nodes run; later
 Volume defaults to 0.25 and must be 0..1; use 0 for silent verification. Stderr emits `DAW_SC_STREAM_READY` after device stream construction; it is not a DSP acknowledgment. Success prints one final JSON object with `saved_session:true`, `source_preparation:"owned_live_sc"`, `session_transport:false`, source/submitted frame counts, source/callback fingerprints, underruns, pre-monitor peak and release flags. `source` also includes `runtime_sources`, `owned_pids`, `hardware_bus_peaks` and four `rms_quarters` measured before master clamping. Output-bus peaks are captured after the clearing synth and must be zero. Fingerprints are noncryptographic ordering evidence. PIDs are reaped before successful reporting. Errors print to stderr with a nonzero exit and no success JSON; saved files are never modified. Owned startup, replies, logs and production are bounded; child exits fail playback. SIGINT/SIGTERM stop playback and release owned children; SIGKILL cannot run cleanup.
 
 This CLI does not use or mutate an active JSONL session/revision. Default `transport.play` remains prepared playback; explicit `source_mode:"live"` uses the owned transport above. Pause/seek/loop, AU/VST3 routing in this mode and sustained latency/clock drift remain pending. Revision-checked control edits are available through JSONL live transport above. Verified platform is macOS arm64 with SuperCollider 3.14.1; acoustic delivery is unverified.
+
+## Csound standalone offline jobs
+
+`capabilities.csound_offline` distinguishes Unix implementation support from `configured` (an existing absolute `DAW_CSOUND` file). Configuration does not prove executable permission, runtime compatibility or opcode availability. Windows recognizes the command and reports unavailable execution. `session_device` and `native_playback` are false; `asset_preparation` is false. No HTTP route is provided.
+
+```json
+{"protocol_version":1,"id":"cs-render","method":"csound.render","params":{"csd_path":"/absolute/sine.csd","path":"/absolute/fresh.wav","sample_rate":48000,"duration_frames":48000}}
+```
+
+Params contain exactly the four fields above. Paths are nonempty UTF-8 strings up to 4096 bytes without NUL; relative paths resolve from the controller working directory. Rate is an integer 8000–192000. Duration is an integer 1 through `sample_rate*10`. Null, unknown/missing fields, booleans and fractional integers are rejected with `invalid_params`. Success returns `{path,frames,sample_rate,channels:2}`. The command is synchronous and preserves the active session, revision and transport on both success and failure. Input/runtime/output failures use `runtime_error`.
+
+The CSD is a nonempty regular UTF-8 file without NUL, at most 1 MiB, copied into a private job directory. `CsOptions` are ignored; the runner imposes WAV/PCM16, requested rate, `ksmps=1`, no displays and null realtime audio/MIDI modules. Empty owned rc files replace user rc configuration. The program's score must itself produce exactly `duration_frames`; the parameter verifies output rather than rewriting the score or cutting a longer render. Wrong channel/format/rate, truncated payload, mismatched frames, child failure, missing output and oversized files/diagnostics fail without publishing. Output is capped at ten seconds of stereo PCM16 plus 64 KiB headers, checked during child execution and afterward.
+
+The child process group has a fifteen-second deadline and each diagnostic pipe is drained with a 64 KiB retention limit. Owned descendants are terminated before joining readers. Existing destinations, including dangling symlinks, are preserved; final creation is exclusive. Publication occurs only after successful child exit and full PCM validation. A failed publication removes only the output created by this job. No cancellable job ID is introduced.
+
+This is caller-trusted code execution, not a sandbox. CSD opcodes, includes, embedded resources or absolute paths may access files, launch code or perform other side effects. Relative assets are not copied/resolved against the original CSD directory. No arbitrary opcode compatibility, embedded device, live block processing or GUI support is claimed. See [the tested fixture and runtime contract](decisions/csound.md).
