@@ -140,7 +140,7 @@ def _actual_receiver(name, dollarzero):
     return name
 
 
-def perform_source(rate, source, library, emit_block):
+def perform_source(rate, source, library, emit_block, before_dsp=None):
     """Render complete libpd ticks and copy trimmed interleaved float64 PCM."""
     validate_job({"job_version": 1, "sample_rate": rate, "source": source})
     library_path = Path(library)
@@ -225,6 +225,9 @@ def perform_source(rate, source, library, emit_block):
 
         inputs = (C.c_float * (_BLOCK * 2))()
         outputs = (C.c_float * (_BLOCK * 2))()
+        _check_callbacks(hook_state)
+        if before_dsp is not None:
+            before_dsp()
         _dsp(api, True)
         for frame in range(0, source["duration_frames"], _BLOCK):
             for control, value in events.get(frame, ()):

@@ -32,3 +32,5 @@ mod sc_stream;
 
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 mod csound_server;
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+mod puredata_server;

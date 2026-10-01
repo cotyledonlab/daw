@@ -1,4 +1,4 @@
-//! Owned live SC/Csound source playback from saved v6/v7 models. Each source
+//! Owned live SC/Csound/Pd source playback from saved v6/v7/v8 models. Each source
 //! gets an isolated process/queue; callbacks consume only the final fixed ring.
 use crate::{
     effects::PreparedChain,
@@ -118,18 +118,31 @@ fn renamed(bytes: &[u8]) -> Result<Vec<u8>, String> {
 enum SourceProcess {
     Supercollider(Server),
     Csound(crate::csound_server::Server),
+    Puredata(crate::puredata_server::Server),
 }
 impl SourceProcess {
     fn pid(&self) -> u32 {
         match self {
             Self::Supercollider(server) => server.pid(),
             Self::Csound(server) => server.pid(),
+            Self::Puredata(server) => server.pid(),
         }
     }
     fn check(&mut self) -> Result<(), String> {
         match self {
             Self::Supercollider(server) => server.check(),
             Self::Csound(server) => server.check(),
+            Self::Puredata(server) => server.check(),
+        }
+    }
+    fn finite(&self) -> bool {
+        matches!(self, Self::Csound(_) | Self::Puredata(_))
+    }
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Supercollider(_) => "supercollider",
+            Self::Csound(_) => "csound",
+            Self::Puredata(_) => "puredata",
         }
     }
     fn begin_control(&mut self, change: &ParameterChange) -> Result<(), String> {
@@ -179,6 +192,16 @@ impl Runtime {
         index: usize,
         frames: u64,
     ) -> Result<Self, String> {
+        if let Device::Puredata(source) = &track.device {
+            let (server, queue) =
+                crate::puredata_server::Server::start(source, directory, index, frames)?;
+            return Ok(Self {
+                queue,
+                server: SourceProcess::Puredata(server),
+                track: track.clone(),
+                chain: PreparedChain::prepare(track),
+            });
+        }
         if let Device::Csound(source) = &track.device {
             let (server, queue) =
                 crate::csound_server::Server::start(source, directory, index, frames)?;
@@ -242,12 +265,14 @@ impl Runtime {
         match &self.track.device {
             Device::Supercollider(source) => (source.duration_frames, source.gain),
             Device::Csound(source) => (source.duration_frames, source.gain),
+            Device::Puredata(source) => (source.duration_frames, source.gain),
             _ => unreachable!(),
         }
     }
     fn arm(&mut self, start: f64, frames: u64) -> Result<(), String> {
         let server = match &mut self.server {
             SourceProcess::Csound(server) => return server.arm(),
+            SourceProcess::Puredata(server) => return server.arm(),
             SourceProcess::Supercollider(server) => server,
         };
         let Device::Supercollider(source) = &self.track.device else {
@@ -291,17 +316,19 @@ impl Runtime {
 pub(crate) fn validate(session: &Session, seconds: f64) -> Result<u64, String> {
     session.validate()?;
     crate::render::validate_duration(seconds)?;
-    if !matches!(session.schema_version, 6 | 7) || session.sample_rate != 48000 || seconds > 10.0 {
+    if !matches!(session.schema_version, 6..=8) || session.sample_rate != 48000 || seconds > 10.0 {
         return Err(
-            "live runtime sessions require schema v6/v7, 48000 Hz and at most ten seconds".into(),
+            "live runtime sessions require schema v6/v7/v8, 48000 Hz and at most ten seconds"
+                .into(),
         );
     }
-    if !session
-        .tracks
-        .iter()
-        .any(|track| matches!(track.device, Device::Supercollider(_) | Device::Csound(_)))
-    {
-        return Err("live session requires a SuperCollider or Csound source".into());
+    if !session.tracks.iter().any(|track| {
+        matches!(
+            track.device,
+            Device::Supercollider(_) | Device::Csound(_) | Device::Puredata(_)
+        )
+    }) {
+        return Err("live session requires a SuperCollider, Csound or Pure Data source".into());
     }
     if session
         .tracks
@@ -328,7 +355,10 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
             let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
             let mut builtin = session.clone();
             builtin.tracks.retain(|track| {
-                !matches!(track.device, Device::Supercollider(_) | Device::Csound(_))
+                !matches!(
+                    track.device,
+                    Device::Supercollider(_) | Device::Csound(_) | Device::Puredata(_)
+                )
             });
             let mut engine = Engine::prepare(&builtin)?;
             let mut runtimes = Vec::new();
@@ -336,7 +366,10 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 if producer.stop_requested() || interrupted() {
                     return Err("SC session stopped during preparation".into());
                 }
-                if matches!(track.device, Device::Supercollider(_) | Device::Csound(_)) {
+                if matches!(
+                    track.device,
+                    Device::Supercollider(_) | Device::Csound(_) | Device::Puredata(_)
+                ) {
                     runtimes.push(Runtime::prepare(track, directory.path(), index, frames)?);
                 }
             }
@@ -344,14 +377,21 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 .iter()
                 .filter(|runtime| matches!(runtime.server, SourceProcess::Csound(_)))
                 .count();
-            let runtime_name = if csound_count == 0 {
+            let pd_count = runtimes
+                .iter()
+                .filter(|runtime| matches!(runtime.server, SourceProcess::Puredata(_)))
+                .count();
+            let runtime_name = if pd_count == runtimes.len() {
+                "puredata"
+            } else if csound_count == 0 && pd_count == 0 {
                 "supercollider"
             } else if csound_count == runtimes.len() {
                 "csound"
             } else {
                 "mixed"
             };
-            let _ = opened.send(Ok(json!({"owned_pids":runtimes.iter().map(|runtime|runtime.server.pid()).collect::<Vec<_>>(),"runtime_sources":runtimes.len(),"runtime":runtime_name})));
+            let source_processes: Vec<_> = runtimes.iter().map(|runtime| json!({"track_id":runtime.track.id,"runtime":runtime.server.name(),"pid":runtime.server.pid()})).collect();
+            let _ = opened.send(Ok(json!({"owned_pids":runtimes.iter().map(|runtime|runtime.server.pid()).collect::<Vec<_>>(),"runtime_sources":runtimes.len(),"runtime":runtime_name,"source_processes":source_processes})));
             starting
                 .recv_timeout(Duration::from_secs(5))
                 .map_err(|_| "SC session start handshake timed out".to_string())?;
@@ -410,8 +450,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 for runtime in &mut runtimes {
                     let mut buffer = [0.0f32; 128];
                     let (duration_frames, gain) = runtime.duration_gain();
-                    let needs_block = !matches!(runtime.server, SourceProcess::Csound(_))
-                        || position < duration_frames;
+                    let needs_block = !runtime.server.finite() || position < duration_frames;
                     if needs_block {
                         loop {
                             if producer.stop_requested() || interrupted() {
@@ -424,7 +463,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                             if runtime.queue.pop(&mut buffer)? {
                                 break;
                             }
-                            if matches!(runtime.server, SourceProcess::Csound(_))
+                            if runtime.server.finite()
                                 && u64::from(runtime.queue.written()) * 64
                                     >= duration_frames.min(frames)
                             {
@@ -433,7 +472,9 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                                 if runtime.queue.pop(&mut buffer)? {
                                     break;
                                 }
-                                return Err("Csound source ended with missing queue blocks".into());
+                                return Err(
+                                    "finite runtime source ended with missing queue blocks".into(),
+                                );
                             }
                             thread::sleep(Duration::from_millis(1));
                         }
@@ -505,6 +546,24 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 .map(|runtime| runtime.server.pid())
                 .collect();
             for runtime in &mut runtimes {
+                if let SourceProcess::Puredata(server) = &mut runtime.server {
+                    if position == frames && !producer.stop_requested() && !interrupted() {
+                        server.finish()?;
+                        let Device::Puredata(source) = &runtime.track.device else {
+                            unreachable!()
+                        };
+                        if u64::from(runtime.queue.written())
+                            != source.duration_frames.min(frames).div_ceil(64)
+                        {
+                            return Err(
+                                "Pure Data queue publication count mismatches completion".into()
+                            );
+                        }
+                    } else {
+                        server.stop()?;
+                    }
+                    continue;
+                }
                 if let SourceProcess::Csound(server) = &mut runtime.server {
                     server.stop()?;
                     continue;
@@ -536,7 +595,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 })
                 .collect();
             Ok(
-                json!({"source_frames":position,"source_digest":format!("{digest:016x}"),"pre_master_peak":peak,"runtime_sources":count,"owned_pids":owned_pids,"hardware_bus_peaks":hardware_bus_peaks,"rms_quarters":rms_quarters,"owned_servers_released":true,"owned_processes_released":true,"queue_released":true}),
+                json!({"source_frames":position,"source_digest":format!("{digest:016x}"),"pre_master_peak":peak,"runtime_sources":count,"owned_pids":owned_pids,"source_processes":source_processes,"hardware_bus_peaks":hardware_bus_peaks,"rms_quarters":rms_quarters,"owned_servers_released":true,"owned_processes_released":true,"queue_released":true}),
             )
         })();
         if let Err(error) = &result {
@@ -578,6 +637,30 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_v8_pd_validation_rejects_foreign_effects_without_loading_them() {
+        let mut session: Session = serde_json::from_value(json!({
+            "schema_version":8,"sample_rate":48000,"tempo_milli_bpm":120000,
+            "tracks":[{"id":"pd","mode":"continuous","clips":[],"effects":[],
+                "device":{"kind":"puredata","program":"x","abstractions":[],
+                    "duration_frames":48000,"gain":0.5,"controls":[]}}]
+        }))
+        .unwrap();
+        assert_eq!(validate(&session, 1.0).unwrap(), 48000);
+        session.tracks[0].effects = Some(vec![Effect::Vst3 {
+            id: "unsupported".into(),
+            bypass: false,
+            bundle_path: "/private/tmp/nonexistent-test-effect.vst3".into(),
+            class_id: "0".repeat(32),
+            state_hex: String::new(),
+            controller_state_hex: String::new(),
+            parameters: vec![],
+        }]);
+        assert!(validate(&session, 1.0).unwrap_err().contains("gain only"));
+        session.tracks[0].effects = Some(vec![]);
+        session.sample_rate = 44100;
+        assert!(validate(&session, 1.0).unwrap_err().contains("48000 Hz"));
+    }
     #[test]
     fn control_queue_bounds_unacknowledged_edits_and_callback_watermark() {
         let (sender, receiver) = mpsc::sync_channel(MAX_PENDING_CONTROLS);
