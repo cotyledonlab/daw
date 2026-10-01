@@ -2,6 +2,8 @@
 
 The separate SuperCollider/Csound shared-memory queue diagnostics do not add protocol commands or change capabilities. `daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN` and the Csound stream probe are finite diagnostics; they do not use the active session or transport. JSONL transport defaults to prepared runtime PCM (including schema-v6/v7 SuperCollider and schema-v7 Csound); `transport.play` can explicitly select `source_mode:"live"` for owned live SC, Csound, or mixed SC/Csound DSP as described below. The legacy saved-session CLI also supports live DSP independently of active protocol state.
 
+The [libpd block/message proof](../native/puredata/block_probe.py) is also a separate owned diagnostic. It exposes no Pd session device, protocol command or engine capability; its report explicitly records `daw_transport:false` and `hardware_audio:false`.
+
 Run `daw serve`. Each UTF-8 input line receives one JSON response in the same order. The last line may end at EOF. Flush after each request; the server flushes each response. Stdout contains protocol responses only; process diagnostics use stderr. Invalid requests do not terminate the server. EOF exits normally. Command errors return `ok: false` but do not set the process exit code; clients must inspect every response.
 
 The envelope is `{ "protocol_version": 1, "id": "caller-id", "method": "session.get", "params": {} }`. IDs must contain 1–128 UTF-8 bytes. Omitted params default to `{}`. Unknown fields are rejected. Protocol version and session schema version are independent.
