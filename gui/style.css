@@ -145,3 +145,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .parameter-name { max-width: 45%; overflow-wrap: anywhere; }
 .metadata-error { flex-basis: 100%; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+
+.source-card { grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); }
+.source-summary { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.source-controls { grid-column: 1 / -1; }
+.source-controls h3 { margin: 0 0 12px; font-size: 14px; }
+.source-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.source-control > .parameter-name { min-width: 100px; font-size: 12px; }
+.source-slot .number-input { width: 125px; max-width: 100%; }
+@media (max-width: 480px) { .source-card { grid-template-columns: minmax(0, 1fr); } .source-summary { grid-column: 1; } }

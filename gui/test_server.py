@@ -33,6 +33,13 @@ V4_GAIN_SESSION = {
 }
 
 
+def schema_v6_session():
+    from examples.supercollider_tracks_demo import make_track
+
+    return {"schema_version": 6, "sample_rate": 48000, "tempo_milli_bpm": 120000,
+            "tracks": [make_track("low", 220.0, 0.12, 0.5, 1.5, 0.6)]}
+
+
 class ServerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -144,6 +151,7 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         capabilities = json.loads(body)
         self.assertIn("transport.status", capabilities["methods"])
+        self.assertEqual(capabilities["gui_bridge"], {"checked_replacement": True, "supercollider_sources": True})
         self.assertIsInstance(capabilities["parameter_metadata"]["implemented"], bool)
 
         status, _, _ = self.request("GET", "/api/transport", token=False)
@@ -241,6 +249,115 @@ class ServerIntegrationTests(unittest.TestCase):
                 self.assertEqual(status, 422, body)
                 self.assertIn(b"scripting interface", body)
                 self.assertEqual(self.get_session(), SESSION)
+
+    def test_source_inspect_is_authenticated_bounded_and_forwards_only_synthdef(self):
+        from examples.supercollider_tracks_demo import make_track
+
+        synthdef_hex = make_track("low", 220.0, 0.12, 0.5, 1.5, 0.6)["device"]["synthdef_hex"]
+        payload = {"synthdef_hex": synthdef_hex}
+        status, _, _ = self.request("POST", "/api/source/inspect", payload, token=False)
+        self.assertEqual(status, 403)
+        inspected = {"synth_name": "daw_sine", "controls": []}
+        with patch.object(self.server.engine, "call", return_value=inspected) as call:
+            status, body, _ = self.post("/api/source/inspect", payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("supercollider.inspect", {"synthdef_hex": synthdef_hex}))
+        self.assertEqual(json.loads(body), inspected)
+
+    def test_source_inspect_rejects_malformed_or_oversized_hex_without_engine_call(self):
+        invalid = (
+            {}, {"synthdef_hex": ""}, {"synthdef_hex": "0"},
+            {"synthdef_hex": "gg"}, {"synthdef_hex": "00", "path": "/tmp/a"},
+            {"synthdef_hex": "0" * 131074},
+        )
+        with patch.object(self.server.engine, "call") as call:
+            for payload in invalid:
+                with self.subTest(length=len(payload.get("synthdef_hex", ""))):
+                    status, body, _ = self.post("/api/source/inspect", payload)
+                    self.assertEqual(status, 422, body)
+            call.assert_not_called()
+
+    def test_source_control_is_authenticated_and_forwards_exact_payload(self):
+        payload = {"expected_revision": "12", "track_id": "low", "control_name": "freq",
+                   "values": [220.0]}
+        status, _, _ = self.request("POST", "/api/source/control", payload, token=False)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/api/source/control", payload,
+                                    origin="http://attacker.example")
+        self.assertEqual(status, 403)
+        accepted = {"revision": "13", "session": schema_v6_session()}
+        with patch.object(self.server.engine, "call", return_value=accepted) as call:
+            status, body, _ = self.post("/api/source/control", payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("source.set_control", payload))
+        self.assertEqual(json.loads(body), accepted)
+
+    def test_source_control_rejects_invalid_fields_and_f32_values_before_engine(self):
+        good = {"expected_revision": "12", "track_id": "low", "control_name": "freq",
+                "values": [220.0]}
+        invalid = (
+            {**good, "expected_revision": "00"}, {**good, "expected_revision": 12},
+            {**good, "expected_revision": str(2**64)}, {**good, "extra": True},
+            {**good, "track_id": ""}, {**good, "track_id": "é" * 65},
+            {**good, "control_name": ""}, {**good, "control_name": "é" * 128},
+            {**good, "control_name": "x" * 256}, {**good, "values": []},
+            {**good, "values": [True]}, {**good, "values": [float("nan")]},
+            {**good, "values": [float("inf")]}, {**good, "values": [1e100]},
+            {**good, "values": [0.0] * 257},
+        )
+        with patch.object(self.server.engine, "call") as call:
+            for payload in invalid:
+                with self.subTest(payload=str(payload)[:90]):
+                    status, body, _ = self.post("/api/source/control", payload)
+                    self.assertEqual(status, 422, body)
+            call.assert_not_called()
+
+    def test_source_control_engine_rejection_preserves_session(self):
+        self.assertEqual(self.post("/api/session", {"session": SESSION})[0], 200)
+        before = self.get_session()
+        payload = {"expected_revision": "0", "track_id": "missing", "control_name": "freq",
+                   "values": [220.0]}
+        with patch.object(self.server.engine, "call", side_effect=EngineError("Unknown source control.")):
+            status, body, _ = self.post("/api/source/control", payload)
+        self.assertEqual(status, 422, body)
+        self.assertEqual(json.loads(body)["error"], "Unknown source control.")
+        self.assertEqual(self.get_session(), before)
+
+    def test_v6_session_preflight_and_revision_forwarding(self):
+        session = schema_v6_session()
+        payload = {"session": session, "expected_revision": "0"}
+        with patch.object(self.server.engine, "call", return_value=session) as call:
+            status, body, _ = self.post("/api/session", payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(call.call_args.args, ("session.replace", payload))
+        self.assertEqual(json.loads(body), session)
+
+    def test_v6_session_preflight_rejects_unsupported_shapes_before_engine(self):
+        self.assertEqual(self.post("/api/session", {"session": SESSION})[0], 200)
+        unsupported = []
+        valid = schema_v6_session()
+        for track in (
+            {**valid["tracks"][0], "clips": [{"start_frame": 0}]},
+            {**valid["tracks"][0], "device": {"kind": "audio", "gain": 1}},
+            {**valid["tracks"][0], "device": {"kind": "midi", "gain": 1}},
+            {**valid["tracks"][0], "effects": [{"kind": "vst3", "id": "x"}]},
+            {**valid["tracks"][0], "effects": [{"kind": "au", "id": "x"}]},
+        ):
+            unsupported.append({**valid, "tracks": [track]})
+        unsupported.extend((
+            {**valid, "schema_version": 2},
+            {**valid, "expected_revision": "00"},
+        ))
+        with patch.object(self.server.engine, "call") as call:
+            for candidate in unsupported:
+                body = {"session": candidate}
+                if "expected_revision" in candidate:
+                    body["expected_revision"] = candidate["expected_revision"]
+                    body["session"] = {k: v for k, v in candidate.items() if k != "expected_revision"}
+                status, response, _ = self.post("/api/session", body)
+                self.assertEqual(status, 422, response)
+            call.assert_not_called()
+        self.assertEqual(self.get_session(), SESSION)
 
     def test_schema_v4_continuous_sine_gain_session_replaces_through_rust(self):
         status, body, _ = self.post("/api/session", {"session": V4_GAIN_SESSION})

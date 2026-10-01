@@ -107,3 +107,67 @@ test('plugins returns VST3 effects across tracks and omits other effects', () =>
   ]);
   assert.deepEqual(Editor.plugins(data), [p1, p2]);
 });
+
+test('supports v6 only for continuous empty-clip sine and SuperCollider tracks with gain effects', () => {
+  const source = {
+    kind: 'supercollider', synthdef_hex: '534367660000', synth_name: 'tone',
+    duration_frames: 48000, gain: 0.7,
+    controls: [{ name: 'freq', values: [440], points: [{ frame: 120, values: [660] }] }],
+  };
+  const data = session([
+    track('sine', { mode: 'continuous', clips: [], effects: [{ kind: 'gain', id: 'g1', gain: 0.8, bypass: false }] }),
+    track('sc', { mode: 'continuous', clips: [], effects: [], device: source }),
+  ], { schema_version: 6, tempo_milli_bpm: 120000 });
+  assert.equal(Editor.supported(data), true);
+  assert.equal(Editor.validate(data), null);
+  assert.equal(Editor.supported(session([track('sc', { mode: 'continuous', clips: [], effects: [], device: source })], { schema_version: 5 })), false);
+  assert.equal(Editor.supported(session([track('sc', { mode: 'continuous', clips: [], effects: [{ kind: 'au', id: 'au' }], device: source })], { schema_version: 6 })), false);
+  assert.equal(Editor.supported(session([track('sc', { mode: 'continuous', clips: [], effects: [{ kind: 'vst3', id: 'vst' }], device: source })], { schema_version: 6 })), false);
+  assert.equal(Editor.supported(session([track('sc', { mode: 'sequenced', clips: [], effects: [], device: source })], { schema_version: 6 })), false);
+  assert.equal(Editor.supported(session([track('sc', { mode: 'continuous', clips: [{ source: 'a.wav' }], effects: [], device: source })], { schema_version: 6 })), false);
+});
+
+test('validates v6 SuperCollider native bases and retains control points for Rust validation', () => {
+  const device = {
+    kind: 'supercollider', synthdef_hex: 'abcd', synth_name: 'tone', duration_frames: 48000, gain: 1,
+    controls: [{ name: 'array', values: Array(256).fill(0), points: [{ frame: 240, values: [1] }] }],
+  };
+  const make = overrides => session([track('sc', { mode: 'continuous', clips: [], effects: [], device: { ...device, ...overrides } })], { schema_version: 6 });
+  assert.equal(Editor.validate(make({})), null);
+  assert.notEqual(Editor.validate(make({ gain: -0.01 })), null);
+  assert.notEqual(Editor.validate(make({ synth_name: '' })), null);
+  assert.notEqual(Editor.validate(make({ duration_frames: 0 })), null);
+  assert.notEqual(Editor.validate(make({ duration_frames: 1.5 })), null);
+  assert.notEqual(Editor.validate(make({ synthdef_hex: 'abc' })), null);
+  assert.notEqual(Editor.validate(make({ synthdef_hex: 'zz' })), null);
+  assert.notEqual(Editor.validate(make({ synthdef_hex: 'a'.repeat(122882) })), null);
+  assert.notEqual(Editor.validate(make({ controls: [{ name: 'x', values: [], points: [] }] })), null);
+  assert.notEqual(Editor.validate(make({ controls: [{ name: 'x', values: Array(257).fill(0), points: [] }] })), null);
+  assert.notEqual(Editor.validate(make({ controls: [{ name: 'x', values: [Infinity], points: [] }] })), null);
+  assert.notEqual(Editor.validate(make({ controls: [{ name: 'x', values: [1e300], points: [] }] })), null);
+  assert.deepEqual(make({}).tracks[0].device.controls[0].points, [{ frame: 240, values: [1] }]);
+});
+
+test('source controls are editable only when metadata confirms a non-init-rate unautomated control', () => {
+  assert.equal(typeof Editor.sourceControlsEditable, 'function');
+  const control = { name: 'freq', values: [440], points: [] };
+  assert.equal(Editor.sourceControlsEditable(control, { controls: [{ name: 'freq', default_values: [440], initialization_rate: false }] }), true);
+  assert.equal(Editor.sourceControlsEditable(control, { controls: [{ name: 'freq', default_values: [440], initialization_rate: true }] }), false);
+  assert.equal(Editor.sourceControlsEditable(control, { controls: [{ name: 'freq', default_values: [440, 660], initialization_rate: false }] }), false);
+  assert.equal(Editor.sourceControlsEditable(control, { controls: [] }), false);
+  assert.equal(Editor.sourceControlsEditable({ ...control, points: [{ frame: 1, values: [880] }] }, { controls: [{ name: 'freq', default_values: [440], initialization_rate: false }] }), false);
+});
+
+test('v6 gain editing and removal preserve opaque SynthDef bytes and saved control events', () => {
+  const device = {
+    kind: 'supercollider', synthdef_hex: '5343676600aaff', synth_name: 'opaque-tone', duration_frames: 24000, gain: 0.5,
+    controls: [{ name: 'freq', values: [440], points: [{ frame: 100, values: [880] }] }],
+  };
+  const original = session([track('sc', { mode: 'continuous', clips: [], effects: [], device })], { schema_version: 6 });
+  const withGain = Editor.addEffect(original, 0, { kind: 'gain', gain: 0.9, bypass: false }, 'gain-1');
+  assert.deepEqual(withGain.tracks[0].device, device);
+  const removed = Editor.removeEffect(withGain, 0, 'gain-1');
+  assert.deepEqual(removed.tracks[0].device, device);
+  assert.deepEqual(original.tracks[0].device, device);
+  assert.throws(() => Editor.addEffect(original, 0, { kind: 'vst3', class_id: 'cid' }, 'foreign'), /SuperCollider|gain/);
+});

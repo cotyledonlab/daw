@@ -24,9 +24,13 @@ def ugen(name, rate, inputs, outputs, special=0):
 
 def synthdef(*, constants=(0.0,), defaults=(440.0, 0.1, 0.0),
              names=(("freq", 0), ("gain", 1), ("out", 2)),
-             control_outputs=(1, 1, 1), other_ugens=None, variants=0):
+             control_outputs=(1, 1, 1), control_rates=None,
+             other_ugens=None, variants=0):
     """Build the known four-UGen SCgf v2 program, with tweakable fields."""
-    ugens = [ugen("Control", 1, [], control_outputs)]
+    if control_rates is not None and len(control_rates) != len(control_outputs):
+        raise ValueError("one control rate is required per output")
+    ugens = [ugen("Control", 1, [],
+                  control_outputs if control_rates is None else control_rates)]
     ugens.extend(other_ugens if other_ugens is not None else [
         ugen("SinOsc", 2, [(0, 0), (-1, 0)], [2]),
         ugen("BinaryOpUGen", 2, [(1, 0), (0, 1)], [2], special=2),
@@ -115,7 +119,18 @@ class SuperColliderInspectTests(unittest.TestCase):
         self.assertAlmostEqual(actual["controls"][0]["default_values"][0], 440.0)
         self.assertAlmostEqual(actual["controls"][1]["default_values"][0], 0.1)
         self.assertAlmostEqual(actual["controls"][2]["default_values"][0], 0.0)
+        self.assertEqual([item["initialization_rate"] for item in actual["controls"]],
+                         [False, False, False])
         self.assertEqual(self.state(), before)
+
+    def test_control_initialization_rate_is_reported_per_named_control(self):
+        program = synthdef(control_rates=(0, 1, 1))
+        result = self.inspect(program)
+        self.assertTrue(result["ok"], result)
+        controls = result["result"]["controls"]
+        self.assertEqual([(item["name"], item["initialization_rate"]) for item in controls],
+                         [("freq", True), ("gain", False), ("out", False)])
+        self.assert_state_unchanged()
 
     def test_array_controls_report_each_default_at_sorted_parameter_indices(self):
         program = synthdef(defaults=(220.0, 330.0, 0.25, 0.0),
@@ -124,10 +139,25 @@ class SuperColliderInspectTests(unittest.TestCase):
         result = self.inspect(program)
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["result"]["controls"], [
-            {"name": "gain", "index": 2, "default_values": [0.25]},
-            {"name": "freq", "index": 0, "default_values": [220.0, 330.0]},
-            {"name": "out", "index": 3, "default_values": [0.0]},
+            {"name": "gain", "index": 2, "default_values": [0.25],
+             "initialization_rate": False},
+            {"name": "freq", "index": 0, "default_values": [220.0, 330.0],
+             "initialization_rate": False},
+            {"name": "out", "index": 3, "default_values": [0.0],
+             "initialization_rate": False},
         ])
+        self.assert_state_unchanged()
+
+    def test_named_array_is_initialization_rate_if_any_slot_is(self):
+        program = synthdef(defaults=(220.0, 330.0, 0.25, 0.0),
+                           names=(("freq", 0), ("gain", 2), ("out", 3)),
+                           control_outputs=(1, 1, 1, 1),
+                           control_rates=(1, 0, 1, 1))
+        result = self.inspect(program)
+        self.assertTrue(result["ok"], result)
+        controls = result["result"]["controls"]
+        self.assertEqual([item["initialization_rate"] for item in controls],
+                         [True, False, False])
         self.assert_state_unchanged()
 
     def test_parameter_shape_hex_type_and_decoded_size_are_invalid_params(self):

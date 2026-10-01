@@ -118,7 +118,7 @@ DAW_TEST_SC_TRANSPORT=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Res
 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_live_demo.py
 ```
 
-T11c2b2b2 implements revision-checked named control edits with native readback, later source-block publication and callback observation. T11c2b2b3 remains browser integration. Live transport is bounded to ten seconds and gain-only effects until separate acceptance gates expand those limits.
+T11c2b2b2 implements revision-checked named control edits with native readback, later source-block publication and callback observation. T11c2b2b3 adds browser integration for continuous gain-only v6 sessions. Live transport is bounded to ten seconds and gain-only effects until separate acceptance gates expand those limits.
 
 ### Saved live control edits (T11c2b2b2)
 
@@ -127,3 +127,9 @@ Queue acceptance and saved-state commit occur together after full validation. Th
 After exact float32 readback, an atomic queue-written watermark selects a later source block. Publishing that block into the native ring produces the revision/frame acknowledgment. Status compares the callback timeline with that frame; this establishes submitted audio ordering, not acoustic delivery or arbitrary UGen behavior. Watermarks remain monotonic across tracks. Source/device delivery failures stop transport asynchronously while retaining the accepted desired saved state; stop or finite completion can cancel unacknowledged delivery. Saved automated and known init-rate targets are rejected. Clearing prepared PCM prevents subsequent render/prepared playback from reusing an obsolete base.
 
 Installed macOS arm64/SuperCollider 3.14.1 evidence covers scalar/array readback, persistence, changed captured quarter RMS, post-edit rendering and rejection rollback. The finite scalar measurement is 59–70 ms across two runs from command submission to callback-observed status, including 25 ms polling intervals; sustained scheduling/clock drift and acoustic tests remain outstanding. No browser UI changes are included in this slice.
+
+### GUI source access (T11c2b2b3)
+
+The GUI imports continuous sine/SuperCollider v6 sessions with gain effects and preserves program bytes, source duration and automation. An additive inspected `initialization_rate` flag prevents offering live edits to known init-rate arrays. Metadata unavailable/failed, init-rate and automated controls stay read-only. Stopped control edits validate through checked session replacement; live array changes use the same serial revision-aware debounce queue as native VST edits, then display source callback acknowledgment. Play selects live mode for the longest source duration; the one button becomes Stop, preserving existing sine/VST Play/Pause behavior. No HTTP paths or arbitrary engine methods are introduced.
+
+Browser proof used a separate server/session: file-chooser import, stopped Apply, two-slot live edits, callback acknowledgment, automated read-only controls, structural locks and single-button stop all succeeded. The input-event implementation was corrected after an initial browser test showed a displayed edit had not reached saved state. A muted real-engine HTTP regression verifies stale-edit rejection, zero-underrun natural completion, matching fingerprints and owned cleanup. Download-path reporting timed out despite the GUI Save success notice; the browser-produced file was not independently inspected. Acoustic output, foreign SC chains, pause/clock semantics and longer playback remain unverified.

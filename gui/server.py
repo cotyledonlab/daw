@@ -3,6 +3,8 @@
 import argparse
 import hmac
 import json
+import math
+import re
 from pathlib import Path
 import secrets
 import selectors
@@ -21,7 +23,7 @@ class EngineError(Exception):
 
 
 def validate_editor_session_shape(session):
-    """Limit editor imports to continuous sine sessions before engine replacement.
+    """Limit editor imports to represented session families before replacement.
 
     Rust remains authoritative for the complete schema and field validation. This
     preflight only rejects session families the browser editor cannot represent.
@@ -31,19 +33,27 @@ def validate_editor_session_shape(session):
     version = session.get("schema_version")
     if type(version) is int and version in (2, 3, 5):
         raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
-    if type(version) is not int or version != 4:
+    if type(version) is not int or version not in (4, 6):
         return
     tracks = session.get("tracks")
     if not isinstance(tracks, list):
-        raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+        raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
     for track in tracks:
         if not isinstance(track, dict):
-            raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+            raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
         device = track.get("device")
-        if (not isinstance(device, dict) or device.get("kind") != "sine"
+        if (not isinstance(device, dict) or device.get("kind") not in (("sine", "supercollider") if version == 6 else ("sine",))
                 or track.get("mode") != "continuous"
                 or track.get("clips") != []):
-            raise ValueError("This editor supports schema-v4 continuous sine tracks only.")
+            raise ValueError("This editor supports continuous sine tracks in v4 and sine/SuperCollider tracks with gain effects in v6.")
+
+        if version == 6 and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
+            raise ValueError("Schema-v6 GUI sessions support gain effects only.")
+
+
+def validate_revision(value):
+    if not isinstance(value, str) or re.fullmatch(r"0|[1-9][0-9]{0,19}", value) is None or int(value) > 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("expected_revision must be a canonical unsigned 64-bit decimal string.")
 
 
 class Engine:
@@ -153,7 +163,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/api/session", "/api/session/inspect", "/api/capabilities", "/api/transport"):
             try:
                 method = {"/api/session": "session.get", "/api/session/inspect": "session.inspect", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
-                self.send_json(200, self.server.engine.call(method))
+                result = self.server.engine.call(method)
+                if self.path == "/api/capabilities":
+                    result = {**result, "gui_bridge": {"checked_replacement": True, "supercollider_sources": True}}
+                self.send_json(200, result)
             except EngineError as error:
                 self.send_json(422, {"error": str(error)})
             return
@@ -187,8 +200,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
             if self.path == "/api/session":
-                if set(data) != {"session"}:
-                    raise ValueError("Expected session only.")
+                if set(data) not in ({"session"}, {"session", "expected_revision"}):
+                    raise ValueError("Expected session and optional expected_revision only.")
+                if "expected_revision" in data:
+                    validate_revision(data["expected_revision"])
                 validate_editor_session_shape(data["session"])
                 self.send_json(200, self.server.engine.call("session.replace", data))
             elif self.path == "/api/transport":
@@ -196,6 +211,25 @@ class Handler(BaseHTTPRequestHandler):
                 if action not in ("play", "pause", "resume", "stop", "volume"):
                     raise ValueError("Unknown transport action.")
                 self.send_json(200, self.server.engine.call("transport." + action, data))
+            elif self.path == "/api/source/inspect":
+                if set(data) != {"synthdef_hex"}:
+                    raise ValueError("Expected synthdef_hex only.")
+                program = data["synthdef_hex"]
+                if not isinstance(program, str) or not 0 < len(program) <= 131072 or len(program) % 2 or re.fullmatch(r"[0-9a-fA-F]+", program) is None:
+                    raise ValueError("Expected bounded even-length SynthDef hexadecimal bytes.")
+                self.send_json(200, self.server.engine.call("supercollider.inspect", data))
+            elif self.path == "/api/source/control":
+                if set(data) != {"expected_revision", "track_id", "control_name", "values"}:
+                    raise ValueError("Expected expected_revision, track_id, control_name and values only.")
+                validate_revision(data["expected_revision"])
+                for key, limit in (("track_id", 128), ("control_name", 255)):
+                    value = data[key]
+                    if not isinstance(value, str) or not 0 < len(value.encode("utf-8")) <= limit:
+                        raise ValueError(f"{key} must be a nonempty string of at most {limit} UTF-8 bytes.")
+                values = data["values"]
+                if not isinstance(values, list) or not 1 <= len(values) <= 256 or any(type(value) not in (int, float) or abs(value) > 3.4028234663852886e38 or not math.isfinite(value) for value in values):
+                    raise ValueError("values must contain 1–256 finite float32 numbers.")
+                self.send_json(200, self.server.engine.call("source.set_control", data))
             elif self.path == "/api/effect/inspect":
                 if set(data) != {"track_id", "effect_id"}:
                     raise ValueError("Expected track_id and effect_id only.")

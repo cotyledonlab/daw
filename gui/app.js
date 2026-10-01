@@ -14,6 +14,14 @@
   let metadataSuppressed = false;
   let sessionRevision = null;
   let liveParameterEditsAvailable = false;
+  let liveSourceEditsAvailable = false;
+  let liveSourcesAvailable = false;
+  let checkedReplacementAvailable = false;
+  let bridgeDiscovered = false;
+  let capabilitiesLoading = Promise.resolve();
+  let sourceBridgeAvailable = false;
+  let sourceMetadata = new Map();
+  let sourceUpdateText = null;
   const liveParameterValues = new Map();
   let liveParameterTimer = null;
   let liveParameterQueue = Promise.resolve();
@@ -81,6 +89,15 @@
     return true;
   }
 
+  function sourceEligible(trackId, name) {
+    const track = applied?.tracks?.find(item => item.id === trackId);
+    const control = track?.device?.controls?.find(item => item.name === name);
+    return control && SessionEditor.sourceControlsEditable(control, sourceMetadata.get(trackId)) &&
+      (!nativeLocked() || (liveSourceEditsAvailable && nativeSnapshot.source_mode === 'live' && nativeSnapshot.state === 'playing'));
+  }
+
+  function hasSources() { return SessionEditor.sources(draft).length > 0; }
+
   async function inspectCurrentSession() {
     const response = await request('/api/session/inspect');
     const info = await response.json();
@@ -110,6 +127,17 @@
       outputMode.value = 'native';
     }
     nativeSnapshot = snapshot;
+    const sourceUpdate = snapshot.source_control_update;
+    if (sourceUpdate) {
+      const cancelled = snapshot.state === 'stopped' && (sourceUpdate.pending || (sourceUpdate.applied_revision && !sourceUpdate.callback_observed));
+      const text = cancelled ? 'Playback stopped before pending source edits reached the callback. Accepted values remain saved.' : sourceUpdate.pending ? `Source control queued (${sourceUpdate.pending} pending).` : sourceUpdate.applied_revision && sourceUpdate.callback_observed ? `Source control observed by the callback at frame ${sourceUpdate.applied_frame}.` : sourceUpdate.applied_revision ? 'Source control acknowledged; waiting for the callback…' : null;
+      if (text && text !== sourceUpdateText) setNotice(text);
+      sourceUpdateText = text;
+    }
+    if (snapshot.error) {
+      const message = typeof snapshot.error === 'string' ? snapshot.error : snapshot.error.message;
+      setNotice(`Native playback failed. ${message}`, true);
+    }
     const update = snapshot.plugin_parameter_update;
     if (update && Number.isInteger(update.pending)) {
       const changed = liveParameterAppliedRevision !== (update.applied_revision ?? null) || liveParameterPendingCount !== update.pending;
@@ -167,10 +195,16 @@
     try {
       const response = await request('/api/capabilities');
       const capabilities = await response.json();
+      if (!capabilities || typeof capabilities !== 'object') throw new Error('Invalid server capabilities.');
+      bridgeDiscovered = true;
+      checkedReplacementAvailable = capabilities.gui_bridge?.checked_replacement === true;
+      sourceBridgeAvailable = capabilities.gui_bridge?.supercollider_sources === true;
       nativeAvailable = capabilities.live_audio === true;
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
       parameterMetadataAvailable = capabilities.parameter_metadata?.implemented === true;
+      liveSourcesAvailable = sourceBridgeAvailable && capabilities.supercollider_live_transport?.implemented === true && capabilities.supercollider_nrt?.configured === true;
+      liveSourceEditsAvailable = capabilities.supercollider_live_transport?.live_control_edits === true;
       liveParameterEditsAvailable = capabilities.live_parameter_edits?.implemented === true && capabilities.live_parameter_edits?.automation_override === false;
       const option = outputMode.querySelector('option[value="native"]');
       option.disabled = !nativeAvailable;
@@ -285,9 +319,11 @@
     appliedGeneration += 1;
     metadataCache = new Map();
     metadataPending = new Set();
+    sourceMetadata = new Map();
   }
 
   function requestAppliedEffectMetadata() {
+    requestSourceMetadata();
     if (!parameterMetadataAvailable) return;
     const generation = appliedGeneration;
     const effects = [];
@@ -315,6 +351,32 @@
             showMetadataError(identity, error.message);
           }
         }
+      }).finally(() => metadataPending.delete(pendingKey));
+      metadataRequestTail = task.catch(() => {});
+    }
+  }
+
+  function requestSourceMetadata() {
+    if (!sourceBridgeAvailable) return;
+    const generation = appliedGeneration;
+    for (const track of SessionEditor.sources(applied)) {
+      const pendingKey = `${generation}:source:${track.id}`;
+      if (sourceMetadata.has(track.id) || metadataPending.has(pendingKey)) continue;
+      metadataPending.add(pendingKey);
+      const task = metadataRequestTail.then(async () => {
+        if (generation !== appliedGeneration || busy || metadataSuppressed || nativeActive()) return;
+        try {
+          const response = await request('/api/source/inspect', {method: 'POST', body: JSON.stringify({synthdef_hex: track.device.synthdef_hex})});
+          const metadata = await response.json();
+          if (generation !== appliedGeneration) return;
+          sourceMetadata.set(track.id, metadata);
+        } catch (error) {
+          if (generation !== appliedGeneration) return;
+          sourceMetadata.set(track.id, {error: error.message});
+        }
+        const card = [...tracksEl.children].find(card => card.dataset.sourceTrackId === track.id);
+        if (card) card.replaceWith(makeSourceCard(draft.tracks.find(item => item.id === track.id), draft.tracks.findIndex(item => item.id === track.id)));
+        syncStatus();
       }).finally(() => metadataPending.delete(pendingKey));
       metadataRequestTail = task.catch(() => {});
     }
@@ -370,24 +432,27 @@
     playButton.disabled = nativeModeChange || (unsupportedSession && !nativeActive()) || (busy && !player.context && !starting && !nativeActive());
     const nativeSelected = outputMode.value === 'native';
     playButton.textContent = unsupportedSession && nativeActive() ? 'Stop' : nativeSelected
-      ? nativeSnapshot.state === 'starting' ? 'Stop' : nativeSnapshot.state === 'playing' ? 'Pause' : 'Play'
+      ? nativeSnapshot.state === 'starting' ? 'Stop' : nativeSnapshot.state === 'playing' ? (nativeSnapshot.source_mode === 'live' ? 'Stop' : 'Pause') : 'Play'
       : starting ? 'Stop' : !player.context ? 'Play' : paused ? 'Play' : 'Pause';
-    playButton.title = 'Click to play or pause. Hold to stop. Escape also stops.';
+    playButton.title = hasSources() ? 'Click to play or stop live SuperCollider. Escape also stops.' : 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     tracksEl.querySelectorAll('button, input').forEach(control => {
       const row = control.closest('.effect-row');
+      const source = control.closest('[data-source-control]');
+      const sourceEditable = source && sourceEligible(source.dataset.trackId, source.dataset.sourceControl);
       const live = control.type === 'range' && row && control.closest('[data-parameter-id]') &&
         liveParameterEligible(row.dataset.trackId, row.dataset.effectId, control.closest('[data-parameter-id]').dataset.parameterId);
-      control.disabled = unsupportedSession || busy || (locked && !live) || control.dataset.metadataDisabled === 'true';
+      control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true';
     });
-    rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0;
-    if (draft.schema_version === 4) {
+    rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0 || hasSources();
+    if ([4, 6].includes(draft.schema_version)) {
       outputMode.querySelector('option[value="browser"]').disabled = true;
       playButton.disabled ||= !nativeAvailable || (SessionEditor.plugins(draft).length > 0 && !nativePluginsAvailable);
     }
+    if (hasSources()) playButton.disabled ||= !liveSourcesAvailable || draft.sample_rate !== 48000;
     renderButton.disabled ||= SessionEditor.plugins(draft).length > 0 && !offlinePluginsAvailable;
     tracksEl.querySelectorAll('select').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
     tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable; });
@@ -420,7 +485,7 @@
   }
 
   function scheduleLiveParameter(identity, value) {
-    const key = JSON.stringify([identity.track_id, identity.effect_id, identity.parameter_id]);
+    const key = JSON.stringify([identity.track_id, identity.effect_id, identity.parameter_id, identity.control_name]);
     liveParameterValues.set(key, { ...identity, value });
     clearTimeout(liveParameterTimer);
     liveParameterTimer = setTimeout(() => {
@@ -438,10 +503,9 @@
         const [key, change] = liveParameterValues.entries().next().value;
         liveParameterValues.delete(key);
         if (sessionRevision === null) throw new Error('The session revision is unavailable.');
-        const response = await request('/api/effect/parameter', { method: 'POST', body: JSON.stringify({
-          expected_revision: sessionRevision, track_id: change.track_id, effect_id: change.effect_id,
-          parameter_id: change.parameter_id, value: change.value,
-        }) });
+        const source = change.control_name !== undefined;
+        const payload = source ? {expected_revision: sessionRevision, track_id: change.track_id, control_name: change.control_name, values: change.values} : {expected_revision: sessionRevision, track_id: change.track_id, effect_id: change.effect_id, parameter_id: change.parameter_id, value: change.value};
+        const response = await request(source ? '/api/source/control' : '/api/effect/parameter', {method: 'POST', body: JSON.stringify(payload)});
         const result = await response.json();
         if (typeof result.revision !== 'string' || !result.session || result.queued !== true) throw new Error('The server returned an invalid plugin parameter acceptance.');
         sessionRevision = result.revision;
@@ -451,7 +515,7 @@
     } catch (error) {
       liveParameterValues.clear();
       await restoreAuthoritativeParameterValues();
-      announceError(`Live plugin parameter update failed. ${error.message}`);
+      announceError(`Live parameter update failed. ${error.message}`);
     } finally {
       liveParameterBusy = false;
       syncStatus();
@@ -493,12 +557,13 @@
   }
 
   function configureSessionMode() {
-    const effectsMode = draft.schema_version === 4;
+    const effectsMode = [4, 6].includes(draft.schema_version);
     outputMode.querySelector('option[value="browser"]').disabled = effectsMode;
     if (effectsMode && nativeAvailable) outputMode.value = 'native';
-    durationInput.max = SessionEditor.plugins(draft).length ? '10' : '60';
+    durationInput.max = hasSources() || SessionEditor.plugins(draft).length ? '10' : '60';
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
-    $('#effects-hint').textContent = effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
+    $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live SuperCollider. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved controls without automation or initialization-rate slots can change live. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
+    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live SuperCollider requires a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : liveSourcesAvailable ? 'SuperCollider · live native sources with gain effects. Programs, duration and automation are preserved. Controls are inspected before editing; structural edits require stopped playback.' : 'Live SuperCollider requires a native-audio build, configured scsynth and the capture plugin. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
   }
 
   function makeId() {
@@ -618,9 +683,67 @@
     return card;
   }
 
+  function makeSourceCard(track, index) {
+    const source = track.device;
+    const card = element('article', 'track-card source-card');
+    card.dataset.sourceTrackId = track.id;
+    card.setAttribute('aria-label', `SuperCollider track ${index + 1}`);
+    const ident = element('div', 'track-ident');
+    const title = element('div', 'track-title');
+    title.append(element('h2', '', `SuperCollider ${String(index + 1).padStart(2, '0')}`), element('p', '', track.id));
+    ident.append(element('span', 'track-icon', 'SC'), title);
+    const summary = element('p', 'source-summary', `${source.synth_name} · ${(source.duration_frames / draft.sample_rate).toLocaleString()} sec · source gain ${source.gain}`);
+    card.append(ident, summary);
+    const panel = element('section', 'source-controls');
+    panel.setAttribute('aria-label', `Saved controls on ${track.id}`);
+    panel.append(element('h3', '', 'Saved source controls'));
+    const metadata = sourceMetadata.get(track.id);
+    if (!metadata) panel.append(element('p', 'output-hint', sourceBridgeAvailable ? 'Inspecting control rates…' : 'Restart the local server to inspect source controls.'));
+    if (metadata?.error) panel.append(element('p', 'metadata-error', `Controls are read-only. ${metadata.error}`));
+    for (const control of source.controls) {
+      const row = element('div', 'source-control');
+      row.dataset.sourceControl = control.name;
+      row.dataset.trackId = track.id;
+      row.append(element('span', 'parameter-name', control.name));
+      control.values.forEach((value, slot) => {
+        const label = element('label', 'source-slot');
+        label.append(element('span', 'sr-only', `${track.id}, ${control.name}, value ${slot + 1}`));
+        const input = element('input', 'number-input');
+        input.type = 'number'; input.step = 'any'; input.value = String(value);
+        input.setAttribute('aria-label', `${track.id}, ${control.name}, value ${slot + 1}`);
+        input.addEventListener('input', () => {
+          const number = input.value.trim() ? Number(input.value) : NaN;
+          const target = draft.tracks.find(item => item.id === track.id).device.controls.find(item => item.name === control.name);
+          target.values[slot] = number;
+          if (!Number.isFinite(number) || !Number.isFinite(Math.fround(number))) {
+            input.setCustomValidity('Enter a finite float32 value.');
+            announceError('Source controls require finite float32 values.');
+            return;
+          }
+          input.setCustomValidity('');
+          if (nativeLocked() && sourceEligible(track.id, control.name)) {
+            scheduleLiveParameter({track_id: track.id, control_name: control.name, values: [...target.values]}, number);
+            setNotice('Sending live source control…');
+            syncStatus();
+          } else markEdited();
+        });
+        label.append(input); row.append(label);
+      });
+      const native = metadata?.controls?.find(item => item.name === control.name);
+      if (control.points.length) row.append(element('span', 'output-hint', `${control.points.length} saved automation points · read-only`));
+      else if (native?.initialization_rate) row.append(element('span', 'output-hint', 'Initialization rate · read-only'));
+      panel.append(row);
+    }
+    if (!source.controls.length) panel.append(element('p', 'output-hint', 'No saved native controls. Program defaults are preserved.'));
+    const details = element('details', 'effect-identity');
+    details.append(element('summary', '', 'Saved program'), element('p', '', `${source.synth_name} · ${source.synthdef_hex.length / 2} bytes · embedded SynthDef. Edit program, duration and automation through scripts.`));
+    panel.append(details); card.append(panel, makeEffectPanel(track, index));
+    return card;
+  }
+
   function makeEffectPanel(track, index) {
     const panel = element('section', 'effect-panel');
-    panel.setAttribute('aria-label', `Sine ${index + 1} effects`);
+    panel.setAttribute('aria-label', `Track ${index + 1} effects`);
     const heading = element('div', 'effect-heading');
     heading.append(element('h3', '', 'Effects'), element('span', 'output-hint', 'Applied in order'));
     panel.append(heading);
@@ -632,11 +755,11 @@
       row.append(element('strong', '', label));
       const bypassLabel = element('label', 'bypass-control', 'Bypass');
       const bypass = element('input'); bypass.type = 'checkbox'; bypass.checked = effect.bypass;
-      bypass.setAttribute('aria-label', `${label} bypass on Sine ${index + 1}`);
+      bypass.setAttribute('aria-label', `${label} bypass on track ${index + 1}`);
       bypass.addEventListener('change', () => { effect.bypass = bypass.checked; markEdited(); });
       bypassLabel.prepend(bypass); row.append(bypassLabel);
       const remove = element('button', 'button button-quiet', 'Remove'); remove.type = 'button';
-      remove.setAttribute('aria-label', `Remove ${label} from Sine ${index + 1}`);
+      remove.setAttribute('aria-label', `Remove ${label} from track ${index + 1}`);
       remove.addEventListener('click', () => { draft = SessionEditor.removeEffect(draft, index, effect.id); renderTracks(); markEdited(); });
       row.append(remove);
       const params = effect.kind === 'gain' ? [{id: 'gain', value: effect.gain, points: (track.automation || []).find(lane => lane.effect_id === effect.id)?.points || []}] : effect.parameters;
@@ -655,7 +778,7 @@
         const parameterName = metadata?.name || `Parameter ${param.id}`;
         const parameterUnit = metadata?.unit ? ` in ${metadata.unit}` : '';
         const range = makeRange(0, effect.kind === 'gain' ? 4 : 1, 0.001, param.value,
-          effect.kind === 'gain' ? `Gain on Sine ${index + 1}` : `Sine ${track.id}, ${effect.id}, ${parameterName}${parameterUnit}`);
+          effect.kind === 'gain' ? `Gain on track ${index + 1}` : `Sine ${track.id}, ${effect.id}, ${parameterName}${parameterUnit}`);
         if (effect.kind === 'vst3') {
           range.dataset.metadataDisabled = control.dataset.metadataDisabled;
           range.disabled = control.dataset.metadataDisabled === 'true';
@@ -701,7 +824,9 @@
     effectCatalog.forEach((effect, i) => { const option = element('option', '', `${effect.bundle_path.split('/').pop().replace(/\.vst3$/, '')} · ${effect.id}`); option.value = String(i); select.append(option); });
     const vst = element('button', 'button button-quiet add-vst3', 'Add VST3'); vst.type = 'button';
     vst.addEventListener('click', () => { const effect = effectCatalog[Number(select.value)]; if (effect) add(effect); });
-    actions.append(gain, select, vst); panel.append(actions);
+    actions.append(gain);
+    if (draft.schema_version !== 6) actions.append(select, vst);
+    panel.append(actions);
     return panel;
   }
 
@@ -715,7 +840,7 @@
 
   function renderTracks() {
     configureSessionMode();
-    tracksEl.replaceChildren(...draft.tracks.map((track, index) => makeTrackCard(track, index)));
+    tracksEl.replaceChildren(...draft.tracks.map((track, index) => (track.device.kind === 'supercollider' ? makeSourceCard(track, index) : makeTrackCard(track, index))));
     const empty = draft.tracks.length === 0;
     emptyEl.hidden = !empty;
     tracksEl.hidden = empty;
@@ -732,7 +857,7 @@
   function addTrack() {
     if (busy || draft.tracks.length >= 64) return;
     const track = { id: makeId(), device: { kind: 'sine', frequency_hz: 440, gain: 0.15 } };
-    if (draft.schema_version === 4) Object.assign(track, {mode: 'continuous', clips: [], effects: []});
+    if ([4, 6].includes(draft.schema_version)) Object.assign(track, {mode: 'continuous', clips: [], effects: []});
     draft.tracks.push(track);
     renderTracks();
     markEdited();
@@ -741,7 +866,7 @@
   function updateDraftFromControls() {
     const sampleRate = Number(rateSelect.value);
     draft.sample_rate = sampleRate;
-    for (const input of document.querySelectorAll('.number-input')) {
+    for (const input of document.querySelectorAll('.frequency-control .number-input')) {
       const card = input.closest('.track-card');
       const index = Array.from(tracksEl.children).indexOf(card);
       if (index >= 0 && input.value.trim()) draft.tracks[index].device.frequency_hz = Number(input.value);
@@ -749,7 +874,7 @@
   }
 
   async function applyDraft() {
-    if ([...document.querySelectorAll('.number-input')].some((input) => input.value.trim() === '')) {
+    if ([...document.querySelectorAll('.frequency-control .number-input')].some((input) => input.value.trim() === '')) {
       announceError('Enter a frequency for every track before applying changes.');
       return false;
     }
@@ -764,7 +889,9 @@
     setBusy(true);
     setNotice('Applying session changes…');
     try {
-      const response = await request('/api/session', { method: 'POST', body: JSON.stringify({ session: draft }) });
+      await capabilitiesLoading;
+      if (!bridgeDiscovered) throw new Error('Server capabilities are unavailable. Reload before applying changes.');
+      const response = await request('/api/session', { method: 'POST', body: JSON.stringify({session: draft, ...(checkedReplacementAvailable ? {expected_revision: sessionRevision} : {})}) });
       const result = await response.json();
       const session = result.session || result;
       const error = validateSession(session);
@@ -831,7 +958,9 @@
       const validation = validateSession(parsed);
       if (validation) throw new Error(validation);
       await liveParameterQueue;
-      const response = await request('/api/session', { method: 'POST', body: JSON.stringify({ session: parsed }) });
+      await capabilitiesLoading;
+      if (!bridgeDiscovered) throw new Error('Server capabilities are unavailable. Reload before loading a session.');
+      const response = await request('/api/session', { method: 'POST', body: JSON.stringify({session: parsed, ...(checkedReplacementAvailable ? {expected_revision: sessionRevision} : {})}) });
       const result = await response.json();
       const session = result.session || result;
       const serverValidation = validateSession(session);
@@ -895,6 +1024,7 @@
       return;
     }
     if (nativeSnapshot.state === 'playing') {
+      if (nativeSnapshot.source_mode === 'live') { await stopNative(); return; }
       try { await nativeCommand({ action: 'pause' }); }
       catch (error) { announceError(`Could not pause native audio. ${error.message}`); }
       return;
@@ -918,10 +1048,12 @@
     $('#output-level').value = 0;
     if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a sine track, then press Play.'); return; }
     nativeSnapshot = { state: 'starting' };
+    if (hasSources()) setNotice('Starting live SuperCollider…');
     playState.textContent = 'Starting native audio…';
     syncStatus();
     try {
-      await nativeCommand({ action: 'play', seconds: 60, volume: Number($('#monitor-volume').value) });
+      const seconds = hasSources() ? Math.max(...SessionEditor.sources(draft).map(track => track.device.duration_frames)) / draft.sample_rate : 60;
+      await nativeCommand({ action: 'play', seconds, volume: Number($('#monitor-volume').value), ...(hasSources() ? {source_mode: 'live'} : {}) });
       metadataSuppressed = false;
     } catch (error) {
       metadataSuppressed = false;
@@ -1076,7 +1208,7 @@
       const end = input.parentElement.lastElementChild;
       if (end) end.textContent = String(max);
     }
-    for (const input of document.querySelectorAll('.number-input')) input.max = String(Math.floor(draft.sample_rate / 2) - 1);
+    for (const input of document.querySelectorAll('.frequency-control .number-input')) input.max = String(Math.floor(draft.sample_rate / 2) - 1);
     markEdited();
   });
   durationInput.addEventListener('input', () => durationInput.setCustomValidity(''));
@@ -1088,7 +1220,7 @@
 
   renderTracks();
   void loadCurrentSession();
-  void loadCapabilities();
+  capabilitiesLoading = loadCapabilities();
   setInterval(async () => {
     if (!nativeAvailable || nativePollInFlight || nativeCommandsPending || nativeModeChange) return;
     nativePollInFlight = true;

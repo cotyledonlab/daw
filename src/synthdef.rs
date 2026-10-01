@@ -24,6 +24,7 @@ pub struct Control {
     pub name: String,
     pub index: usize,
     pub default_values: Vec<f32>,
+    pub initialization_rate: bool,
 }
 
 /// Decode independently of program validation so the protocol can distinguish
@@ -80,6 +81,7 @@ pub fn inspect(bytes: &[u8]) -> Result<Program, String> {
             name,
             index,
             default_values: Vec::new(),
+            initialization_rate: false,
         });
     }
     // A named array spans up to the next named index, regardless of the order
@@ -146,6 +148,12 @@ pub fn inspect(bytes: &[u8]) -> Result<Program, String> {
     }
     if input.position != bytes.len() {
         return Err("trailing SynthDef bytes are unsupported".into());
+    }
+    for control in &mut controls {
+        control.initialization_rate = scalar_parameters
+            [control.index..control.index + control.default_values.len()]
+            .iter()
+            .any(|value| *value);
     }
     Ok(Program {
         name,
