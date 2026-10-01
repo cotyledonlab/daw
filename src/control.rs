@@ -21,6 +21,7 @@ pub const METHODS: &[&str] = &[
     "session.inspect",
     "effect.inspect",
     "effect.set_parameter",
+    "source.set_control",
     "session.replace",
     "session.edit",
     "session.save",
@@ -41,7 +42,7 @@ pub const METHODS: &[&str] = &[
 // Discovery is additive to protocol v1. Defaults are construction suggestions;
 // required session/device fields remain required during deserialization.
 fn capabilities() -> Value {
-    let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":false,"requires_capture_plugin":true});
+    let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos")),"max_pending_controls":8,"requires_capture_plugin":true});
     let mut result = json!({
         "methods": METHODS,
         "devices": ["sine", "audio", "supercollider"],
@@ -225,6 +226,14 @@ struct EffectParameterParams {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct SourceControlParams {
+    expected_revision: String,
+    track_id: String,
+    control_name: String,
+    values: Vec<f64>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EffectInspectParams {
     track_id: String,
     effect_id: String,
@@ -402,6 +411,109 @@ impl Controller {
             "session.get" => {
                 let _: EmptyParams = params(value)?;
                 Ok(json!(self.session))
+            }
+            "source.set_control" => {
+                let p: SourceControlParams = params(value)?;
+                self.check_revision(&p.expected_revision)?;
+                if p.track_id.is_empty()
+                    || p.track_id.len() > 128
+                    || p.control_name.is_empty()
+                    || p.control_name.len() > 255
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "source control requires bounded track/control names",
+                    ));
+                }
+                let revision = self.revision.checked_add(1).ok_or_else(|| {
+                    ControlError::new("revision_exhausted", "session revision is exhausted")
+                })?;
+                let mut updated = self.session.clone();
+                let track = updated
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == p.track_id)
+                    .ok_or_else(|| ControlError::new("invalid_params", "track not found"))?;
+                let session::Device::Supercollider(source) = &mut track.device else {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "track is not a SuperCollider source",
+                    ));
+                };
+                let program = crate::synthdef::inspect(
+                    &crate::synthdef::decode_hex(&source.synthdef_hex)
+                        .map_err(|e| ControlError::new("invalid_params", e))?,
+                )
+                .map_err(|e| ControlError::new("invalid_params", e))?;
+                let native = program
+                    .controls
+                    .iter()
+                    .find(|control| control.name == p.control_name)
+                    .ok_or_else(|| {
+                        ControlError::new("invalid_params", "native control not found")
+                    })?;
+                if program.scalar_parameters
+                    [native.index..native.index + native.default_values.len()]
+                    .iter()
+                    .any(|value| *value)
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "initialization-rate controls cannot change while playing",
+                    ));
+                }
+                let control = source
+                    .controls
+                    .iter_mut()
+                    .find(|control| control.name == p.control_name)
+                    .ok_or_else(|| {
+                        ControlError::new("invalid_params", "saved control not found")
+                    })?;
+                if !control.points.is_empty() {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "live edits cannot override saved control automation",
+                    ));
+                }
+                control.values = p.values.clone();
+                source.prepared = None;
+                updated
+                    .validate()
+                    .map_err(|e| ControlError::new("invalid_params", e))?;
+                if serde_json::to_vec(&updated)
+                    .map_err(|e| ControlError::new("invalid_params", e))?
+                    .len()
+                    > MAX_MESSAGE_BYTES - 4096
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "updated SC session exceeds size limit",
+                    ));
+                }
+                #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                {
+                    self.transport
+                        .source_control(crate::sc_session::ParameterChange {
+                            track_id: p.track_id,
+                            index: native.index as u32,
+                            values: p.values.iter().map(|value| *value as f32).collect(),
+                            revision,
+                        })
+                        .map_err(|e| ControlError::new("audio_error", e))?;
+                    self.session = updated;
+                    self.revision = revision;
+                    Ok(
+                        json!({"revision":revision.to_string(),"session":self.session,"queued":true}),
+                    )
+                }
+                #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+                {
+                    let _ = revision;
+                    Err(ControlError::new(
+                        "audio_unavailable",
+                        "live source edits require native-audio on macOS",
+                    ))
+                }
             }
             "effect.set_parameter" => {
                 let p: EffectParameterParams = params(value)?;

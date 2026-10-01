@@ -61,6 +61,44 @@ impl Drop for InterruptGuard {
     }
 }
 
+pub(crate) const MAX_PENDING_CONTROLS: usize = 8;
+#[derive(Clone)]
+pub(crate) struct ParameterChange {
+    pub(crate) track_id: String,
+    pub(crate) index: u32,
+    pub(crate) values: Vec<f32>,
+    pub(crate) revision: u64,
+}
+pub(crate) struct Updates {
+    sender: mpsc::SyncSender<ParameterChange>,
+    acks: mpsc::Receiver<(u64, u64)>,
+    pending: usize,
+    applied: Option<(u64, u64)>,
+}
+impl Updates {
+    fn collect(&mut self) {
+        while let Ok(ack) = self.acks.try_recv() {
+            self.pending -= 1;
+            self.applied = Some(ack);
+        }
+    }
+    pub(crate) fn queue(&mut self, change: ParameterChange) -> Result<(), String> {
+        self.collect();
+        if self.pending >= MAX_PENDING_CONTROLS {
+            return Err("SC control queue full; poll status before retrying".into());
+        }
+        self.sender
+            .try_send(change)
+            .map_err(|_| "SC control queue unavailable".to_string())?;
+        self.pending += 1;
+        Ok(())
+    }
+    pub(crate) fn status(&mut self, callback_frame: u64) -> Value {
+        self.collect();
+        json!({"pending":self.pending,"applied_revision":self.applied.map(|(revision,_)|revision.to_string()),"applied_frame":self.applied.map(|(_,frame)|frame),"callback_observed":self.applied.is_some_and(|(_,frame)|callback_frame>=frame)})
+    }
+}
+
 const SOURCE_NAME: &str = "daw_sc_source";
 const CAPTURE_NAME: &str = "daw_stream_capture";
 
@@ -203,6 +241,8 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
     let (opened, opening) = mpsc::sync_channel(1);
     let (ready, prepared) = mpsc::sync_channel(1);
     let (begin, starting) = mpsc::sync_channel(1);
+    let (changes, receiving) = mpsc::sync_channel::<ParameterChange>(MAX_PENDING_CONTROLS);
+    let (acknowledged, acknowledgements) = mpsc::sync_channel(MAX_PENDING_CONTROLS);
     let task = move || {
         let result: Result<Value, String> = (|| {
             let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -238,9 +278,42 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
             let mut digest = live_ring::DIGEST_START;
             let mut energies = [0.0f64; 4];
             let mut counts = [0u64; 4];
+            let mut pending_acks: std::collections::VecDeque<(u64, u64)> =
+                std::collections::VecDeque::new();
+            let mut in_flight: Option<(ParameterChange, Instant)> = None;
             'play: while position < frames {
                 if producer.stop_requested() || interrupted() {
                     break;
+                }
+                if let Some((change, sent)) = &in_flight {
+                    let runtime = runtimes
+                        .iter_mut()
+                        .find(|runtime| runtime.track.id == change.track_id)
+                        .ok_or("live SC track not found")?;
+                    if runtime.server.poll_control(change.index, &change.values)? {
+                        let target = (u64::from(runtime.queue.written()) + 1) * 64;
+                        let target = target.max(pending_acks.back().map_or(0, |(_, frame)| *frame));
+                        pending_acks.push_back((change.revision, target));
+                        in_flight = None;
+                    } else if sent.elapsed() > Duration::from_secs(2) {
+                        return Err("SC control readback timed out".into());
+                    }
+                }
+                if in_flight.is_none() {
+                    if let Ok(change) = receiving.try_recv() {
+                        let runtime = runtimes
+                            .iter_mut()
+                            .find(|runtime| runtime.track.id == change.track_id)
+                            .ok_or("live SC track not found")?;
+                        let Device::Supercollider(source) = &runtime.track.device else {
+                            unreachable!()
+                        };
+                        if u64::from(runtime.queue.written()) * 64 >= source.duration_frames {
+                            return Err("live SC source ended before control delivery".into());
+                        }
+                        runtime.server.begin_control(change.index, &change.values)?;
+                        in_flight = Some((change, Instant::now()));
+                    }
                 }
                 let count = (frames - position).min(64) as usize;
                 let mut mixed = [[0.0; 2]; 64];
@@ -313,6 +386,15 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                         let _ = ready.send(Ok(()));
                     }
                 }
+                while pending_acks
+                    .front()
+                    .is_some_and(|(_, target)| position >= *target)
+                {
+                    let ack = pending_acks.pop_front().unwrap();
+                    acknowledged
+                        .try_send(ack)
+                        .map_err(|_| "SC acknowledgment queue unavailable".to_string())?;
+                }
             }
             let count = runtimes.len();
             let mut hardware_bus_peaks = Vec::new();
@@ -362,6 +444,12 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
         .map_err(|e| e.to_string())?;
     let mut guard = Worker::new(control, prepared, worker, Some(begin))
         .with_stop_timeout(Duration::from_secs(20));
+    guard.updates = Some(Updates {
+        sender: changes,
+        acks: acknowledgements,
+        pending: 0,
+        applied: None,
+    });
     match opening.recv_timeout(Duration::from_secs(20)) {
         Ok(Ok(metadata)) => {
             guard.metadata = metadata;
@@ -381,6 +469,37 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn control_queue_bounds_unacknowledged_edits_and_callback_watermark() {
+        let (sender, receiver) = mpsc::sync_channel(MAX_PENDING_CONTROLS);
+        let (acks, acknowledgements) = mpsc::sync_channel(MAX_PENDING_CONTROLS);
+        let mut updates = Updates {
+            sender,
+            acks: acknowledgements,
+            pending: 0,
+            applied: None,
+        };
+        let change = |revision| ParameterChange {
+            track_id: "source".into(),
+            index: 0,
+            values: vec![0.1],
+            revision,
+        };
+        for revision in 1..=8 {
+            updates.queue(change(revision)).unwrap();
+        }
+        assert!(updates.queue(change(9)).is_err());
+        // Receiving a command alone must not free capacity or claim DSP delivery.
+        assert_eq!(receiver.recv().unwrap().revision, 1);
+        assert!(updates.queue(change(9)).is_err());
+        acks.send((1, 1024)).unwrap();
+        let status = updates.status(1023);
+        assert_eq!(status["pending"], 7);
+        assert_eq!(status["applied_revision"], "1");
+        assert_eq!(status["callback_observed"], false);
+        updates.queue(change(9)).unwrap();
+        assert_eq!(updates.status(1024)["callback_observed"], true);
+    }
     #[test]
     fn capture_definition_is_bounded_and_stereo() {
         let bytes =

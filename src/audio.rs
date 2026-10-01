@@ -337,6 +337,7 @@ pub struct Transport {
 enum Action {
     Play(Session, f64, f64),
     PlayLive(Session, f64, f64),
+    SourceControl(crate::sc_session::ParameterChange),
     Pause,
     Resume,
     Stop,
@@ -471,6 +472,9 @@ impl Active {
         }
         if let Some(mut worker) = self.sc_worker.take() {
             report["source"] = worker.finish()?;
+            report["source_control_update"] = worker
+                .control_status(self.stats.timeline.load(Relaxed))
+                .unwrap();
         }
         report["state"] = json!("stopped");
         report["level"] = json!(0);
@@ -515,7 +519,10 @@ impl Active {
         } else {
             "prepared"
         });
-        if let Some(worker) = &self.sc_worker {
+        if let Some(worker) = &mut self.sc_worker {
+            report["source_control_update"] = worker
+                .control_status(self.stats.timeline.load(Relaxed))
+                .unwrap();
             report["runtime"] = json!("supercollider");
             report["startup"] = json!("prefilled");
             report["source"] = worker.metadata.clone();
@@ -587,6 +594,12 @@ impl Transport {
         change: crate::live_plugins::ParameterChange,
     ) -> Result<Value, String> {
         self.request(Action::Parameter(change))
+    }
+    pub(crate) fn source_control(
+        &mut self,
+        change: crate::sc_session::ParameterChange,
+    ) -> Result<Value, String> {
+        self.request(Action::SourceControl(change))
     }
     pub fn seek(&mut self, frame: u64) -> Result<Value, String> {
         if frame > crate::session::MAX_FRAME {
@@ -712,6 +725,20 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                         .as_mut()
                         .ok_or("native playback has no live plugins")?
                         .queue_parameter(change)?;
+                }
+                Action::SourceControl(change) => {
+                    let current = active.as_mut().ok_or("native playback is stopped")?;
+                    if current.stats.done.load(Relaxed)
+                        || current.stats.error.load(Relaxed)
+                        || current.drain.is_some()
+                    {
+                        return Err("native playback is finishing".into());
+                    }
+                    current
+                        .sc_worker
+                        .as_mut()
+                        .ok_or("native playback has no live SC sources")?
+                        .queue_control(change)?;
                 }
                 Action::Status => {}
                 Action::Pause | Action::Resume => {

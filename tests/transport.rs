@@ -345,5 +345,81 @@ fn source_mode_is_strict_discoverable_and_rejections_preserve_revision() {
     );
     assert_eq!(live["source_mode"], "live");
     assert_eq!(live["pause"], false);
-    assert_eq!(live["live_control_edits"], false);
+    assert_eq!(
+        live["live_control_edits"],
+        cfg!(all(feature = "native-audio", target_os = "macos"))
+    );
+}
+
+#[test]
+fn source_control_shape_and_target_errors_preserve_revision_in_every_build() {
+    let mut controller = Controller::default();
+    let before = inspected(&mut controller, "before-control");
+    let valid =
+        json!({"expected_revision":"0","track_id":"missing","control_name":"gain","values":[0.02]});
+    for field in ["expected_revision", "track_id", "control_name", "values"] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert_eq!(
+            error_code(&request(
+                &mut controller,
+                "missing",
+                "source.set_control",
+                missing
+            )),
+            "invalid_params"
+        );
+        let mut null = valid.clone();
+        null[field] = Value::Null;
+        assert_eq!(
+            error_code(&request(
+                &mut controller,
+                "null",
+                "source.set_control",
+                null
+            )),
+            "invalid_params"
+        );
+    }
+    let mut unknown = valid.clone();
+    unknown["extra"] = json!(true);
+    assert_eq!(
+        error_code(&request(
+            &mut controller,
+            "unknown",
+            "source.set_control",
+            unknown
+        )),
+        "invalid_params"
+    );
+    assert_eq!(
+        error_code(&request(
+            &mut controller,
+            "target",
+            "source.set_control",
+            valid.clone()
+        )),
+        "invalid_params"
+    );
+    let mut stale = valid;
+    stale["expected_revision"] = json!("1");
+    assert_eq!(
+        error_code(&request(
+            &mut controller,
+            "stale",
+            "source.set_control",
+            stale
+        )),
+        "revision_conflict"
+    );
+    assert_eq!(inspected(&mut controller, "after-control"), before);
+    assert_eq!(
+        ok(&request(
+            &mut controller,
+            "status",
+            "transport.status",
+            json!({})
+        ))["state"],
+        "stopped"
+    );
 }

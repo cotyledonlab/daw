@@ -30,6 +30,7 @@ pub(crate) struct Queue {
     pop: Pop,
     fault: Fault,
     close: Close,
+    written: unsafe extern "C" fn(*mut c_void) -> u32,
 }
 impl Queue {
     pub(crate) fn open(path: &Path, nonce: u64) -> Result<Self, String> {
@@ -52,8 +53,14 @@ impl Queue {
             let open = dlsym(library.as_ptr(), c"daw_sc_queue_open".as_ptr());
             let pop = dlsym(library.as_ptr(), c"daw_sc_queue_pop".as_ptr());
             let fault = dlsym(library.as_ptr(), c"daw_sc_queue_fault".as_ptr());
+            let written = dlsym(library.as_ptr(), c"daw_sc_queue_written".as_ptr());
             let close = dlsym(library.as_ptr(), c"daw_sc_queue_close".as_ptr());
-            if open.is_null() || pop.is_null() || fault.is_null() || close.is_null() {
+            if open.is_null()
+                || pop.is_null()
+                || fault.is_null()
+                || close.is_null()
+                || written.is_null()
+            {
                 dlclose(library.as_ptr());
                 return Err("invalid SC queue library exports".into());
             }
@@ -78,8 +85,15 @@ impl Queue {
                 pop: std::mem::transmute::<*mut c_void, Pop>(pop),
                 fault: std::mem::transmute::<*mut c_void, Fault>(fault),
                 close: std::mem::transmute::<*mut c_void, Close>(close),
+                written: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void) -> u32>(
+                    written,
+                ),
             })
         }
+    }
+    pub(crate) fn written(&self) -> u32 {
+        // SAFETY: same retained owned mapping, read-only atomic watermark.
+        unsafe { (self.written)(self.handle.as_ptr()) }
     }
     pub(crate) fn pop(&mut self, buffer: &mut [f32; 128]) -> Result<bool, String> {
         // SAFETY: this worker owns the queue and writable 128-sample block.
@@ -152,6 +166,7 @@ pub(crate) struct Worker {
     begin: Option<mpsc::SyncSender<()>>,
     stop_timeout: Duration,
     pub(crate) metadata: Value,
+    pub(crate) updates: Option<crate::sc_session::Updates>,
 }
 impl Worker {
     pub(crate) fn new(
@@ -167,7 +182,30 @@ impl Worker {
             begin,
             stop_timeout: Duration::from_secs(2),
             metadata: Value::Null,
+            updates: None,
         }
+    }
+    pub(crate) fn queue_control(
+        &mut self,
+        change: crate::sc_session::ParameterChange,
+    ) -> Result<(), String> {
+        if self.control.failed()
+            || self
+                .thread
+                .as_ref()
+                .is_none_or(|thread| thread.is_finished())
+        {
+            return Err("live SC worker has finished".into());
+        }
+        self.updates
+            .as_mut()
+            .ok_or("native playback has no live SC sources")?
+            .queue(change)
+    }
+    pub(crate) fn control_status(&mut self, callback_frame: u64) -> Option<Value> {
+        self.updates
+            .as_mut()
+            .map(|updates| updates.status(callback_frame))
     }
     pub(crate) fn with_stop_timeout(mut self, timeout: Duration) -> Self {
         self.stop_timeout = timeout;
@@ -288,6 +326,7 @@ pub(crate) fn start(
         begin: None,
         stop_timeout: Duration::from_secs(2),
         metadata: Value::Null,
+        updates: None,
     };
     match opening.recv_timeout(Duration::from_secs(2)) {
         Ok(Ok(())) => Ok((consumer, guard)),

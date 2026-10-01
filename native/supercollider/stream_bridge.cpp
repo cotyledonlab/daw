@@ -168,3 +168,10 @@ extern "C" uint32_t daw_sc_queue_fault(void* opaque) noexcept {
 extern "C" void daw_sc_queue_close(void* opaque) noexcept {
     release(static_cast<QueueHandle*>(opaque));
 }
+
+// Worker-side publication watermark; never called by the DAW audio callback.
+extern "C" uint32_t daw_sc_queue_written(void* opaque) noexcept {
+    const auto* handle = static_cast<QueueHandle*>(opaque);
+    if (!handle || !handle->queue || !handle->owns_consumer) return UINT32_MAX;
+    return handle->queue->written.load(std::memory_order_acquire);
+}

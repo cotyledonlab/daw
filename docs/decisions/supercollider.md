@@ -118,4 +118,12 @@ DAW_TEST_SC_TRANSPORT=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Res
 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_live_demo.py
 ```
 
-T11c2b2b2 remains revision-checked named control edits with real DSP acknowledgment and measured response; T11c2b2b3 remains browser integration. Live transport is bounded to ten seconds and gain-only effects until separate acceptance gates expand those limits.
+T11c2b2b2 implements revision-checked named control edits with native readback, later source-block publication and callback observation. T11c2b2b3 remains browser integration. Live transport is bounded to ten seconds and gain-only effects until separate acceptance gates expand those limits.
+
+### Saved live control edits (T11c2b2b2)
+
+Queue acceptance and saved-state commit occur together after full validation. The source worker sends `/n_setn`, then requests `/s_getn` readback (reply `/n_setn`), following the [official server command reference](https://docs.supercollider.online/Reference/Server-Command-Reference.html). Only one readback is in flight; at most eight unacknowledged updates exist. Polling is nonblocking and bounded to sixteen packets per production iteration, with a two-second delivery timeout. A synchronous OSC wait initially caused two callback underruns; the nonblocking implementation drains PCM while waiting and passes the muted zero-underrun edit test.
+
+After exact float32 readback, an atomic queue-written watermark selects a later source block. Publishing that block into the native ring produces the revision/frame acknowledgment. Status compares the callback timeline with that frame; this establishes submitted audio ordering, not acoustic delivery or arbitrary UGen behavior. Watermarks remain monotonic across tracks. Source/device delivery failures stop transport asynchronously while retaining the accepted desired saved state; stop or finite completion can cancel unacknowledged delivery. Saved automated and known init-rate targets are rejected. Clearing prepared PCM prevents subsequent render/prepared playback from reusing an obsolete base.
+
+Installed macOS arm64/SuperCollider 3.14.1 evidence covers scalar/array readback, persistence, changed captured quarter RMS, post-edit rendering and rejection rollback. The finite scalar measurement is 59–70 ms across two runs from command submission to callback-observed status, including 25 ms polling intervals; sustained scheduling/clock drift and acoustic tests remain outstanding. No browser UI changes are included in this slice.

@@ -215,6 +215,73 @@ mod macos {
             )
         }
 
+        pub(crate) fn begin_control(&mut self, index: u32, values: &[f32]) -> Result<(), String> {
+            if values.is_empty()
+                || values.len() > 256
+                || values.iter().any(|value| !value.is_finite())
+            {
+                return Err("invalid native control array".into());
+            }
+            let mut args = vec![
+                Arg::Int(1000),
+                Arg::Int(index as i32),
+                Arg::Int(values.len() as i32),
+            ];
+            args.extend(values.iter().copied().map(Arg::Float));
+            self.send("/n_setn", &args)?;
+            self.send(
+                "/s_getn",
+                &[
+                    Arg::Int(1000),
+                    Arg::Int(index as i32),
+                    Arg::Int(values.len() as i32),
+                ],
+            )
+        }
+        pub(crate) fn poll_control(&mut self, index: u32, values: &[f32]) -> Result<bool, String> {
+            self.socket
+                .set_nonblocking(true)
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                let mut buffer = [0u8; MAX_PACKET + 1];
+                for _ in 0..16 {
+                    match self.socket.recv_from(&mut buffer) {
+                        Ok((size, sender)) if sender == self.endpoint => {
+                            if size > MAX_PACKET {
+                                return Err("OSC reply exceeds UDP packet limit".into());
+                            }
+                            let (address, reply) = decode(&buffer[..size])?;
+                            if address == "/fail" {
+                                return Err(format!("scsynth command failed: {reply:?}"));
+                            }
+                            if address == "/n_setn" && reply.first() == Some(&ReplyArg::Int(1000)) {
+                                if reply.len() != values.len() + 3
+                                    || reply[1] != ReplyArg::Int(index as i32)
+                                    || reply[2] != ReplyArg::Int(values.len() as i32)
+                                    || reply[3..]
+                                        .iter()
+                                        .zip(values)
+                                        .any(|(actual, value)| actual != &ReplyArg::Float(*value))
+                                {
+                                    return Err("SC native control readback mismatch".into());
+                                }
+                                return Ok(true);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            return Ok(false);
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                Ok(false)
+            })();
+            self.socket
+                .set_nonblocking(false)
+                .map_err(|e| e.to_string())?;
+            result
+        }
         pub(crate) fn pid(&self) -> u32 {
             self.pid
         }
