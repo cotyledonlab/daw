@@ -144,6 +144,24 @@ pub fn play_sc_stream(
     if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
         return Err("volume must be finite and between 0 and 1".into());
     }
+    let selected = sc_device()?;
+    let (consumer, worker) = crate::sc_stream::start(path, nonce, blocks, gain)?;
+    play_sc_consumer(consumer, worker, u64::from(blocks) * 64, volume, selected)
+}
+
+pub fn play_sc_session(session: &Session, seconds: f64, volume: f64) -> Result<Value, String> {
+    validate_volume(volume)?;
+    let frames = crate::sc_session::validate(session, seconds)?;
+    let selected = sc_device()?;
+    let _interrupt = crate::sc_session::InterruptGuard::install()?;
+    let (consumer, worker) = crate::sc_session::start(session, seconds)?;
+    let mut result = play_sc_consumer(consumer, worker, frames, volume, selected)?;
+    result["saved_session"] = json!(true);
+    result["source_preparation"] = json!("owned_live_sc");
+    Ok(result)
+}
+
+fn sc_device() -> Result<(cpal::Device, cpal::SampleFormat, cpal::StreamConfig), String> {
     let device = cpal::default_host()
         .default_output_device()
         .ok_or("no default output device")?;
@@ -151,15 +169,20 @@ pub fn play_sc_stream(
     let format = selected.sample_format();
     let config: cpal::StreamConfig = selected.into();
     if config.sample_rate.0 != 48000 {
-        return Err("SC live diagnostic requires a 48000 Hz output device".into());
+        return Err("SC live playback requires a 48000 Hz output device".into());
     }
-    let (consumer, mut worker) = crate::sc_stream::start(path, nonce, blocks, gain)?;
-    let renderer = PlaybackBuffer::from_stream(
-        consumer,
-        u64::from(blocks) * 64,
-        config.channels as usize,
-        1.0,
-    )?;
+    Ok((device, format, config))
+}
+
+fn play_sc_consumer(
+    consumer: crate::live_ring::Consumer,
+    mut worker: crate::sc_stream::Worker,
+    frames: u64,
+    volume: f64,
+    selected: (cpal::Device, cpal::SampleFormat, cpal::StreamConfig),
+) -> Result<Value, String> {
+    let (device, format, config) = selected;
+    let renderer = PlaybackBuffer::from_stream(consumer, frames, config.channels as usize, 1.0)?;
     let stats = Arc::new(Stats::default());
     stats.volume.store(volume.to_bits(), Relaxed);
     // CoreAudio can call the renderer during stream construction, before play.
@@ -176,19 +199,30 @@ pub fn play_sc_stream(
             ));
         }
     }?;
-    // Harness may now create its source. This is diagnostic stderr, never a
-    // product protocol response or a claim that source audio has arrived.
+    // Diagnostic callers may create their source now; saved-session callers
+    // arm their paused sources next. This marker is not an audio acknowledgment.
     eprintln!("DAW_SC_STREAM_READY");
+    worker.begin()?;
     worker.wait_ready()?;
     stats.paused.store(false, Release);
     stream.play().map_err(|e| e.to_string())?;
-    let deadline =
-        Instant::now() + Duration::from_secs_f64(f64::from(blocks) * 64.0 / 48000.0 + 3.0);
-    while !stats.done.load(Relaxed) && !stats.error.load(Relaxed) && Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs_f64(frames as f64 / 48000.0 + 3.0);
+    while !stats.done.load(Relaxed)
+        && !stats.error.load(Relaxed)
+        && !crate::sc_session::interrupted()
+        && Instant::now() < deadline
+    {
         std::thread::sleep(Duration::from_millis(1));
+    }
+    if stats.done.load(Relaxed) && !crate::sc_session::interrupted() {
+        let tail = stats.max_frames.load(Relaxed) as f64 / 48000.0;
+        std::thread::sleep(Duration::from_secs_f64(tail.min(1.0) + 0.1));
     }
     drop(stream);
     let report = worker.finish()?;
+    if crate::sc_session::interrupted() {
+        return Err("SC session interrupted; owned servers released".into());
+    }
     if stats.error.load(Relaxed) {
         return Err("SC native callback failed; stream released".into());
     }

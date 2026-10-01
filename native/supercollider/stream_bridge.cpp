@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <new>
+#include <limits.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -23,6 +24,15 @@ void set_error(char* error, size_t capacity, const char* message) noexcept {
     }
 }
 
+
+bool unlink_created_file_if_same(const char* path, const struct stat& created) noexcept {
+    struct stat current{};
+    if (::lstat(path, &current) != 0) return false;
+    if (!S_ISREG(current.st_mode) || current.st_uid != ::geteuid() ||
+        current.st_dev != created.st_dev || current.st_ino != created.st_ino) return false;
+    return ::unlink(path) == 0;
+}
+
 void release(QueueHandle* handle) noexcept {
     if (!handle) return;
     if (handle->queue) {
@@ -38,6 +48,47 @@ void release(QueueHandle* handle) noexcept {
     delete handle;
 }
 } // namespace
+
+
+extern "C" int daw_sc_queue_create(const char* absolute_path, uint64_t nonce,
+                                   char* error, size_t capacity) noexcept {
+    set_error(error, capacity, "invalid queue path or nonce");
+    if (!absolute_path || absolute_path[0] != '/' || nonce == 0 ||
+        ::strnlen(absolute_path, PATH_MAX) >= PATH_MAX) return -1;
+
+    const int fd = ::open(absolute_path, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        set_error(error, capacity, "cannot exclusively create queue file");
+        return -1;
+    }
+    struct stat created{};
+    bool have_identity = ::fstat(fd, &created) == 0 && S_ISREG(created.st_mode) &&
+                         created.st_uid == ::geteuid();
+    bool ok = have_identity;
+    const char* failure = ok ? "cannot initialize queue file" : "cannot verify created queue file";
+    void* mapping = MAP_FAILED;
+    if (ok && ::fchmod(fd, 0600) != 0) ok = false;
+    if (ok && ::ftruncate(fd, static_cast<off_t>(sizeof(daw_sc::Queue))) != 0) ok = false;
+    if (ok) {
+        mapping = ::mmap(nullptr, sizeof(daw_sc::Queue), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mapping == MAP_FAILED) ok = false;
+    }
+    if (ok) {
+        auto* queue = new (mapping) daw_sc::Queue;
+        queue->nonce = nonce;
+        if (::msync(mapping, sizeof(daw_sc::Queue), MS_SYNC) != 0) ok = false;
+        // The file mapping owns the Queue lifetime; unmapping does not end it.
+    }
+    if (mapping != MAP_FAILED && ::munmap(mapping, sizeof(daw_sc::Queue)) != 0) ok = false;
+    if (::close(fd) != 0) ok = false;
+    if (!ok) {
+        if (have_identity) (void)unlink_created_file_if_same(absolute_path, created);
+        set_error(error, capacity, failure);
+        return -1;
+    }
+    set_error(error, capacity, "");
+    return 0;
+}
 
 extern "C" void* daw_sc_queue_open(const char* absolute_path, uint64_t nonce,
                                    char* error, size_t capacity) noexcept {

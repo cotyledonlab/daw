@@ -3,10 +3,9 @@ use std::io::{self, BufRead, Write};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args
-        .first()
-        .is_some_and(|a| a == "devices" || a == "play" || a == "sc-stream-play")
-    {
+    if args.first().is_some_and(|a| {
+        a == "devices" || a == "play" || a == "sc-stream-play" || a == "sc-session-play"
+    }) {
         if let Err(error) = native_command(&args) {
             eprintln!("daw: {error}");
             std::process::exit(1);
@@ -15,7 +14,7 @@ fn main() {
     }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "daw serve\ndaw devices\ndaw play SESSION.json SECONDS [VOLUME]\ndaw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN\nNative commands require macOS and --features native-audio. Session volume defaults to 0.25. SC stream is a finite diagnostic, separate from session transport.\nRead one versioned JSON request per line on stdin in serve mode.\nSee docs/PROTOCOL.md and examples/demo.py. Paths are relative to the working directory."
+            "daw serve\ndaw devices\ndaw play SESSION.json SECONDS [VOLUME]\ndaw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN\ndaw sc-session-play SESSION.json SECONDS [VOLUME]\nNative commands require macOS and --features native-audio. Session volume defaults to 0.25. SC stream is a finite diagnostic, separate from session transport.\nRead one versioned JSON request per line on stdin in serve mode.\nSee docs/PROTOCOL.md and examples/demo.py. Paths are relative to the working directory."
         );
         return;
     }
@@ -43,7 +42,7 @@ fn native_command(args: &[String]) -> Result<(), String> {
             args[4].parse().map_err(|_| "invalid SC volume")?,
             args[5].parse().map_err(|_| "invalid SC gain")?,
         )?,
-        "play" if args.len() == 3 || args.len() == 4 => {
+        command @ ("play" | "sc-session-play") if args.len() == 3 || args.len() == 4 => {
             let seconds = args[2].parse::<f64>().map_err(|_| "invalid seconds")?;
             let volume = args
                 .get(3)
@@ -72,9 +71,10 @@ fn native_command(args: &[String]) -> Result<(), String> {
                     .ok_or("session has no parent")?
                     .to_path_buf(),
             );
-            daw::audio::play(&session, seconds, volume)?
+            if command == "sc-session-play" { daw::audio::play_sc_session(&session, seconds, volume)? }
+            else { daw::audio::play(&session, seconds, volume)? }
         }
-        _ => return Err("usage: daw devices | daw play SESSION.json SECONDS [VOLUME] | daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN".into()),
+        _ => return Err("usage: daw devices | daw play SESSION.json SECONDS [VOLUME] | daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN | daw sc-session-play SESSION.json SECONDS [VOLUME]".into()),
     };
     println!("{result}");
     Ok(())

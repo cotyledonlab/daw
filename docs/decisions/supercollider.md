@@ -83,3 +83,23 @@ The harness owns the launched SC server and starts `daw sc-stream-play QUEUE NON
 Verification also includes fmt, baseline/native/all-feature clippy/tests, both ignored real VST worker regressions, the script demo, six browser live-player regressions and an all-feature binary restored after testing. Feature builds and native harness runs must be sequential: rebuilding the default CLI while a multi-launch harness runs can replace its executable with a build lacking native audio. The existing preview remains on its original running engine.
 
 T11c2b2 remains: saved-session server ownership and multi-program identity, source bus capture/muting for saved programs, whole-session mixing/foreign effects, measured OSC-to-callback latency and sustained clock drift, revision-checked updates and pause/stop/automation semantics. This diagnostic proves a live source/effect/callback path, not full interactive session hosting.
+
+
+### Saved-session live ownership (T11c2b2a)
+
+`src/sc_server.rs` owns a loopback-only scsynth child process group, bounded nonblocking diagnostic readers, exact-PID UDP endpoint discovery and OSC completion/node/sync replies. Standard UGens plus the privately built capture UGen are the only plugin paths passed to the server. Setup maps queues before playback; the hardware callback sees only the existing native SPSC consumer. New `daw_sc_queue_create` performs exclusive queue initialization and preserves existing files.
+
+`src/sc_session.rs` isolates every saved SC source in its own server and rewrites its single SynthDef name internally, so identical names and an original capture-name collision cannot replace another program. Group creation is paused; named control bases/frame-zero points are supplied at source creation, and the tail capture synth is installed before the group runs. All groups start from a common future OSC timestamp. Saved points and source frees are scheduled before start; Rust applies exact sample-duration cutoffs, device gain and prepared gain chains, then sums with the built-in engine and clamps only at the master. Independent server clocks remain independent; this is bounded playback, without a drift compensation claim.
+
+The capture graph reads buses 0/1 into DawStream, uses ReplaceOut to silence them, then records the post-clear buses into a private 64-frame stereo buffer. Final readback must contain zero. Programs routed elsewhere are outside this mode's support, and arbitrary UGen behavior is unverified. Hardware callbacks do not perform OSC, process polling, queue mapping or foreign initialization.
+
+The finite saved-session CLI joins its worker with a longer bounded cleanup budget than the external-source diagnostic: four servers may each need TERM/KILL escalation. SIGINT/SIGTERM handlers only set a lock-free atomic; owner checks unwind and reap servers. SIGKILL cannot run destructors. Each successful report includes reaped PIDs, queue release, output-bus silence, quarter RMS and source/callback sample-order fingerprints. These tests establish native callback submission with a muted monitor, separately from acoustic delivery.
+
+```sh
+cargo build --locked --features native-audio
+DAW_TEST_SC_SAVED=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 -m unittest native.supercollider.test_saved_live
+```
+
+Verification: nine saved-session tests pass against the installed runtime/native callback, including a hard-coded bus-zero fixture, same-name programs, native control changes, gain automation/bypass, child crash/log overflow/OSC timeout, SIGINT and actual owned producer death. Saved JSON stays unchanged on failure; successful playback submits 48,000 frames with matching fingerprints, zero underruns, captured output-bus peaks zero and all reported child PIDs reaped. Seven bridge ABI tests and the three existing native-stream tests pass. Baseline/native/all-feature fmt/clippy/test checks, the scripting demo and 13 browser regressions pass.
+
+The ordinary JSONL transport still prepares v6 PCM, and `interactive_dsp` stays false there. T11c2b2b must add native transport ownership, revision-checked live edits and DSP acknowledgment semantics; measure control latency/drift; define pause/seek/loop; and integrate foreign effect routing. Browser editing remains a separate subsequent slice. Keep these boundaries in capabilities and documentation.

@@ -20,4 +20,8 @@ mod live_plugins;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 mod live_ring;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
+mod sc_server;
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+mod sc_session;
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
 mod sc_stream;

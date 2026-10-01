@@ -40,6 +40,9 @@ class QueueBridgeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.lib = ctypes.CDLL(str(LIBRARY))
+        cls.lib.daw_sc_queue_create.argtypes = [ctypes.c_char_p, ctypes.c_uint64,
+                                                 ctypes.c_char_p, ctypes.c_size_t]
+        cls.lib.daw_sc_queue_create.restype = ctypes.c_int
         cls.lib.daw_sc_queue_open.argtypes = [ctypes.c_char_p, ctypes.c_uint64,
                                                ctypes.c_char_p, ctypes.c_size_t]
         cls.lib.daw_sc_queue_open.restype = ctypes.c_void_p
@@ -54,6 +57,61 @@ class QueueBridgeTests(unittest.TestCase):
         error = ctypes.create_string_buffer(256)
         handle = self.lib.daw_sc_queue_open(os.fsencode(path), nonce, error, len(error))
         return handle, error.value.decode("utf-8", "replace")
+
+    def create_queue(self, path: bytes | Path, nonce: int = NONCE):
+        error = ctypes.create_string_buffer(256)
+        encoded = os.fsencode(path) if isinstance(path, Path) else path
+        result = self.lib.daw_sc_queue_create(encoded, nonce, error, len(error))
+        return result, error.value.decode("utf-8", "replace")
+
+    def test_create_initializes_exact_header_and_open_release_lifecycle(self):
+        with tempfile.TemporaryDirectory(prefix="daw-sc-create-") as temp:
+            path = Path(temp) / "queue"
+            result, message = self.create_queue(path)
+            self.assertEqual(result, 0, message)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.stat().st_size, ABI_SIZE)
+
+            with path.open("rb") as source:
+                raw = source.read()
+            self.assertEqual(
+                struct.unpack_from("<6IQ", raw),
+                (MAGIC, 1, 48000, 64, 2, 64, NONCE),
+            )
+            for offset in (64, 68, 72, 128, 132):
+                self.assertEqual(struct.unpack_from("<I", raw, offset)[0], 0)
+            self.assertFalse(any(raw[SAMPLES_OFFSET:]))
+
+            handle, message = self.open_queue(path)
+            self.assertTrue(handle, message)
+            self.lib.daw_sc_queue_close(handle)
+            reopened, message = self.open_queue(path)
+            self.assertTrue(reopened, message)
+            self.lib.daw_sc_queue_close(reopened)
+
+    def test_create_rejects_bad_paths_and_nonce_without_creating_files(self):
+        with tempfile.TemporaryDirectory(prefix="daw-sc-create-") as temp:
+            relative = b"relative-queue"
+            result, message = self.create_queue(relative)
+            self.assertEqual(result, -1)
+            self.assertIn("invalid queue path or nonce", message)
+            self.assertFalse(Path(relative.decode()).exists())
+
+            path = Path(temp) / "zero-nonce"
+            result, message = self.create_queue(path, 0)
+            self.assertEqual(result, -1)
+            self.assertIn("invalid queue path or nonce", message)
+            self.assertFalse(path.exists())
+
+    def test_create_refuses_existing_output_without_modifying_it(self):
+        with tempfile.TemporaryDirectory(prefix="daw-sc-create-") as temp:
+            path = Path(temp) / "existing"
+            original = b"preserve this existing output"
+            path.write_bytes(original)
+            result, message = self.create_queue(path)
+            self.assertEqual(result, -1)
+            self.assertIn("exclusively create", message)
+            self.assertEqual(path.read_bytes(), original)
 
     def test_rejects_nonce_abi_and_permissions(self):
         with tempfile.TemporaryDirectory(prefix="daw-sc-bridge-") as temp:

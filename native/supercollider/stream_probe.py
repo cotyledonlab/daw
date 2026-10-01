@@ -17,11 +17,24 @@ from native.supercollider.live_probe import OwnedServer, measure, CAPTURE_FRAMES
 from native.supercollider.score import _pstring, _ugen, sine_synthdef, SYNTH_NAME
 
 
-def stream_synthdef():
+def stream_synthdef(bus=16, mute=False, verify_mute=False):
     # Source writes private buses 16/17; this tail synth publishes both inputs.
     ugens = [_ugen("In", 2, [(-1, 0)], [2, 2]),
              _ugen("DawStream", 2, [(0, 0), (0, 1)], [2])]
-    body = _pstring("daw_stream_capture") + struct.pack(">ifiii", 1, 16.0, 0, 0, 2)
+    constants = [float(bus), 0.0]
+    if mute:
+        ugens.extend([_ugen("DC", 2, [(-1, 1)], [2]),
+                      _ugen("ReplaceOut", 2, [(-1, 1), (2, 0), (2, 0)], [])])
+    if verify_mute:
+        if not mute:
+            raise ValueError("verification requires muted output buses")
+        constants.append(1.0)
+        ugens.extend([_ugen("In", 2, [(-1, 1)], [2, 2]),
+                      _ugen("RecordBuf", 2, [(-1, 1), (-1, 1), (-1, 2), (-1, 1),
+                                            (-1, 2), (-1, 2), (-1, 2), (-1, 1),
+                                            (4, 0), (4, 1)], [2])])
+    body = _pstring("daw_stream_capture") + struct.pack(
+        ">i" + str(len(constants)) + "fiii", len(constants), *constants, 0, 0, len(ugens))
     return b"SCgf" + struct.pack(">ih", 2, 1) + body + b"".join(ugens) + struct.pack(">h", 0)
 
 

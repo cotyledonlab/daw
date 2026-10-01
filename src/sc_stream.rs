@@ -1,4 +1,4 @@
-//! Finite diagnostic SC queue drainer. All mapping and foreign calls stay on
+//! SC queue ownership and finite source drainer. All mapping and foreign calls stay on
 //! this non-realtime worker; the hardware callback consumes live_ring only.
 use crate::{
     effects::PreparedChain,
@@ -24,7 +24,7 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     fn dlclose(handle: *mut c_void) -> c_int;
 }
-struct Queue {
+pub(crate) struct Queue {
     library: NonNull<c_void>,
     handle: NonNull<c_void>,
     pop: Pop,
@@ -32,7 +32,7 @@ struct Queue {
     close: Close,
 }
 impl Queue {
-    fn open(path: &Path, nonce: u64) -> Result<Self, String> {
+    pub(crate) fn open(path: &Path, nonce: u64) -> Result<Self, String> {
         let library_path = std::env::var_os("DAW_SC_QUEUE_LIBRARY")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
@@ -81,7 +81,7 @@ impl Queue {
             })
         }
     }
-    fn pop(&mut self, buffer: &mut [f32; 128]) -> Result<bool, String> {
+    pub(crate) fn pop(&mut self, buffer: &mut [f32; 128]) -> Result<bool, String> {
         // SAFETY: this worker owns the queue and writable 128-sample block.
         match unsafe { (self.pop)(self.handle.as_ptr(), buffer.as_mut_ptr()) } {
             0 => Ok(false),
@@ -93,6 +93,47 @@ impl Queue {
             }
         }
     }
+}
+
+pub(crate) fn create_queue(path: &Path, nonce: u64) -> Result<(), String> {
+    type Create = unsafe extern "C" fn(*const c_char, u64, *mut c_char, usize) -> c_int;
+    let library_path = std::env::var_os("DAW_SC_QUEUE_LIBRARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("output/sc-stream/libdaw-sc-queue.dylib")
+        });
+    if !library_path.is_absolute() || !library_path.is_file() {
+        return Err("SC queue library unavailable; build_stream.py required".into());
+    }
+    let library_path =
+        CString::new(library_path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
+    let path = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
+    // SAFETY: owned path; creation export is the exact non-realtime C ABI.
+    unsafe {
+        let library =
+            NonNull::new(dlopen(library_path.as_ptr(), 6)).ok_or("cannot load SC queue library")?;
+        let symbol = dlsym(library.as_ptr(), c"daw_sc_queue_create".as_ptr());
+        if symbol.is_null() {
+            dlclose(library.as_ptr());
+            return Err("SC queue creation export unavailable".into());
+        }
+        let create = std::mem::transmute::<*mut c_void, Create>(symbol);
+        let mut error = [0 as c_char; 256];
+        let result = create(path.as_ptr(), nonce, error.as_mut_ptr(), error.len());
+        dlclose(library.as_ptr());
+        if result != 0 {
+            let error = error
+                .iter()
+                .take_while(|&&value| value != 0)
+                .map(|&value| value as u8)
+                .collect::<Vec<_>>();
+            return Err(format!(
+                "SC queue creation failed: {}",
+                String::from_utf8_lossy(&error)
+            ));
+        }
+    }
+    Ok(())
 }
 impl Drop for Queue {
     fn drop(&mut self) {
@@ -108,8 +149,36 @@ pub(crate) struct Worker {
     pub(crate) control: Control,
     ready: Receiver<Result<(), String>>,
     thread: Option<JoinHandle<Result<Value, String>>>,
+    begin: Option<mpsc::SyncSender<()>>,
+    stop_timeout: Duration,
 }
 impl Worker {
+    pub(crate) fn new(
+        control: Control,
+        ready: Receiver<Result<(), String>>,
+        thread: JoinHandle<Result<Value, String>>,
+        begin: Option<mpsc::SyncSender<()>>,
+    ) -> Self {
+        Self {
+            control,
+            ready,
+            thread: Some(thread),
+            begin,
+            stop_timeout: Duration::from_secs(2),
+        }
+    }
+    pub(crate) fn with_stop_timeout(mut self, timeout: Duration) -> Self {
+        self.stop_timeout = timeout;
+        self
+    }
+    pub(crate) fn begin(&mut self) -> Result<(), String> {
+        if let Some(begin) = self.begin.take() {
+            begin
+                .try_send(())
+                .map_err(|_| "SC source start unavailable".to_string())?;
+        }
+        Ok(())
+    }
     pub(crate) fn wait_ready(&self) -> Result<(), String> {
         self.ready
             .recv_timeout(Duration::from_secs(5))
@@ -117,10 +186,11 @@ impl Worker {
     }
     pub(crate) fn finish(&mut self) -> Result<Value, String> {
         self.control.request_stop();
+        self.begin.take();
         let Some(worker) = self.thread.take() else {
             return Err("SC stream worker already released".into());
         };
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + self.stop_timeout;
         while !worker.is_finished() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(1));
         }
@@ -213,6 +283,8 @@ pub(crate) fn start(
         control,
         ready: prepared,
         thread: Some(worker),
+        begin: None,
+        stop_timeout: Duration::from_secs(2),
     };
     match opening.recv_timeout(Duration::from_secs(2)) {
         Ok(Ok(())) => Ok((consumer, guard)),

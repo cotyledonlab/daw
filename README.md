@@ -2,7 +2,7 @@
 
 A minimal, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, and offline stereo WAV rendering of built-in sine tracks.
 
-Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. Schema-v6 SuperCollider programs can be saved as tracks and prepared through owned offline jobs for rendering and rate-matched native playback. Interactive SuperCollider DSP, Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
+Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. Schema-v6 SuperCollider programs can be saved as tracks and prepared through owned offline jobs for rendering and rate-matched native playback. A finite macOS CLI can also play saved SuperCollider sources live with built-in tracks and gain effects; interactive transport controls, Csound/Pure Data and recording remain unavailable. Schema-v2 sine notes and PCM WAV clips can be sequenced through the scripting interface. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/INTEGRATIONS.md) record hosting options.
 
 ## Run
 
@@ -186,6 +186,16 @@ DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 e
 ```
 
 This creates a schema-v6 project with two embedded SynthDefs, saved named control values/events and serial gain effects; it saves, reloads and exports the arrangement. Add `--native` for a bounded silent hardware smoke test. Preparation captures floating-point source audio outside callbacks, then the DAW routes it through its effects. A source has a finite duration; at most four sources and ten seconds of summed source duration are allowed. Reload regenerates audio, while playback/rendering reuse the prepared snapshot. Native playback requires a matching sample rate. Runtime/control failures preserve the active session. The browser editor does not import or edit these sessions yet, and prepared playback does not provide interactive SuperCollider DSP. See the [schema-v6 contract](docs/PROTOCOL.md#schema-v6-prepared-supercollider-sources).
+
+Saved v6 sources can now run live without offline preparation through a separate finite macOS CLI:
+
+```sh
+cargo build --locked --features native-audio
+python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollider-3.14.1
+DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth target/debug/daw sc-session-play path/to/session.json 1 0
+```
+
+The last argument is monitor volume (0 for a muted callback check; default 0.25). This mode requires a 48 kHz default output device, schema v6 and at most ten seconds. It starts a separate owned server per SuperCollider track, preserving same-name programs, captures stereo buses 0/1 and clears them before SuperCollider hardware output. Saved native control points, source duration/gain, serial gain effects (including automation/bypass), built-in sine/notes and rate-matched PCM clips feed the DAW's fixed native callback queue. AU/VST3 effects are rejected in this mode. Final JSON reports frame counts, source/callback sample-order fingerprints, quarter RMS, output-bus peaks and released server PIDs; readiness uses stderr. Ctrl+C or SIGTERM performs owned cleanup. Abrupt process termination (SIGKILL) cannot run that cleanup. This mode is separate from JSONL transport and the browser; pause/seek/loop, interactive control edits, clock-drift/latency characterization and long playback remain pending. Verified with SuperCollider 3.14.1 on macOS arm64 using a muted monitor; acoustic delivery and arbitrary UGens are unverified.
 
 The separate macOS [interactive SC probe](native/supercollider/live_probe.py) verifies owned OSC lifecycle and a control change reaching finite private-bus audio capture. It keeps output buses silent and does not add live runtime playback to the DAW. The [streaming gates](docs/decisions/supercollider.md#streaming-decision-and-remaining-gates-t11c2) remain outstanding.
 
