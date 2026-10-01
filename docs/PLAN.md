@@ -304,6 +304,14 @@ Use separate commits. Start Csound with CLI rendering, then assess libcsound blo
 
 Verification: all 13 Csound integration tests pass, including three real-runtime tests for signal, 44.1 kHz override/ignored device options and invalid-program rollback. Portable and all-feature fmt/clippy/tests/build and both demos pass; two existing opt-in live VST3 Rust tests remain ignored. Coverage includes strict params/input, missing runtime, timeout/descendant cleanup, malformed/oversized output and destination preservation. Dependency notices are recorded. Csound 6/other platforms, arbitrary opcodes, assets, live block processing and saved track devices remain unverified or pending. T12 overall remains open; proceed to the bounded libcsound diagnostic (T12a2) or independent libpd patch proof (T12b), with stronger-model FFI review.
 
+### T12a2: owned libcsound block/control proof (implemented)
+
+The separate Unix `native/csound/block_probe.py` loads the pinned Csound 7 double-sample API in an owned child. One thread controls initialization, compile/start, 64-frame spin/spout access, control readback, DSP, reset/recompile and destruction. Two passes produce identical checked stereo audio with a 440/660 Hz and 0.1/0.05 gain change at frame 24,576. Host input offsets prove stereo input routing. The finite source completes at 49,152 frames; no hardware stream, saved device or protocol command is added. See [the measured contract](decisions/csound.md#csound-7-blockcontrol-proof-t12a2).
+
+Verification: all nine block-diagnostic tests pass, including real-library signal/reset and invalid-compilation checks. Missing/invalid libraries, malformed reports, output limits, deadlines and descendant cleanup are covered. Portable Rust fmt/clippy/tests and the baseline demo pass; the all-feature binary is restored.
+
+Next implement T12a3: a versioned embedded Csound source and controls, validation/preparation before session mutation, owned worker block production into the native fixed queue, startup/backpressure/stop ownership and callback evidence. Keep foreign DSP and control calls off the hardware callback. Pure Data/libpd remains T12b; broader T12 and T13 are still open.
+
 ### T13: agent jobs and thin UI
 
 **Depends on:** T02, T07b, T08b, one native plugin, one runtime device. **Owner:** separate Luna tasks after interface review.

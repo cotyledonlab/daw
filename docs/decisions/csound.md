@@ -16,4 +16,27 @@ Csound's pinned [COPYING](https://github.com/csound/csound/blob/7.0.0-beta.17/CO
 
 ## Next bounded tickets
 
-T12a2 should prove `csoundPerformKsmps` with the same fixture in a separate diagnostic process: explicit `spout`/`spin` ownership, native control channels, fixed block size, init/perform/cleanup lifecycle, failure reporting and sample evidence. Review FFI and thread ownership before integrating a saved track device. Keep foreign initialization and DSP off hardware callbacks. T12b should independently spike one libpd patch with controlled search paths/externals, fixed block size and explicit instance/thread ownership. T13 cancellation/subscriptions remain separate; standalone export is not a live runtime track.
+T12a2 now proves finite `csoundPerformKsmps` blocks and native controls in an owned child (below). T12a3 should add a saved Csound source with embedded bounded program/controls and transactional preparation, then route its owned block producer into the existing native fixed queue. Review schema, FFI and thread ownership before integration. A worker/block proof alone must not be exposed as successful live transport. Keep foreign initialization and DSP off hardware callbacks. T12b should independently spike one libpd patch with controlled search paths/externals, fixed block size and explicit instance/thread ownership. T13 cancellation/subscriptions remain separate; standalone export is not a live runtime track.
+
+## Csound 7 block/control proof (T12a2)
+
+`native/csound/block_probe.py` loads an explicit absolute `DAW_CSOUND_LIBRARY` only inside a fresh owned Unix child process. It performs the checked-in `block_fixture.csd` through the pinned Csound 7 double-sample ABI. The diagnostic rejects other major/sample-size ABIs before instance creation; required symbols must exist. Csound 6 uses different signatures and is intentionally not accepted. This does not add a Rust protocol method, capability flag, saved device or GUI control; `csound_offline.native_playback` remains false.
+
+One child thread owns library initialization, instance creation, compilation, control-channel access, each DSP block and reset/destruction. `csoundInitialize` disables Csound signal/atexit registration. An empty opcode search directory limits automatic third-party module loading for this fixture, and owned empty rc files/private cwd avoid user launch configuration. The program uses built-in opcodes. `csoundSetHostAudioIO` is set before compilation/start to disable Csound backend sound I/O; no hardware stream or WAV file is opened. This is trusted native code, not a sandbox or an assertion that arbitrary code cannot open a device.
+
+The program declares 48 kHz, 64 frames per control block, stereo input/output and `0dbfs=1`. The host verifies those values before accessing buffers. It obtains borrowed `spin` before each perform call and overwrites all 128 input samples with left `0.01`/right `-0.02`. It copies borrowed `spout` immediately after each call, before another perform/reset. All output must be finite; channel subtraction must match `0.03` within `1e-12`. No pointer survives reset/destruction. All Python allocations, hashing and signal analysis are diagnostic work on the owning thread, never hardware callback work.
+
+Native frequency/gain channels are set and read back exactly before start, then changed at frame 24,576 between block calls. The host captures 768 blocks/49,152 frames, verifies clean score completion, resets and recompiles the same instance, repeats the operation and compares the full reports/sample SHA-256 digests. Finally it resets/destroys the instance before reporting success. Failure reporting and child group/deadline/diagnostic cleanup are owned by the parent. The final report is a bounded private JSON file validated by the parent; stdout contains only the successful JSON report. Errors emit structured `runtime_error` JSON to stderr and return nonzero.
+
+The tested 7.0.0-beta.17 library produced 440.008/660.002 Hz, peaks 0.100/0.050 and centered RMS 0.070714/0.035351; RMS ratio was 0.499922. Both passes produced digest `b62f18af878f5a119fd3e4b7da45de7fc4a21ad6f53080f4276f6338aba49e55`. Performance runs without wall-clock pacing: this demonstrates changes reaching successive DSP blocks, not real-time delivery, worker deadline performance, audio callback safety or acoustic output. Queue backpressure, startup prefill, native control acknowledgments and saved-session transactional validation are the next integration gates.
+
+Run with:
+
+```sh
+DAW_CSOUND_LIBRARY=/absolute/CsoundLib64 python3 native/csound/block_probe.py
+DAW_TEST_CSOUND_BLOCKS=1 DAW_CSOUND_LIBRARY=/absolute/CsoundLib64 python3 -m unittest native.csound.test_blocks
+```
+
+All nine block-diagnostic tests pass, including the real-library signal/reset and invalid-compilation cases. Fake children cover missing/invalid library selection, strict report validation (including nonfinite values), malformed/oversized/special-file results, stdout/stderr overflow, deadlines and descendant-pipe cleanup. Portable Rust fmt/clippy/tests and the baseline demo pass; the all-feature binary remains available.
+
+The extracted official macOS framework library works directly without the relocated executable's `DYLD_FRAMEWORK_PATH` requirement. No library binaries or third-party headers are committed. The dependency notices above continue to apply. ABI sources are the shipped and pinned [csound.h](https://github.com/csound/csound/blob/7.0.0-beta.17/include/csound.h) and [csound_rtaudio.h](https://github.com/csound/csound/blob/7.0.0-beta.17/include/csound_rtaudio.h); the older [6.18 API](https://csound.com/docs/api/group__RTAUDIOIO.html) explains buffer ownership but does not define this v7 binding.
