@@ -201,7 +201,7 @@ pub fn render(csd: &Path, destination: &Path, rate: u32, frames: u64) -> Result<
 }
 
 #[cfg(unix)]
-fn diagnostics(mut pipe: impl std::io::Read) -> std::io::Result<(Vec<u8>, bool)> {
+pub(crate) fn diagnostics(mut pipe: impl std::io::Read) -> std::io::Result<(Vec<u8>, bool)> {
     let mut bytes = Vec::new();
     let mut overflow = false;
     let mut chunk = [0; 4096];
@@ -218,7 +218,7 @@ fn diagnostics(mut pipe: impl std::io::Read) -> std::io::Result<(Vec<u8>, bool)>
 }
 
 #[cfg(unix)]
-fn kill_group(pid: u32) {
+pub(crate) fn kill_group(pid: u32) {
     unsafe extern "C" {
         fn kill(pid: i32, signal: i32) -> i32;
     }

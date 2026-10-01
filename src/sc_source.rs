@@ -1,9 +1,5 @@
 //! Saved SuperCollider programs prepared as owned, finite PCM sources.
-use crate::{
-    assets::PreparedAudioClip,
-    session::{Device, Session},
-    synthdef,
-};
+use crate::synthdef;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -46,7 +42,7 @@ pub struct Point {
 pub struct Prepared {
     key: Vec<u8>,
     sample_rate: u32,
-    audio: Arc<Vec<[f64; 2]>>,
+    pub(crate) audio: Arc<Vec<[f64; 2]>>,
 }
 
 impl Source {
@@ -131,7 +127,7 @@ impl Source {
             .map_err(|e| format!("cannot identify SuperCollider source: {e}"))
     }
 
-    fn prepare(&self, rate: u32) -> Result<Arc<Prepared>, String> {
+    pub(crate) fn prepare(&self, rate: u32) -> Result<Arc<Prepared>, String> {
         self.validate(rate)?;
         let key = self.key()?;
         if let Some(prepared) = &self.prepared {
@@ -196,78 +192,7 @@ impl Source {
     }
 }
 
-pub fn prepare_session(session: &mut Session) -> Result<(), String> {
-    session.validate()?;
-    if !session
-        .tracks
-        .iter()
-        .any(|track| matches!(track.device, Device::Supercollider(_)))
-    {
-        return Ok(());
-    }
-    if serde_json::to_vec_pretty(session)
-        .map_err(|e| e.to_string())?
-        .len()
-        > crate::control::MAX_MESSAGE_BYTES - 4096
-    {
-        return Err("SuperCollider session exceeds the save/load byte limit".into());
-    }
-    let assets = crate::assets::prepare_with_budget(session, decoded_bytes(session))?;
-    for track in &mut session.tracks {
-        if let Device::Supercollider(source) = &mut track.device {
-            source.prepared = Some(source.prepare(session.sample_rate)?);
-        }
-    }
-    // Audio assets and runtime PCM share the decoded-session budget.
-    let runtimes = prepare_clips(session)?;
-    check_budget(assets.iter().chain(&runtimes))
-}
-
-pub(crate) fn decoded_bytes(session: &Session) -> usize {
-    session
-        .tracks
-        .iter()
-        .map(|track| match &track.device {
-            Device::Supercollider(source) => {
-                source.duration_frames as usize * std::mem::size_of::<[f64; 2]>()
-            }
-            _ => 0,
-        })
-        .sum()
-}
-
-pub fn prepare_clips(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
-    let mut clips = Vec::new();
-    for (track_index, track) in session.tracks.iter().enumerate() {
-        if let Device::Supercollider(source) = &track.device {
-            let prepared = source.prepare(session.sample_rate)?;
-            clips.push(PreparedAudioClip {
-                track_index,
-                start: 0,
-                end: source.duration_frames,
-                source_offset: 0,
-                gain: source.gain,
-                frames: Arc::clone(&prepared.audio),
-            });
-        }
-    }
-    Ok(clips)
-}
-
-pub fn check_budget<'a>(clips: impl Iterator<Item = &'a PreparedAudioClip>) -> Result<(), String> {
-    let mut unique = HashSet::new();
-    let mut bytes = 0;
-    for clip in clips {
-        if unique.insert(Arc::as_ptr(&clip.frames)) {
-            bytes += clip.frames.len() * std::mem::size_of::<[f64; 2]>();
-        }
-    }
-    if bytes > crate::assets::MAX_DECODED_BYTES {
-        Err("combined assets and runtime audio exceed decoded session budget".into())
-    } else {
-        Ok(())
-    }
-}
+pub use crate::runtime_sources::{check_budget, prepare_clips, prepare_session};
 
 fn string(value: &str) -> Vec<u8> {
     let mut data = value.as_bytes().to_vec();
@@ -334,6 +259,7 @@ fn set_message(index: usize, values: &[f64]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::{Device, Session};
 
     #[test]
     fn cached_runtime_pcm_obeys_track_gain_chain_duration_seek_and_loop() {

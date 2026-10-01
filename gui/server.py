@@ -31,6 +31,8 @@ def validate_editor_session_shape(session):
     if not isinstance(session, dict):
         return
     version = session.get("schema_version")
+    if type(version) is int and version == 7:
+        raise ValueError("Schema-v7 sessions, including Csound sources, require the scripting interface; this editor cannot edit them yet.")
     if type(version) is int and version in (2, 3, 5):
         raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
     if type(version) is not int or version not in (4, 6):

@@ -338,7 +338,7 @@ pub(crate) fn start(session: &Session, frames: u64) -> Result<(Consumer, WorkerG
     let lease = WorkerLease;
     let (mut producer, consumer, control) = live_ring::pair();
     let mut session = session.clone();
-    crate::sc_source::prepare_session(&mut session)?;
+    crate::runtime_sources::prepare_session(&mut session)?;
     let (ready, prepared) = std::sync::mpsc::sync_channel(1);
     let (commands, updates) =
         std::sync::mpsc::sync_channel::<ParameterChange>(MAX_PENDING_PARAMETERS);

@@ -346,6 +346,7 @@ class ServerIntegrationTests(unittest.TestCase):
             unsupported.append({**valid, "tracks": [track]})
         unsupported.extend((
             {**valid, "schema_version": 2},
+            {**valid, "schema_version": 7},
             {**valid, "expected_revision": "00"},
         ))
         with patch.object(self.server.engine, "call") as call:

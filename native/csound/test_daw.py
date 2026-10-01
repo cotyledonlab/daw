@@ -167,7 +167,8 @@ class DawCsoundTests(unittest.TestCase):
         self.assertTrue(support["configured"])
         self.assertFalse(support["session_device"])
         self.assertFalse(support["native_playback"])
-        self.assertNotIn("csound", caps["devices"])
+        self.assertIn("csound", caps["devices"])
+        self.assertTrue(caps["csound_sources"]["implemented"])
         before = self._state()
         output = self.directory / "render.wav"
         result = self._render(output)
