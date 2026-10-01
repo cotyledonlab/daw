@@ -3,9 +3,11 @@ use crate::{engine::Engine, render::validate_duration, session::Session};
 
 pub struct PlaybackBuffer {
     engine: Option<Engine>,
-    #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
     plugin: Option<crate::live_ring::Consumer>,
     timeline: u64,
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    source_digest: u64,
     channels: usize,
     remaining: u64,
     volume: f64,
@@ -39,9 +41,11 @@ impl PlaybackBuffer {
         let engine = Engine::prepare(&adjusted)?;
         Ok(Self {
             engine: Some(engine),
-            #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
             plugin: None,
             timeline: 0,
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
+            source_digest: crate::live_ring::DIGEST_START,
             channels,
             remaining: (seconds * f64::from(device_rate)).round() as u64,
             volume,
@@ -80,12 +84,44 @@ impl PlaybackBuffer {
                 engine: None,
                 plugin: Some(consumer),
                 timeline: 0,
+                source_digest: crate::live_ring::DIGEST_START,
                 channels,
                 remaining,
                 volume,
             },
             Some(guard),
         ))
+    }
+
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    pub(crate) fn from_stream(
+        consumer: crate::live_ring::Consumer,
+        frames: u64,
+        channels: usize,
+        volume: f64,
+    ) -> Result<Self, String> {
+        if frames == 0
+            || !(1..=32).contains(&channels)
+            || !volume.is_finite()
+            || !(0.0..=1.0).contains(&volume)
+        {
+            return Err("invalid live stream frames, channels or volume".into());
+        }
+        Ok(Self {
+            engine: None,
+            plugin: Some(consumer),
+            timeline: 0,
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
+            source_digest: crate::live_ring::DIGEST_START,
+            channels,
+            remaining: frames,
+            volume,
+        })
+    }
+
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    pub(crate) fn source_digest(&self) -> u64 {
+        self.source_digest
     }
 
     pub fn remaining_frames(&self) -> u64 {
@@ -130,19 +166,20 @@ impl PlaybackBuffer {
             return Err("partial device frame");
         }
         let frames = (output.len() / self.channels).min(self.remaining as usize);
-        #[cfg(all(feature = "vst3-live", target_os = "macos"))]
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
         if let Some(consumer) = &mut self.plugin {
             if consumer.failed() {
-                return Err("live plugin worker failed");
+                return Err("live audio worker failed");
             }
             let mut rendered = 0;
             for destination in output.chunks_exact_mut(self.channels).take(frames) {
                 let Some(frame) = consumer.pop() else {
                     if !consumer.done() {
-                        consumer.note_underrun();
+                        consumer.note_underrun(self.timeline);
                     }
                     break;
                 };
+                self.source_digest = crate::live_ring::digest_frame(self.source_digest, frame);
                 destination[0] = convert(if self.channels == 1 {
                     (frame.audio[0] + frame.audio[1]) * 0.5 * self.volume
                 } else {
@@ -182,7 +219,7 @@ impl PlaybackBuffer {
     }
 }
 
-#[cfg(all(test, feature = "vst3-live", target_os = "macos"))]
+#[cfg(all(test, feature = "native-audio", target_os = "macos"))]
 mod live_tests {
     use super::*;
     use crate::live_ring::{self, Frame};
@@ -190,6 +227,7 @@ mod live_tests {
         alloc::{GlobalAlloc, Layout, System},
         cell::Cell,
     };
+    #[cfg(feature = "vst3-live")]
     static NATIVE_FIXTURE_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
     struct Counted;
     thread_local! { static WATCH: Cell<bool> = const { Cell::new(false) }; static OPERATIONS: Cell<usize> = const { Cell::new(0) }; }
@@ -216,7 +254,7 @@ mod live_tests {
     #[global_allocator]
     static ALLOCATOR: Counted = Counted;
     #[test]
-    fn plugin_consumer_is_bounded_allocation_free_and_preserves_underrun_position() {
+    fn stream_consumer_is_bounded_allocation_free_and_preserves_underrun_position() {
         let (mut producer, consumer, control) = live_ring::pair();
         for i in 0..4 {
             producer
@@ -230,6 +268,8 @@ mod live_tests {
             engine: None,
             plugin: Some(consumer),
             timeline: 0,
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
+            source_digest: crate::live_ring::DIGEST_START,
             channels: 4,
             remaining: 8,
             volume: 0.5,
@@ -245,12 +285,23 @@ mod live_tests {
         assert_eq!(first, Ok(4));
         assert_eq!(second, Ok(0));
         assert_eq!(position, 4);
+        let expected_digest = (0..4).fold(crate::live_ring::DIGEST_START, |digest, index| {
+            crate::live_ring::digest_frame(
+                digest,
+                Frame {
+                    audio: [0.5, -0.25],
+                    timeline: index + 1,
+                },
+            )
+        });
+        assert_eq!(playback.source_digest(), expected_digest);
         assert_eq!(playback.remaining_frames(), 4);
         assert_eq!(control.underruns(), 2);
         assert!(output.iter().all(|s| *s == 0.0));
         producer.set_failed();
         assert!(playback.fill(&mut output, |s| s).is_err());
     }
+    #[cfg(feature = "vst3-live")]
     #[test]
     #[ignore = "requires built native fixture and DAW_VST3_FIXTURE_NO_EVENTS/REALTIME=1"]
     fn actual_live_worker_restores_state_automates_and_releases() {
@@ -288,6 +339,7 @@ mod live_tests {
         drop(playback);
         worker.as_mut().unwrap().finish().unwrap();
     }
+    #[cfg(feature = "vst3-live")]
     #[test]
     #[ignore = "requires built native fixture and DAW_VST3_FIXTURE_NO_EVENTS/REALTIME=1"]
     fn actual_live_parameter_update_preserves_phase_and_queue_bounds() {

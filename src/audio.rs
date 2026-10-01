@@ -29,6 +29,8 @@ struct Stats {
     observed: AtomicU8,
     volume: AtomicU64,
     level: AtomicU64,
+    pre_monitor_peak: AtomicU64,
+    source_digest: AtomicU64,
     // Single owner producer, single callback consumer. Payload may only be
     // overwritten after the callback releases the occupied slot.
     command: AtomicU8,
@@ -130,6 +132,78 @@ pub fn play(session: &Session, seconds: f64, volume: f64) -> Result<Value, Strin
     }))
 }
 
+/// Finite SC routing diagnostic. The caller owns the server process; this
+/// function owns only its queue consumer, worker and hardware stream.
+pub fn play_sc_stream(
+    path: &std::path::Path,
+    nonce: u64,
+    blocks: u32,
+    volume: f64,
+    gain: f64,
+) -> Result<Value, String> {
+    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+        return Err("volume must be finite and between 0 and 1".into());
+    }
+    let device = cpal::default_host()
+        .default_output_device()
+        .ok_or("no default output device")?;
+    let selected = device.default_output_config().map_err(|e| e.to_string())?;
+    let format = selected.sample_format();
+    let config: cpal::StreamConfig = selected.into();
+    if config.sample_rate.0 != 48000 {
+        return Err("SC live diagnostic requires a 48000 Hz output device".into());
+    }
+    let (consumer, mut worker) = crate::sc_stream::start(path, nonce, blocks, gain)?;
+    let renderer = PlaybackBuffer::from_stream(
+        consumer,
+        u64::from(blocks) * 64,
+        config.channels as usize,
+        1.0,
+    )?;
+    let stats = Arc::new(Stats::default());
+    stats.volume.store(volume.to_bits(), Relaxed);
+    // CoreAudio can call the renderer during stream construction, before play.
+    // Hold callbacks silent until the source queue has completed prefill.
+    stats.paused.store(true, Relaxed);
+    let stream = match format {
+        cpal::SampleFormat::F32 => stream::<f32>(&device, &config, renderer, stats.clone()),
+        cpal::SampleFormat::F64 => stream::<f64>(&device, &config, renderer, stats.clone()),
+        cpal::SampleFormat::I16 => stream::<i16>(&device, &config, renderer, stats.clone()),
+        cpal::SampleFormat::U16 => stream::<u16>(&device, &config, renderer, stats.clone()),
+        other => {
+            return Err(format!(
+                "unsupported SC diagnostic device format: {other:?}"
+            ));
+        }
+    }?;
+    // Harness may now create its source. This is diagnostic stderr, never a
+    // product protocol response or a claim that source audio has arrived.
+    eprintln!("DAW_SC_STREAM_READY");
+    worker.wait_ready()?;
+    stats.paused.store(false, Release);
+    stream.play().map_err(|e| e.to_string())?;
+    let deadline =
+        Instant::now() + Duration::from_secs_f64(f64::from(blocks) * 64.0 / 48000.0 + 3.0);
+    while !stats.done.load(Relaxed) && !stats.error.load(Relaxed) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    drop(stream);
+    let report = worker.finish()?;
+    if stats.error.load(Relaxed) {
+        return Err("SC native callback failed; stream released".into());
+    }
+    if !stats.done.load(Relaxed) {
+        return Err("SC native callback timed out; stream released".into());
+    }
+    Ok(
+        json!({"sample_rate":48000,"channels":config.channels,"volume":volume,
+        "source":report,"submitted_frames":stats.frames.load(Relaxed),"callbacks":stats.calls.load(Relaxed),
+        "underruns":worker.control.underruns(),"last_underrun_frame":worker.control.last_underrun_frame(),"callback_signal_peak":f64::from_bits(stats.pre_monitor_peak.load(Relaxed)),"callback_source_digest":format!("{:016x}",stats.source_digest.load(Relaxed)),"max_render_microseconds":stats.max_ns.load(Relaxed) as f64 / 1000.0,
+        "callbacks_over_buffer_budget":stats.over_budget.load(Relaxed),"stream_released":true,
+        "acoustic_verified":false,"session_transport":false}),
+    )
+}
+
 fn stream<T: SizedSample + FromSample<f64>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -179,7 +253,9 @@ fn stream<T: SizedSample + FromSample<f64>>(
                 let frames = output.len() / channels;
                 let volume = f64::from_bits(stats.volume.load(Relaxed));
                 let peak = std::cell::Cell::new(0.0_f64);
+                let pre_monitor_peak = std::cell::Cell::new(0.0_f64);
                 match renderer.fill(output, |sample| {
+                    pre_monitor_peak.set(pre_monitor_peak.get().max(sample.abs()));
                     let sample = sample * volume;
                     peak.set(peak.get().max(sample.abs()));
                     T::from_sample(sample)
@@ -192,7 +268,11 @@ fn stream<T: SizedSample + FromSample<f64>>(
                         stats.error.store(true, Relaxed);
                     }
                 }
+                stats.source_digest.store(renderer.source_digest(), Relaxed);
                 stats.level.store(peak.get().to_bits(), Relaxed);
+                stats
+                    .pre_monitor_peak
+                    .fetch_max(pre_monitor_peak.get().to_bits(), Relaxed);
                 stats.calls.fetch_add(1, Relaxed);
                 stats.max_frames.fetch_max(frames as u64, Relaxed);
                 let nanos = start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;

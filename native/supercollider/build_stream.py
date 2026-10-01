@@ -22,6 +22,8 @@ def main():
     common = ["xcrun", "clang++", "-std=c++20", "-Wall", "-Wextra", "-Werror"]
     subprocess.run(common + [str(ROOT / "native/supercollider/stream_reader.cpp"),
                              "-o", str(output / "reader")], check=True)
+    subprocess.run(common + ["-dynamiclib", str(ROOT / "native/supercollider/stream_bridge.cpp"),
+                             "-o", str(output / "libdaw-sc-queue.dylib")], check=True)
     includes = ["-I" + str(sdk / path) for path in ("include/plugin_interface", "include/common", "common")]
     subprocess.run(common + ["-Wno-unused-parameter", "-bundle", "-undefined", "dynamic_lookup",
                              *includes, str(ROOT / "native/supercollider/stream_ugen.cpp"),

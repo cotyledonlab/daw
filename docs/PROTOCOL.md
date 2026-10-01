@@ -1,6 +1,6 @@
 # Control protocol v1
 
-The separate SuperCollider shared-memory stream diagnostic does not add protocol commands or change runtime capabilities. Schema-v6 sources still prepare PCM offline for native playback; live SC control/audio routing into DAW transport remains pending.
+The separate SuperCollider shared-memory stream/native callback diagnostics do not add protocol commands or change runtime capabilities. `daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN` is a finite CLI diagnostic with a final JSON report and stderr readiness marker; it does not use the active session or transport. Schema-v6 sources still prepare PCM offline for native playback; live SC control/audio routing into DAW transport remains pending.
 
 Run `daw serve`. Each UTF-8 input line receives one JSON response in the same order. The last line may end at EOF. Flush after each request; the server flushes each response. Stdout contains protocol responses only; process diagnostics use stderr. Invalid requests do not terminate the server. EOF exits normally. Command errors return `ok: false` but do not set the process exit code; clients must inspect every response.
 

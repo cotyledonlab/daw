@@ -62,3 +62,24 @@ DAW_TEST_SC_STREAM=1 DAW_TEST_SC_LIVE=1 DAW_SCSYNTH=/Applications/SuperCollider.
 ```
 
 Ten combined tests passed, along with the existing Rust fmt/clippy/test checks and an all-feature build. The independent prototype does not alter the running preview. Remaining T11c2b gates: connect to the DAW's callback queue/effects, measure sustained sequence continuity, latency and clock drift, define pause/stop/update semantics, handle child death/deadline at that integration boundary, and isolate multiple saved program names. No x86_64/Linux, arbitrary SynthDef or long-running stream compatibility claim yet.
+
+## Source-to-native diagnostic (T11c2b1)
+
+`stream_bridge.cpp` exposes a concrete C consumer for the proven queue; open validates ownership/size/layout/nonce and claims one consumer lease. Pop rejects sticky producer faults or impossible index distances; close releases the lease/map/file. `src/sc_stream.rs` loads this owned library on one non-realtime worker, applies the existing `PreparedChain` gain effect, and feeds the existing fixed 1024-frame SPSC callback queue. Mapping, allocation, library initialization, sleeps and foreign calls remain outside hardware callbacks. Worker wait/stop and overall production are bounded; a detached stalled worker retains ownership until it exits. Playback is limited to 16..7500 blocks (1024..480000 frames), 48 kHz, finite native gain 0..4 and monitor volume 0..1. No saved session or protocol capability changes.
+
+The initial native experiment delivered every frame but reported an underrun at frame zero. Frame-position telemetry established that CoreAudio invoked the renderer during stream construction, before source creation/prefill. The diagnostic now holds its callback paused until the worker fills the queue. Increasing queue size was unnecessary; the original capacity is retained. The callback computes a fixed scalar sample/timeline fingerprint as it consumes frames; the worker computes the same before publishing. Equal noncryptographic fingerprints plus exact counts provide end-to-end sample-order evidence, alongside the queue's explicit ordering tests. The callback's pre-monitor peak remains measurable when the hardware monitor is muted.
+
+Three host tests passed: a six-second stream with 288,000 source/submitted frames, matching fingerprints and zero underruns; two two-second launches with clean consumer/stream release; and an owned producer kill yielding an incomplete-playback error, bounded callback timeout and released consumer lease. A 0.1 source through gain 0.5 reaches the callback at peak approximately 0.05. SuperCollider output-bus captures remain zero; the native monitor defaults to zero, and acoustic delivery is not claimed. Four C ABI tests cover identity/permissions, consumer exclusivity/reopen, PCM/wrap ordering, producer faults and invalid index distance. The native callback allocation regression also passes with fingerprinting enabled.
+
+```sh
+cargo build --locked --features native-audio
+python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollider-3.14.1
+DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 native/supercollider/native_probe.py
+DAW_TEST_SC_NATIVE=1 DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 -m unittest native.supercollider.test_native_stream
+```
+
+The harness owns the launched SC server and starts `daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN`; the Rust process owns only queue consumption and native playback. Diagnostic readiness is a stderr marker; stdout contains only its final JSON report. A producer crash does not magically clear stale producer leases or complete missing frames: the callback times out and the fresh queue is discarded. Product transport must retain actual child ownership and detect exits promptly rather than relying solely on this diagnostic timeout.
+
+Verification also includes fmt, baseline/native/all-feature clippy/tests, both ignored real VST worker regressions, the script demo, six browser live-player regressions and an all-feature binary restored after testing. Feature builds and native harness runs must be sequential: rebuilding the default CLI while a multi-launch harness runs can replace its executable with a build lacking native audio. The existing preview remains on its original running engine.
+
+T11c2b2 remains: saved-session server ownership and multi-program identity, source bus capture/muting for saved programs, whole-session mixing/foreign effects, measured OSC-to-callback latency and sustained clock drift, revision-checked updates and pause/stop/automation semantics. This diagnostic proves a live source/effect/callback path, not full interactive session hosting.

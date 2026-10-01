@@ -5,13 +5,15 @@ fn native_commands_fail_explicitly_without_supported_build() {
     if cfg!(all(feature = "native-audio", target_os = "macos")) {
         return;
     }
-    let result = Command::new(env!("CARGO_BIN_EXE_daw"))
-        .arg("devices")
-        .output()
-        .unwrap();
-    assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("requires macOS"));
-    assert!(result.stdout.is_empty());
+    for command in ["devices", "sc-stream-play"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_daw"))
+            .arg(command)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("requires macOS"));
+        assert!(result.stdout.is_empty());
+    }
 }
 
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
@@ -20,6 +22,8 @@ fn invalid_native_arguments_fail_before_device_access() {
     for args in [
         vec!["devices", "extra"],
         vec!["play", "missing.json", "invalid"],
+        vec!["sc-stream-play"],
+        vec!["sc-stream-play", "/unused", "invalid", "1500", "0", "0.5"],
     ] {
         let result = Command::new(env!("CARGO_BIN_EXE_daw"))
             .args(args)

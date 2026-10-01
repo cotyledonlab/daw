@@ -8,6 +8,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 pub(crate) const CAPACITY: usize = 1024;
+pub(crate) const DIGEST_START: u64 = 0xcbf29ce484222325;
+// Diagnostic order/sample fingerprint, not a cryptographic integrity check.
+pub(crate) fn digest_frame(mut digest: u64, frame: Frame) -> u64 {
+    for word in [
+        frame.audio[0].to_bits(),
+        frame.audio[1].to_bits(),
+        frame.timeline,
+    ] {
+        digest = (digest ^ word).wrapping_mul(0x100000001b3);
+    }
+    digest
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Frame {
@@ -23,6 +35,7 @@ struct Shared {
     failed: AtomicBool,
     done: AtomicBool,
     underruns: AtomicU64,
+    last_underrun_frame: AtomicU64,
 }
 
 // Each slot is written only by the producer when outside the unread interval,
@@ -59,6 +72,7 @@ pub(crate) fn pair() -> (Producer, Consumer, Control) {
         failed: AtomicBool::new(false),
         done: AtomicBool::new(false),
         underruns: AtomicU64::new(0),
+        last_underrun_frame: AtomicU64::new(0),
     });
     (
         Producer {
@@ -141,12 +155,18 @@ impl Consumer {
         self.shared.underruns.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn note_underrun(&self) {
+    pub(crate) fn note_underrun(&self, frame: u64) {
+        self.shared
+            .last_underrun_frame
+            .store(frame, Ordering::Relaxed);
         self.shared.underruns.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 impl Control {
+    pub(crate) fn last_underrun_frame(&self) -> u64 {
+        self.shared.last_underrun_frame.load(Ordering::Relaxed)
+    }
     pub(crate) fn request_stop(&self) {
         self.shared.stop.store(true, Ordering::Release);
     }
@@ -274,8 +294,8 @@ mod tests {
     #[test]
     fn underrun_counter_is_shared_and_monotonic() {
         let (_, consumer, control) = pair();
-        consumer.note_underrun();
-        consumer.note_underrun();
+        consumer.note_underrun(0);
+        consumer.note_underrun(0);
         assert_eq!(consumer.underruns(), 2);
         assert_eq!(control.underruns(), 2);
     }
