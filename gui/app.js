@@ -7,6 +7,10 @@
   let draft = structuredClone(DEFAULT_SESSION);
   let busy = false;
   let unsupportedSession = false;
+  const editHistory = new SessionHistory();
+  let historyAction = false;
+  let timelineBusy = false;
+  let arrangementView = null;
   let appliedGeneration = 0;
   let metadataRequestTail = Promise.resolve();
   let metadataCache = new Map();
@@ -449,7 +453,7 @@
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
     const addCsound = $('#add-csound-button');
-    addCsound.disabled = unsupportedSession || busy || locked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0;
+    addCsound.disabled = unsupportedSession || busy || locked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0 || SessionEditor.arrangement(draft);
     addCsound.title = csoundBridgeAvailable ? 'Add a CSD program as a Csound track (format 7).' : 'Restart the local server to enable Csound imports.';
     tracksEl.querySelectorAll('button, input').forEach(control => {
       const row = control.closest('.effect-row');
@@ -459,15 +463,26 @@
         liveParameterEligible(row.dataset.trackId, row.dataset.effectId, control.closest('[data-parameter-id]').dataset.parameterId);
       control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true' || (locked && control.dataset.structural === 'true');
     });
-    rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0 || hasSources();
-    if ([4, 6, 7].includes(draft.schema_version)) {
+    rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0 || hasSources() || SessionEditor.arrangement(draft);
+    if (draft.schema_version !== 1) {
       outputMode.querySelector('option[value="browser"]').disabled = true;
       playButton.disabled ||= !nativeAvailable || (SessionEditor.plugins(draft).length > 0 && !nativePluginsAvailable);
     }
     if (hasSources()) playButton.disabled ||= !canPlaySources() || draft.sample_rate !== 48000;
     renderButton.disabled ||= SessionEditor.plugins(draft).length > 0 && !offlinePluginsAvailable;
     tracksEl.querySelectorAll('select').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
-    tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable; });
+    tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable || SessionEditor.arrangement(draft); });
+    for (const id of ['new-arrangement-button', 'demo-arrangement-button']) {
+      const control = document.getElementById(id);
+      if (control) control.disabled = busy || locked || unsupportedSession;
+    }
+    const noteTrack = $('#add-note-track-button');
+    if (noteTrack) noteTrack.disabled = busy || locked || unsupportedSession || !SessionEditor.arrangement(draft) || draft.tracks.length >= 64;
+    if ($('#undo-button')) $('#undo-button').disabled = busy || locked || isDirty() || !editHistory.canUndo;
+    if ($('#redo-button')) $('#redo-button').disabled = busy || locked || isDirty() || !editHistory.canRedo;
+    if ($('#stop-button')) $('#stop-button').disabled = !nativeActive() && !player.context && !starting;
+    arrangementView?.updateTransport({...nativeSnapshot, loop_region: nativeActive() ? nativeSnapshot.loop_region : null, locked: busy || locked, pending: timelineBusy || nativeSnapshot.timeline_command_pending === true,
+      transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state) && nativeSnapshot.source_mode !== 'live'});
   }
 
   function announceError(message) {
@@ -569,13 +584,18 @@
   }
 
   function configureSessionMode() {
-    const effectsMode = [4, 6, 7].includes(draft.schema_version);
+    const effectsMode = draft.schema_version !== 1;
     outputMode.querySelector('option[value="browser"]').disabled = effectsMode;
     if (effectsMode && nativeAvailable) outputMode.value = 'native';
+    if (SessionEditor.arrangement(draft)) {
+      $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Edits apply while stopped; tempo changes the grid only.';
+    }
     durationInput.max = hasSources() || SessionEditor.plugins(draft).length ? '10' : '60';
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
     $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live sources. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved scalar/array controls without automation can change live; SC initialization-rate slots remain read-only. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
     $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
+    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = 'Native playback uses the applied arrangement. Click Play/Pause or Stop. Seek and loop become available during playback or pause; edits require stopped playback. The current run ends after 60 seconds, including pauses.';
+    if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Edits apply while stopped; tempo changes the grid only.';
   }
 
   function makeId() {
@@ -623,11 +643,12 @@
     for (let i = 0; i < 5; i++) miniWave.append(element('i'));
     icon.append(miniWave);
     const title = element('div', 'track-title');
-    title.append(element('h2', '', `Sine ${String(index + 1).padStart(2, '0')}`), element('p', '', 'Sine oscillator'));
+    title.append(element('h2', '', track.mode === 'sequenced' ? track.id : `Sine ${String(index + 1).padStart(2, '0')}`), element('p', '', track.mode === 'sequenced' ? 'Note instrument · sine' : 'Sine oscillator'));
     ident.append(icon, title, element('span', 'track-index', String(index + 1).padStart(2, '0')));
 
     const frequency = element('div', 'frequency-control');
     frequency.dataset.field = 'frequency';
+    frequency.hidden = track.mode === 'sequenced';
     const frequencyLabel = element('div', 'control-label');
     const frequencyLabelText = element('label', '', 'Frequency');
     const frequencyValue = element('output', 'control-value', `${formatFrequency(track.device.frequency_hz)} Hz`);
@@ -882,7 +903,7 @@
     const vst = element('button', 'button button-quiet add-vst3', 'Add VST3'); vst.type = 'button';
     vst.addEventListener('click', () => { const effect = effectCatalog[Number(select.value)]; if (effect) add(effect); });
     actions.append(gain);
-    if (![6, 7].includes(draft.schema_version)) actions.append(select, vst);
+    if (![6, 7].includes(draft.schema_version) && !SessionEditor.arrangement(draft)) actions.append(select, vst);
     panel.append(actions);
     return panel;
   }
@@ -902,6 +923,8 @@
     emptyEl.hidden = !empty;
     tracksEl.hidden = empty;
     $('#track-count').textContent = `${draft.tracks.length} ${draft.tracks.length === 1 ? 'track' : 'tracks'}`;
+    $('#arrangement').hidden = !SessionEditor.arrangement(draft);
+    arrangementView?.render(draft, {locked: busy || nativeLocked(), frame: nativeSnapshot.timeline_frame || 0, loop: nativeActive() ? nativeSnapshot.loop_region : null, transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state), pending: timelineBusy});
     syncStatus();
   }
 
@@ -912,12 +935,103 @@
   }
 
   function addTrack() {
-    if (busy || draft.tracks.length >= 64) return;
+    if (busy || nativeLocked() || draft.tracks.length >= 64) return;
+    if (SessionEditor.arrangement(draft)) { void editArrangement({type: 'addTrack'}); return; }
     const track = { id: makeId(), device: { kind: 'sine', frequency_hz: 440, gain: 0.15 } };
     if ([4, 6, 7].includes(draft.schema_version)) Object.assign(track, {mode: 'continuous', clips: [], effects: []});
     draft.tracks.push(track);
     renderTracks();
     markEdited();
+  }
+
+  async function editArrangement(action) {
+    if (busy || nativeLocked() || historyAction || unsupportedSession) return;
+    const before = clone(draft);
+    try {
+      const index = action.trackIndex;
+      const nextId = (prefix, items) => {
+        const used = new Set((items || []).map(item => item.id));
+        let number = 1;
+        while (used.has(`${prefix}-${number}`)) number += 1;
+        return `${prefix}-${number}`;
+      };
+      switch (action.type) {
+        case 'addTrack': draft = SessionEditor.addNoteTrack(draft, nextId('notes', draft.tracks)); break;
+        case 'addClip': draft = SessionEditor.addNoteClip(draft, index, {id: nextId('clip', draft.tracks[index]?.clips), start_frame: action.start_frame, length_frames: action.length_frames, notes: []}); break;
+        case 'moveClip': draft = SessionEditor.moveClip(draft, index, action.clipId, action.start_frame); break;
+        case 'resizeClip': draft = SessionEditor.resizeClip(draft, index, action.clipId, action.length_frames); break;
+        case 'duplicateClip': draft = SessionEditor.duplicateClip(draft, index, action.clipId, nextId('clip', draft.tracks[index]?.clips), action.start_frame); break;
+        case 'deleteClip': draft = SessionEditor.deleteClip(draft, index, action.clipId); break;
+        case 'addNote': draft = SessionEditor.addNote(draft, index, action.clipId, {...action.note, id: nextId('n', draft.tracks[index]?.clips.find(clip => clip.id === action.clipId)?.notes)}); break;
+        case 'editNote': draft = SessionEditor.editNote(draft, index, action.clipId, action.noteId, action.patch); break;
+        case 'deleteNote': draft = SessionEditor.deleteNote(draft, index, action.clipId, action.noteId); break;
+        case 'setTempo': draft = {...clone(draft), tempo_milli_bpm: action.tempo_milli_bpm}; break;
+        default: throw new Error('Unknown arrangement edit.');
+      }
+      const error = validateSession(draft);
+      if (error) throw new Error(error);
+      renderTracks();
+      if (!await applyDraft()) { draft = before; renderTracks(); }
+    } catch (error) { draft = before; renderTracks(); announceError(error.message); }
+  }
+
+  async function replaceWithArrangement(demo = false) {
+    if (busy || nativeLocked() || unsupportedSession) return;
+    if ((isDirty() || draft.tracks.length) && !window.confirm('Replace this session with a note arrangement? Save your current session first if needed.')) return;
+    const before = clone(draft);
+    stopLive();
+    draft = demo ? SessionEditor.createDemoSession() : SessionEditor.createArrangementSession(draft.sample_rate);
+    selectSampleRate(draft.sample_rate);
+    renderTracks();
+    if (!await applyDraft()) { draft = before; selectSampleRate(draft.sample_rate); renderTracks(); return; }
+    const end = Math.max(draft.sample_rate, ...draft.tracks.flatMap(track => track.clips || []).map(clip => clip.start_frame + clip.length_frames));
+    durationInput.value = String(Math.min(60, end / draft.sample_rate));
+    setNotice(demo ? 'Demo arrangement ready. Select a clip to edit notes, then play or export.' : 'Note arrangement ready. Add a note track and a clip to begin.');
+  }
+
+  async function traverseHistory(direction) {
+    if (busy || nativeLocked() || isDirty() || historyAction) return;
+    const target = direction === 'undo' ? editHistory.undoTarget(applied) : editHistory.redoTarget(applied);
+    if (!target) return;
+    historyAction = true;
+    const before = clone(draft);
+    const previousApplied = clone(applied);
+    draft = target;
+    selectSampleRate(draft.sample_rate);
+    renderTracks();
+    try {
+      if (await applyDraft({recordHistory: false})) {
+        if (direction === 'undo') editHistory.acceptUndo(previousApplied); else editHistory.acceptRedo(previousApplied);
+        setNotice(direction === 'undo' ? 'Edit undone.' : 'Edit redone.');
+      } else { draft = before; selectSampleRate(draft.sample_rate); renderTracks(); }
+    } finally { historyAction = false; syncStatus(); }
+  }
+
+  async function timelineCommand(path, payload) {
+    if (!nativeAvailable || !nativeActive() || timelineBusy || nativeSnapshot.source_mode === 'live') return;
+    timelineBusy = true;
+    const generation = ++nativeCommandGeneration;
+    nativeCommandsPending += 1;
+    syncStatus();
+    const operation = nativeCommandTail.then(async () => {
+      // Acknowledgment may arrive a callback later. Do not fill the one-slot handoff twice.
+      const deadline = Date.now() + 3000;
+      let snapshot = nativeSnapshot;
+      while (snapshot.timeline_command_pending) {
+        if (Date.now() > deadline) throw new Error('The timeline command was not acknowledged.');
+        await new Promise(resolve => setTimeout(resolve, 30));
+        snapshot = await (await request('/api/transport')).json();
+        if (generation === nativeCommandGeneration) applyNativeSnapshot(snapshot);
+      }
+      if (!['playing', 'paused'].includes(snapshot.state)) throw new Error('Start native playback before seeking or looping.');
+      const response = await request(path, {method: 'POST', body: JSON.stringify(payload)});
+      const accepted = await response.json();
+      if (generation === nativeCommandGeneration) applyNativeSnapshot(accepted);
+    });
+    nativeCommandTail = operation.catch(() => {});
+    try { await operation; }
+    catch (error) { announceError(error.message); }
+    finally { timelineBusy = false; nativeCommandsPending -= 1; syncStatus(); }
   }
 
   async function addCsoundFile(file) {
@@ -943,7 +1057,7 @@
     }
   }
 
-  async function applyDraft() {
+  async function applyDraft({recordHistory = true} = {}) {
     if ([...document.querySelectorAll('.frequency-control .number-input')].some((input) => input.value.trim() === '')) {
       announceError('Enter a frequency for every track before applying changes.');
       return false;
@@ -968,6 +1082,7 @@
       if (error) throw new Error(`The server returned an invalid session: ${error}`);
       invalidateEffectMetadata();
       const inspected = await inspectCurrentSession();
+      if (recordHistory && applied) editHistory.commit(applied, inspected.session || session);
       applied = clone(inspected.session || session);
       draft = clone(applied);
       rememberEffects();
@@ -1011,6 +1126,12 @@
     setNotice('Validated session downloaded as JSON.');
   }
 
+  function suggestArrangementDuration() {
+    if (!SessionEditor.arrangement(draft)) return;
+    const end = Math.max(draft.sample_rate, ...draft.tracks.flatMap(track => track.clips || []).map(clip => clip.start_frame + clip.length_frames));
+    durationInput.value = String(Math.min(60, end / draft.sample_rate));
+  }
+
   async function loadSession(file) {
     if (!file) return;
     if (isDirty() && !window.confirm('You have unapplied edits. Loading a session will discard them. Continue?')) {
@@ -1037,11 +1158,13 @@
       if (serverValidation) throw new Error(`The server returned an invalid session: ${serverValidation}`);
       invalidateEffectMetadata();
       const inspected = await inspectCurrentSession();
+      editHistory.reset();
       applied = clone(inspected.session || session);
       draft = clone(applied);
       rememberEffects();
       configureSessionMode();
       selectSampleRate(draft.sample_rate);
+      suggestArrangementDuration();
       renderTracks();
       setNotice(`Loaded ${file.name} and applied it to the session.`);
     } catch (error) {
@@ -1174,17 +1297,19 @@
         emptyEl.hidden = true;
         $('#track-count').textContent = `${session.tracks.length} ${session.tracks.length === 1 ? "track" : "tracks"} · read-only`;
         selectSampleRate(session.sample_rate);
-        setNotice('This session uses a timeline or effect format. Use the scripting interface; this editor supports continuous sine sessions only.', true);
+        setNotice('This session contains devices or clips this editor cannot yet edit. Use the scripting interface to preserve its complete state.', true);
         return;
       }
       const validation = validateSession(session);
       if (validation) throw new Error(`The server returned an invalid session: ${validation}`);
       invalidateEffectMetadata();
+      editHistory.reset();
       applied = clone(session);
       draft = clone(session);
       rememberEffects();
       configureSessionMode();
       selectSampleRate(draft.sample_rate);
+      suggestArrangementDuration();
       renderTracks();
       setNotice('Connected. Your session is ready to edit.');
     } catch (error) {
@@ -1195,6 +1320,24 @@
       requestAppliedEffectMetadata();
     }
   }
+
+  arrangementView = ArrangementView.create($('#arrangement'), {
+    onSeek: frame => { void timelineCommand('/api/transport/seek', {frame}); },
+    onLoop: region => { void timelineCommand('/api/transport/loop', {region}); },
+    onEdit: action => { void editArrangement(action); },
+  });
+  $('#new-arrangement-button').addEventListener('click', () => { void replaceWithArrangement(); });
+  $('#demo-arrangement-button').addEventListener('click', () => { void replaceWithArrangement(true); });
+  $('#add-note-track-button').addEventListener('click', () => { void editArrangement({type: 'addTrack'}); });
+  $('#undo-button').addEventListener('click', () => { void traverseHistory('undo'); });
+  $('#redo-button').addEventListener('click', () => { void traverseHistory('redo'); });
+  $('#stop-button').addEventListener('click', () => { if (nativeActive()) void stopNative(); else stopLive(); });
+  document.addEventListener('keydown', event => {
+    if (event.target.closest('input, textarea, select') || busy || nativeLocked()) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+      event.preventDefault(); void traverseHistory(event.shiftKey ? 'redo' : 'undo');
+    }
+  });
 
   $('#add-track-button').addEventListener('click', addTrack);
   $('#add-csound-button').addEventListener('click', () => $('#csound-file').click());

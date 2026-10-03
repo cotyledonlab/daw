@@ -16,6 +16,7 @@ import webbrowser
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BODY = 1024 * 1024
+MAX_FRAME = 9007199254740991
 
 
 class EngineError(Exception):
@@ -31,13 +32,13 @@ def validate_editor_session_shape(session):
     if not isinstance(session, dict):
         return
     version = session.get("schema_version")
-    if type(version) is int and version in (2, 3, 5, 8):
-        raise ValueError("This editor supports continuous sine sessions only; use the scripting interface for timeline and effect sessions.")
-    if type(version) is not int or version not in (4, 6, 7):
+    if type(version) is int and version in (5, 8):
+        raise ValueError("Use the scripting interface for this session format.")
+    if type(version) is not int or version not in (2, 3, 4, 6, 7):
         return
-    if version == 4:
+    if version in (2, 3, 4):
         supported = ("sine",)
-        message = "This editor supports continuous sine tracks in v4."
+        message = "This editor supports continuous sine tracks and sequenced sine note clips in v2/v3/v4."
     elif version == 6:
         supported = ("sine", "supercollider")
         message = "This editor supports continuous sine/SuperCollider tracks with gain effects in v6."
@@ -47,16 +48,22 @@ def validate_editor_session_shape(session):
     tracks = session.get("tracks")
     if not isinstance(tracks, list):
         raise ValueError(message)
+    sequenced_session = any(isinstance(track, dict) and track.get("mode") == "sequenced" for track in tracks)
     for track in tracks:
         if not isinstance(track, dict):
             raise ValueError(message)
         device = track.get("device")
+        clips = track.get("clips")
+        mode = track.get("mode")
         if (not isinstance(device, dict) or device.get("kind") not in supported
-                or track.get("mode") != "continuous"
-                or track.get("clips") != []):
+                or not isinstance(clips, list)
+                or (mode == "continuous" and clips != [])
+                or (mode == "sequenced" and (version not in (2, 3, 4)
+                    or any(not isinstance(clip, dict) or clip.get("kind") != "notes" for clip in clips)))
+                or mode not in ("continuous", "sequenced")):
             raise ValueError(message)
 
-        if version in (6, 7) and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
+        if (version in (3, 6, 7) or (version == 4 and sequenced_session)) and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
             raise ValueError(f"Schema-v{version} GUI sessions support gain effects only.")
 
 
@@ -190,6 +197,8 @@ class Handler(BaseHTTPRequestHandler):
                   "/live.js": ("live.js", "text/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
+                  "/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
+                  "/history.js": ("history.js", "text/javascript; charset=utf-8"),
                   "/style.css": ("style.css", "text/css; charset=utf-8")}
         if self.path not in assets:
             self.send_json(404, {"error": "Not found."})
@@ -227,6 +236,23 @@ class Handler(BaseHTTPRequestHandler):
                 if action not in ("play", "pause", "resume", "stop", "volume"):
                     raise ValueError("Unknown transport action.")
                 self.send_json(200, self.server.engine.call("transport." + action, data))
+            elif self.path == "/api/transport/seek":
+                if set(data) != {"frame"}:
+                    raise ValueError("Expected frame only.")
+                if type(data["frame"]) is not int or not 0 <= data["frame"] <= MAX_FRAME:
+                    raise ValueError("frame must be an integer from 0 through MAX_FRAME.")
+                self.send_json(200, self.server.engine.call("transport.seek", data))
+            elif self.path == "/api/transport/loop":
+                if set(data) != {"region"}:
+                    raise ValueError("Expected region only.")
+                region = data["region"]
+                if region is not None and (not isinstance(region, dict)
+                        or set(region) != {"start_frame", "end_frame"}
+                        or type(region["start_frame"]) is not int
+                        or type(region["end_frame"]) is not int
+                        or not 0 <= region["start_frame"] < region["end_frame"] <= MAX_FRAME):
+                    raise ValueError("region must be null or integer frames with 0 <= start_frame < end_frame <= MAX_FRAME.")
+                self.send_json(200, self.server.engine.call("transport.loop", data))
             elif self.path == "/api/source/inspect":
                 if set(data) != {"synthdef_hex"}:
                     raise ValueError("Expected synthdef_hex only.")

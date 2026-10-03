@@ -17,11 +17,16 @@
     const bytes = utf8Length(value);
     return bytes >= (allowEmpty ? 0 : 1) && bytes <= maxBytes && !value.includes('\0');
   };
-  const supported = session => session && Array.isArray(session.tracks) &&
-    (session.schema_version === 1 || ([4, 6, 7].includes(session.schema_version) && session.tracks.every(track =>
+  const arrangement = session => [2, 3].includes(session?.schema_version) ||
+    (session?.schema_version === 4 && session.tracks?.some(track => track?.mode === 'sequenced'));
+  const supported = session => Boolean(session && Array.isArray(session.tracks) &&
+    (session.schema_version === 1 || ([2, 3, 4, 6, 7].includes(session.schema_version) && session.tracks.every(track =>
       track && ([6, 7].includes(session.schema_version) ? ['sine', 'supercollider', ...(session.schema_version === 7 ? ['csound'] : [])].includes(track.device?.kind) : track.device?.kind === 'sine') &&
-      track.mode === 'continuous' && Array.isArray(track.clips) && track.clips.length === 0 &&
-      (![6, 7].includes(session.schema_version) || (Array.isArray(track.effects) && track.effects.every(effect => effect?.kind === 'gain'))))));
+      Array.isArray(track.clips) &&
+      ([6, 7].includes(session.schema_version) ? track.mode === 'continuous' && track.clips.length === 0 :
+        ['continuous', 'sequenced'].includes(track.mode) && (track.mode !== 'continuous' || track.clips.length === 0) && track.clips.every(clip => clip?.kind === 'notes' && Array.isArray(clip.notes))) &&
+      (![6, 7].includes(session.schema_version) || Array.isArray(track.effects)) &&
+      ((!arrangement(session) && ![6, 7].includes(session.schema_version)) || ((track.effects === undefined || Array.isArray(track.effects)) && (track.effects || []).every(effect => effect?.kind === 'gain')))))));
   const sources = session => (session?.tracks || []).filter(track => ['supercollider', 'csound'].includes(track.device?.kind));
   function sourceControlsEditable(control, metadata, kind = 'supercollider') {
     if (kind === 'csound') return Boolean(Number.isFinite(control?.value) && Array.isArray(control.points) && control.points.length === 0);
@@ -30,12 +35,13 @@
   }
   const plugins = session => (session?.tracks || []).flatMap(track => track.effects || []).filter(effect => effect.kind === 'vst3');
   function validate(session) {
-    if (!supported(session)) return 'This editor supports continuous sine sessions in formats 1 and 4, sine/SuperCollider sessions with gain effects in format 6, and sine/SuperCollider/Csound sessions with gain effects in format 7. Notes, clips and other effects require scripts.';
+    if (!supported(session)) return 'This editor supports continuous sine sessions in formats 1 and 4, sine/SuperCollider sessions with gain effects in format 6, and sine/SuperCollider/Csound sessions with gain effects in format 7. Built-in sine note arrangements in formats 2, 3 and 4 are also supported; other clips require scripts.';
     if (!Number.isInteger(session.sample_rate) || session.sample_rate < 8000 || session.sample_rate > 192000) return 'Sample rate must be between 8,000 and 192,000 Hz.';
     if (session.tracks.length > 64) return 'A session can contain up to 64 tracks.';
+    if (arrangement(session)) { const error = validateArrangement(session); if (error) return error; }
     const ids = new Set();
     for (const track of session.tracks) {
-      if (!track || typeof track.id !== 'string' || !track.id.length || new TextEncoder().encode(track.id).length > 128 || ids.has(track.id)) return 'Track IDs must be unique and no longer than 128 UTF-8 bytes.';
+      if (!track || !validText(track.id, 128) || ids.has(track.id)) return 'Track IDs must be unique and no longer than 128 UTF-8 bytes.';
       ids.add(track.id);
       if (track.device?.kind === 'supercollider') {
         const source = track.device;
@@ -65,18 +71,190 @@
     if (plugins(session).length && session.sample_rate !== 48000) return 'VST3 effects require a 48 kHz session.';
     return null;
   }
+  const frame = value => Number.isSafeInteger(value) && value >= 0;
+  const range = (start, length) => frame(start) && frame(length) && length > 0 && Number.isSafeInteger(start + length);
+  function validateArrangement(session) {
+    if (!Number.isInteger(session.tempo_milli_bpm) || session.tempo_milli_bpm < 20000 || session.tempo_milli_bpm > 300000) return 'Tempo must be between 20 and 300 BPM.';
+    let clips = 0, notes = 0, continuous = 0;
+    const events = [];
+    for (const track of session.tracks) {
+      if (track.mode === 'continuous') continuous += 1;
+      if (session.schema_version === 2 && (track.effects !== undefined || track.automation !== undefined)) return 'Format 2 does not accept effects or automation.';
+      if ([3, 4].includes(session.schema_version) && !Array.isArray(track.effects)) return 'Tracks require an effects array.';
+      if ((track.effects || []).length > 16) return 'A track can contain up to 16 effects.';
+      const effectIds = new Set();
+      for (const effect of track.effects || []) {
+        if (!validText(effect.id, 128) || effectIds.has(effect.id) || !Number.isFinite(effect.gain) || effect.gain < 0 || effect.gain > 4 || typeof effect.bypass !== 'boolean') return 'Gain effects require unique IDs, a gain from 0 to 4 and a bypass flag.';
+        effectIds.add(effect.id);
+      }
+      const clipIds = new Set();
+      clips += track.clips.length;
+      for (const clip of track.clips) {
+        if (!validText(clip.id, 128) || clipIds.has(clip.id)) return 'Clip IDs must be unique within a track and no longer than 128 UTF-8 bytes.';
+        clipIds.add(clip.id);
+        if (!range(clip.start_frame, clip.length_frames)) return 'Clips require a nonnegative safe frame position and positive length.';
+        const noteIds = new Set();
+        notes += clip.notes.length;
+        for (const note of clip.notes) {
+          if (!note || !validText(note.id, 128) || noteIds.has(note.id)) return 'Note IDs must be unique within a clip and no longer than 128 UTF-8 bytes.';
+          noteIds.add(note.id);
+          if (!range(note.start_frame, note.duration_frames) || note.start_frame + note.duration_frames > clip.length_frames) return 'Note gates must have positive duration and end within their clip.';
+          if (!Number.isFinite(note.frequency_hz) || note.frequency_hz <= 0 || note.frequency_hz >= session.sample_rate / 2) return 'Note frequency must be positive and below Nyquist.';
+          if (!Number.isFinite(note.velocity) || note.velocity < 0 || note.velocity > 1) return 'Note velocity must be between 0 and 1.';
+          const off = clip.start_frame + note.start_frame + note.duration_frames;
+          const releaseEnd = off + Math.floor((session.sample_rate + 100) / 200);
+          if (!Number.isSafeInteger(releaseEnd)) return 'Note release exceeds the safe frame range.';
+          events.push([clip.start_frame + note.start_frame, 1], [Math.min(releaseEnd, clip.start_frame + clip.length_frames), -1]);
+        }
+      }
+    }
+    if (clips > 1024 || notes > 16384) return 'A session can contain up to 1024 clips and 16384 notes.';
+    events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let voices = continuous;
+    for (const [, delta] of events) { voices += delta; if (voices > 64) return 'Polyphony exceeds 64 voices.'; }
+    return null;
+  }
+  function midiToHz(midi) {
+    if (!Number.isFinite(midi)) throw new Error('MIDI pitch must be finite.');
+    const hz = 440 * 2 ** ((midi - 69) / 12);
+    if (!Number.isFinite(hz) || hz <= 0) throw new Error('MIDI pitch is outside the frequency range.');
+    return hz;
+  }
+  function hzToMidi(hz) {
+    if (!Number.isFinite(hz) || hz <= 0) throw new Error('Frequency must be finite and positive.');
+    return 69 + 12 * Math.log2(hz / 440);
+  }
+  function conversionBase(session) {
+    if (!Number.isInteger(session.sample_rate) || session.sample_rate < 8000 || session.sample_rate > 192000 ||
+        !Number.isInteger(session.tempo_milli_bpm) || session.tempo_milli_bpm < 20000 || session.tempo_milli_bpm > 300000) throw new Error('Valid sample rate and tempo are required.');
+  }
+  function roundedRatio(n, d) {
+    const result = Number((2n * n + d) / (2n * d));
+    if (!frame(result)) throw new Error('Conversion exceeds the safe frame range.');
+    return result;
+  }
+  function ticksToFrames(session, ticks) {
+    conversionBase(session); if (!frame(ticks)) throw new Error('Ticks must be nonnegative safe integers.');
+    return roundedRatio(BigInt(ticks) * BigInt(session.sample_rate) * 60000n, 960n * BigInt(session.tempo_milli_bpm));
+  }
+  function framesToTicks(session, frames) {
+    conversionBase(session); if (!frame(frames)) throw new Error('Frames must be nonnegative safe integers.');
+    return roundedRatio(BigInt(frames) * 960n * BigInt(session.tempo_milli_bpm), BigInt(session.sample_rate) * 60000n);
+  }
+  function snapFrame(session, frames, gridTicks = 240) {
+    if (!frame(gridTicks) || !gridTicks) throw new Error('Grid ticks must be positive safe integers.');
+    return ticksToFrames(session, Math.round(framesToTicks(session, frames) / gridTicks) * gridTicks);
+  }
+  function createArrangementSession(sampleRate = 48000, tempoMilliBpm = 120000) {
+    const next = {schema_version: 3, sample_rate: sampleRate, tempo_milli_bpm: tempoMilliBpm, tracks: []};
+    const error = validate(next); if (error) throw new Error(error);
+    return next;
+  }
+  function mutateArrangement(session, mutate) {
+    const error = validate(session); if (error) throw new Error(error);
+    if (![1, 2, 3, 4].includes(session.schema_version)) throw new Error('Note editing requires a built-in sine arrangement.');
+    const next = structuredClone(session);
+    if (next.schema_version === 1) {
+      next.schema_version = 3; next.tempo_milli_bpm = 120000;
+      next.tracks.forEach(track => { track.mode = 'continuous'; track.clips = []; track.effects = []; });
+    }
+    mutate(next);
+    const after = validate(next); if (after) throw new Error(after);
+    return next;
+  }
+  function noteTrack(next, index) {
+    const track = next.tracks[index];
+    if (!track || track.device?.kind !== 'sine' || track.mode !== 'sequenced') throw new Error('Select a sequenced sine track.');
+    return track;
+  }
+  function noteClip(next, index, id) {
+    const clip = noteTrack(next, index).clips.find(item => item.id === id);
+    if (!clip) throw new Error('Select an existing note clip.');
+    return clip;
+  }
+  function addNoteTrack(session, id) {
+    return mutateArrangement(session, next => {
+      const track = {id, mode: 'sequenced', device: {kind: 'sine', frequency_hz: 440, gain: 0.15}, clips: []};
+      if (next.schema_version !== 2) track.effects = [];
+      next.tracks.push(track);
+    });
+  }
+  function addNoteClip(session, index, clip) {
+    return mutateArrangement(session, next => noteTrack(next, index).clips.push({kind: 'notes', ...structuredClone(clip), notes: structuredClone(clip.notes || [])}));
+  }
+  function moveClip(session, index, id, startFrame) {
+    return mutateArrangement(session, next => { noteClip(next, index, id).start_frame = startFrame; });
+  }
+  function resizeClip(session, index, id, lengthFrames) {
+    return mutateArrangement(session, next => { noteClip(next, index, id).length_frames = lengthFrames; });
+  }
+  function duplicateClip(session, index, id, newId, startFrame) {
+    return mutateArrangement(session, next => {
+      const clip = structuredClone(noteClip(next, index, id)); clip.id = newId; clip.start_frame = startFrame;
+      noteTrack(next, index).clips.push(clip);
+    });
+  }
+  function deleteClip(session, index, id) {
+    return mutateArrangement(session, next => {
+      noteClip(next, index, id);
+      const track = noteTrack(next, index); track.clips = track.clips.filter(clip => clip.id !== id);
+    });
+  }
+  function addNote(session, index, clipId, note) {
+    return mutateArrangement(session, next => noteClip(next, index, clipId).notes.push(structuredClone(note)));
+  }
+  function editNote(session, index, clipId, noteId, patch) {
+    return mutateArrangement(session, next => {
+      const note = noteClip(next, index, clipId).notes.find(item => item.id === noteId);
+      if (!note) throw new Error('Select an existing note.');
+      Object.assign(note, structuredClone(patch));
+    });
+  }
+  function deleteNote(session, index, clipId, noteId) {
+    return mutateArrangement(session, next => {
+      const clip = noteClip(next, index, clipId);
+      if (!clip.notes.some(note => note.id === noteId)) throw new Error('Select an existing note.');
+      clip.notes = clip.notes.filter(note => note.id !== noteId);
+    });
+  }
+  function createDemoSession() {
+    let next = addNoteTrack(createArrangementSession(), 'lead');
+    next = addNoteTrack(next, 'bass');
+    // Eight two-bar phrases make sixteen bars in 4/4, with a four-chord progression.
+    const chords = [[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]];
+    const bassRoots = [36, 33, 29, 31];
+    const phraseFrames = ticksToFrames(next, 8 * 960);
+    for (let phrase = 0; phrase < 8; phrase += 1) {
+      const chord = chords[phrase % chords.length];
+      for (let track = 0; track < 2; track += 1) {
+        const notes = Array.from({length: 8}, (_, beat) => {
+          const pitch = track ? bassRoots[phrase % bassRoots.length] + (beat % 4 === 3 ? 12 : 0) :
+            chord[(beat + Math.floor(phrase / 4)) % chord.length] + (beat === 7 ? 12 : 0);
+          return {id: `n${beat + 1}`, start_frame: ticksToFrames(next, beat * 960),
+            duration_frames: ticksToFrames(next, track ? 720 : (beat % 2 ? 480 : 660)),
+            frequency_hz: midiToHz(pitch), velocity: track ? 0.65 : (beat % 4 === 0 ? 0.85 : 0.7)};
+        });
+        next = addNoteClip(next, track, {id: phrase ? `phrase-${phrase + 1}` : 'phrase',
+          start_frame: phrase * phraseFrames, length_frames: phraseFrames, notes});
+      }
+    }
+    return next;
+  }
   function addEffect(session, index, effect, id) {
     const error = validate(session); if (error) throw new Error(error);
+    if (arrangement(session) && effect?.kind !== 'gain') throw new Error('Note arrangement sessions support gain effects only.');
     if ([6, 7].includes(session.schema_version) && effect?.kind !== 'gain') throw new Error('SuperCollider/Csound GUI sessions support gain effects only.');
     const next = structuredClone(session);
     if (next.schema_version === 1) {
       next.schema_version = 4; next.tempo_milli_bpm = 120000;
       next.tracks.forEach(track => { track.mode = 'continuous'; track.clips = []; track.effects = []; });
     }
+    if (next.schema_version === 2) { next.schema_version = 3; next.tracks.forEach(track => { track.effects = []; }); }
     const track = next.tracks[index]; if (!track) throw new Error('Select an existing track.');
     if ((track.effects || []).length >= 16) throw new Error('A track can contain up to 16 effects.');
     if (effect.kind === 'vst3' && (next.sample_rate !== 48000 || plugins(next).length >= 8)) throw new Error('Use 48 kHz and at most eight VST3 effects per session.');
     track.effects ||= []; track.effects.push({...structuredClone(effect), id});
+    if (arrangement(next)) { const errorAfter = validate(next); if (errorAfter) throw new Error(errorAfter); }
     return next;
   }
   function addCsound(session, program, id, durationFrames) {
@@ -119,7 +297,7 @@
     if (track.automation) track.automation = track.automation.filter(lane => lane.effect_id !== id);
     return next;
   }
-  const api = {supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
+  const api = {arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
   if (typeof module !== 'undefined') module.exports = api;
   else root.SessionEditor = api;
 })(typeof window === 'undefined' ? globalThis : window);

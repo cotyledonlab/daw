@@ -1,4 +1,5 @@
 """Integration tests for the loopback HTTP bridge."""
+import copy
 import http.client
 import io
 import json
@@ -8,7 +9,7 @@ import unittest
 import wave
 from unittest.mock import patch
 
-from gui.server import EngineError, ROOT, Server
+from gui.server import EngineError, MAX_FRAME, ROOT, Server
 
 
 BINARY = ROOT / "target" / "debug" / "daw"
@@ -250,10 +251,10 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 422, body)
         self.assertEqual(self.get_session(), SESSION)
 
-    def test_note_session_upload_is_rejected_before_replacing_engine_session(self):
+    def test_unsupported_session_formats_are_rejected_before_replacing_engine_session(self):
         status, _, _ = self.post("/api/session", {"session": SESSION})
         self.assertEqual(status, 200)
-        for version in (2, 3, 5, 8):
+        for version in (5, 8):
             with self.subTest(version=version):
                 timeline_session = {"schema_version": version, "sample_rate": 48000,
                                     "tempo_milli_bpm": 120000, "tracks": []}
@@ -261,6 +262,128 @@ class ServerIntegrationTests(unittest.TestCase):
                 self.assertEqual(status, 422, body)
                 self.assertIn(b"scripting interface", body)
                 self.assertEqual(self.get_session(), SESSION)
+
+    def test_sine_note_and_continuous_sessions_replace_through_rust(self):
+        source = json.loads((ROOT / "examples/sessions/arpeggio.json").read_text())
+        for version in (2, 3, 4):
+            with self.subTest(version=version):
+                candidate = copy.deepcopy(source)
+                candidate["schema_version"] = version
+                candidate["tracks"].append({"id": "drone", "mode": "continuous", "clips": [],
+                                            "device": {"kind": "sine", "frequency_hz": 220, "gain": 0.01}})
+                if version >= 3:
+                    for track in candidate["tracks"]:
+                        track["effects"] = [{"kind": "gain", "id": "trim", "gain": 0.5, "bypass": False}]
+                status, body, _ = self.post("/api/session", {"session": candidate})
+                self.assertEqual(status, 200, body)
+                self.assertEqual(self.get_session(), candidate)
+
+    def test_invalid_note_and_stale_timeline_replacement_preserve_revision(self):
+        candidate = json.loads((ROOT / "examples/sessions/arpeggio.json").read_text())
+        status, body, _ = self.post("/api/session", {"session": candidate, "expected_revision": "0"})
+        self.assertEqual(status, 200, body)
+        status, body, _ = self.request("GET", "/api/session/inspect")
+        self.assertEqual(status, 200, body)
+        before = json.loads(body)
+        invalid = copy.deepcopy(candidate)
+        invalid["tracks"][0]["clips"][0]["notes"][0]["duration_frames"] = 0
+        for payload in ({"session": invalid, "expected_revision": before["revision"]},
+                        {"session": candidate, "expected_revision": "0"}):
+            status, body, _ = self.post("/api/session", payload)
+            self.assertEqual(status, 422, body)
+            status, body, _ = self.request("GET", "/api/session/inspect")
+            self.assertEqual(status, 200, body)
+            self.assertEqual(json.loads(body), before)
+
+    def test_continuous_v4_plugin_shape_still_reaches_engine(self):
+        candidate = copy.deepcopy(V4_GAIN_SESSION)
+        candidate["tracks"][0]["effects"] = [{"kind": "vst3", "id": "foreign"}]
+        with patch.object(self.server.engine, "call", return_value=candidate) as call:
+            status, body, _ = self.post("/api/session", {"session": candidate})
+        self.assertEqual(status, 200, body)
+        call.assert_called_once_with("session.replace", {"session": candidate})
+
+    def test_timeline_preflight_rejects_audio_runtime_and_non_gain_shapes(self):
+        source = json.loads((ROOT / "examples/sessions/arpeggio.json").read_text())
+        before = self.get_session()
+        for version in (2, 3, 4):
+            base = copy.deepcopy(source)
+            base["schema_version"] = version
+            if version >= 3:
+                base["tracks"][0]["effects"] = []
+            candidates = []
+            for kind in ("audio", "supercollider", "csound", "puredata"):
+                candidate = copy.deepcopy(base)
+                candidate["tracks"][0]["device"]["kind"] = kind
+                candidates.append(candidate)
+            candidate = copy.deepcopy(base)
+            candidate["tracks"][0]["clips"][0]["kind"] = "audio"
+            candidates.append(candidate)
+            if version >= 3:
+                candidate = copy.deepcopy(base)
+                candidate["tracks"].append({**copy.deepcopy(V4_GAIN_SESSION["tracks"][0]),
+                                            "effects": [{"kind": "vst3", "id": "foreign"}]})
+                candidates.append(candidate)
+            with patch.object(self.server.engine, "call") as call:
+                for candidate in candidates:
+                    with self.subTest(version=version, candidate=candidate):
+                        status, body, _ = self.post("/api/session", {"session": candidate})
+                        self.assertEqual(status, 422, body)
+                call.assert_not_called()
+        self.assertEqual(self.get_session(), before)
+
+    def test_timeline_transport_routes_authenticate_and_forward_exact_payload(self):
+        cases = (("seek", {"frame": MAX_FRAME}), ("seek", {"frame": 0}),
+                 ("loop", {"region": None}),
+                 ("loop", {"region": {"start_frame": 0, "end_frame": MAX_FRAME}}))
+        snapshot = {"state": "paused", "timeline_frame": 0, "timeline_command_pending": True}
+        for action, payload in cases:
+            path = "/api/transport/" + action
+            with self.subTest(action=action, payload=payload):
+                for headers in ({"token": False}, {"origin": "http://attacker.example"}, {"host": "attacker.example"}):
+                    with patch.object(self.server.engine, "call") as call:
+                        status, _, _ = self.request("POST", path, payload, **headers)
+                        self.assertEqual(status, 403)
+                        call.assert_not_called()
+                with patch.object(self.server.engine, "call", return_value=snapshot) as call:
+                    status, body, _ = self.post(path, payload)
+                self.assertEqual(status, 200, body)
+                call.assert_called_once_with("transport." + action, payload)
+                self.assertEqual(json.loads(body), snapshot)
+
+    def test_invalid_timeline_transport_payloads_never_reach_engine(self):
+        invalid_seek = ({}, {"frame": True}, {"frame": 0.5}, {"frame": "0"},
+                        {"frame": -1}, {"frame": MAX_FRAME + 1}, {"frame": 0, "extra": 1})
+        invalid_loop = ({}, {"region": False}, {"region": []}, {"region": {}, "extra": 1},
+                        {"region": {"start_frame": 0, "end_frame": 0}},
+                        {"region": {"start_frame": 1, "end_frame": 0}},
+                        {"region": {"start_frame": -1, "end_frame": 1}},
+                        {"region": {"start_frame": True, "end_frame": 1}},
+                        {"region": {"start_frame": 0, "end_frame": 1.5}},
+                        {"region": {"start_frame": 0, "end_frame": MAX_FRAME + 1}},
+                        {"region": {"start_frame": 0, "end_frame": 1, "extra": 1}})
+        before = self.get_session()
+        with patch.object(self.server.engine, "call") as call:
+            for action, payloads in (("seek", invalid_seek), ("loop", invalid_loop)):
+                for payload in payloads:
+                    with self.subTest(action=action, payload=payload):
+                        status, body, _ = self.post("/api/transport/" + action, payload)
+                        self.assertEqual(status, 422, body)
+            call.assert_not_called()
+        self.assertEqual(self.get_session(), before)
+
+    def test_timeline_transport_engine_errors_preserve_session_and_revision(self):
+        status, body, _ = self.request("GET", "/api/session/inspect")
+        self.assertEqual(status, 200, body)
+        before = json.loads(body)
+        for action, payload in (("seek", {"frame": 0}), ("loop", {"region": None})):
+            with patch.object(self.server.engine, "call", side_effect=EngineError("Timeline request unavailable.")):
+                status, body, _ = self.post("/api/transport/" + action, payload)
+            self.assertEqual(status, 422, body)
+            self.assertEqual(json.loads(body), {"error": "Timeline request unavailable."})
+        status, body, _ = self.request("GET", "/api/session/inspect")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body), before)
 
     def test_source_inspect_is_authenticated_bounded_and_forwards_only_synthdef(self):
         from examples.supercollider_tracks_demo import make_track
@@ -441,7 +564,7 @@ class ServerIntegrationTests(unittest.TestCase):
             {"id": "audio", "mode": "sequenced", "clips": [],
              "device": {"kind": "audio", "gain": 1}, "effects": []},
             {"id": "notes", "mode": "sequenced", "clips": [],
-             "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2}, "effects": []},
+             "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2}, "effects": [{"kind": "vst3"}]},
             {"id": "malformed", "mode": [], "clips": {},
              "device": [], "effects": []},
         )
@@ -450,7 +573,7 @@ class ServerIntegrationTests(unittest.TestCase):
                 candidate = {**V4_GAIN_SESSION, "tracks": [track]}
                 status, body, _ = self.post("/api/session", {"session": candidate})
                 self.assertEqual(status, 422, body)
-                self.assertIn(b"continuous sine", body)
+                self.assertIsInstance(json.loads(body)["error"], str)
                 self.assertEqual(self.get_session(), SESSION)
 
     def test_malformed_schema_v4_and_legacy_v1_errors_are_safe_and_preserve_session(self):

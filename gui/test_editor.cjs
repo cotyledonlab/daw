@@ -14,15 +14,15 @@ function session(tracks = [track('one')], overrides = {}) {
   return { schema_version: 1, sample_rate: 48000, tracks, ...overrides };
 }
 
-test('editor accepts v1 and continuous, clip-free v4 sine sessions only', () => {
+test('editor accepts legacy sine sessions and built-in note arrangements', () => {
   assert.equal(Editor.supported(session()), true);
   const v4 = session([track('one', { mode: 'continuous', clips: [], effects: [] })], { schema_version: 4 });
   assert.equal(Editor.supported(v4), true);
-  for (const version of [2, 3]) assert.equal(Editor.supported(session([], { schema_version: version })), false);
+  for (const version of [2, 3]) assert.equal(Editor.supported(session([], { schema_version: version })), true);
   const nonSine = session([track('one', { device: { kind: 'noise' } })]);
   assert.equal(Editor.validate(nonSine), 'Only continuous sine tracks can be edited here.');
   assert.equal(Editor.supported(session([track('one', { device: { kind: 'noise' }, mode: 'continuous', clips: [] })], { schema_version: 4 })), false);
-  assert.equal(Editor.supported(session([track('one', { mode: 'sequenced', clips: [] })], { schema_version: 4 })), false);
+  assert.equal(Editor.supported(session([track('one', { mode: 'sequenced', clips: [], effects: [] })], { schema_version: 4 })), true);
   assert.equal(Editor.supported(session([track('one', { mode: 'continuous', clips: [{ source: 'a.wav' }] })], { schema_version: 4 })), false);
 });
 
@@ -297,4 +297,103 @@ test('adding Csound controls clones state and rejects duplicates, invalid data, 
   const full = structuredClone(original);
   full.tracks[1].device.controls = Array.from({ length: 64 }, (_, i) => ({ name: `c${i}`, value: i, points: [] }));
   assert.throws(() => Editor.addCsoundControl(full, 1, 'extra', 0), /up to 64/);
+});
+
+
+test('loads engine arpeggio and gain fixtures and creates JSON-roundtrippable two-track demo', () => {
+  const fs = require('node:fs');
+  for (const file of ['arpeggio', 'gain-chain', 'gain-automation']) {
+    const data = JSON.parse(fs.readFileSync(`${__dirname}/../examples/sessions/${file}.json`, 'utf8'));
+    assert.equal(Editor.supported(data), true);
+    assert.equal(Editor.validate(data), null);
+  }
+  const demo = Editor.createDemoSession();
+  assert.equal(demo.tracks.length, 2);
+  assert.equal(demo.tracks[0].clips.length, 8);
+  const end = Math.max(...demo.tracks.flatMap(track => track.clips.map(clip => clip.start_frame + clip.length_frames)));
+  assert.equal(end, 32 * demo.sample_rate);
+  assert.equal(Editor.framesToTicks(demo, end), 64 * 960);
+  assert.notEqual(demo.tracks[0].clips[0].notes[0].frequency_hz, demo.tracks[0].clips[1].notes[0].frequency_hz);
+  const fixture = JSON.parse(fs.readFileSync(`${__dirname}/../examples/sessions/note-demo.json`, 'utf8'));
+  assert.deepEqual(fixture, demo);
+  assert.equal(Editor.validate(JSON.parse(JSON.stringify(demo))), null);
+});
+
+test('exact 960-PPQ conversion matches engine timeline fixtures and rejects unsafe values', () => {
+  const fixtures = require('../examples/sessions/timeline-contract.json').cases[0].expected;
+  for (const fixture of fixtures) {
+    fixture.ticks.forEach((ticks, i) => assert.equal(Editor.ticksToFrames(fixture, ticks), fixture.frames[i]));
+  }
+  const data = Editor.createArrangementSession();
+  assert.equal(Editor.framesToTicks(data, 24000), 960);
+  assert.equal(Editor.snapFrame(data, 9100), 12000);
+  assert.equal(Editor.snapFrame(data, 8900), 6000);
+  assert.throws(() => Editor.ticksToFrames(data, Number.MAX_SAFE_INTEGER));
+  assert.throws(() => Editor.snapFrame(data, 1, 0));
+  assert.throws(() => Editor.framesToTicks(data, -1));
+  assert.throws(() => Editor.createArrangementSession(48000, 1000));
+  for (const midi of [0, 48, 60, 69, 127]) assert.ok(Math.abs(Editor.hzToMidi(Editor.midiToHz(midi)) - midi) < 1e-10);
+  assert.equal(Editor.midiToHz(69), 440);
+  assert.throws(() => Editor.midiToHz(Infinity));
+  assert.throws(() => Editor.hzToMidi(0));
+});
+
+test('clip and note mutations clone inputs and roundtrip without altering earlier history', () => {
+  const empty = Editor.createArrangementSession();
+  const tracked = Editor.addNoteTrack(empty, 'one');
+  assert.equal(empty.tracks.length, 0);
+  const clip = {id: 'c', start_frame: 0, length_frames: 48000, notes: []};
+  const clipped = Editor.addNoteClip(tracked, 0, clip);
+  clip.start_frame = 100;
+  assert.equal(clipped.tracks[0].clips[0].start_frame, 0);
+  const note = {id: 'n', start_frame: 0, duration_frames: 12000, frequency_hz: 440, velocity: 0.8};
+  const noted = Editor.addNote(clipped, 0, 'c', note);
+  note.velocity = 0;
+  const edited = Editor.editNote(noted, 0, 'c', 'n', {frequency_hz: 880, start_frame: 12000});
+  const moved = Editor.moveClip(edited, 0, 'c', 24000);
+  const resized = Editor.resizeClip(moved, 0, 'c', 24000);
+  const duplicated = Editor.duplicateClip(resized, 0, 'c', 'd', 48000);
+  const deleted = Editor.deleteNote(duplicated, 0, 'd', 'n');
+  const removed = Editor.deleteClip(deleted, 0, 'c');
+  assert.equal(removed.tracks[0].clips[0].id, 'd');
+  assert.deepEqual(removed.tracks[0].clips[0].notes, []);
+  assert.equal(noted.tracks[0].clips[0].notes[0].frequency_hz, 440);
+  assert.equal(noted.tracks[0].clips[0].notes[0].velocity, 0.8);
+  assert.equal(clipped.tracks[0].clips[0].notes.length, 0);
+  assert.equal(Editor.validate(JSON.parse(JSON.stringify(removed))), null);
+});
+
+test('failed arrangement edits leave original untouched and enforce IDs, gates, bounds and gain-only scope', () => {
+  const data = Editor.createDemoSession();
+  const snapshot = structuredClone(data);
+  const fail = action => { assert.throws(action); assert.deepEqual(data, snapshot); };
+  fail(() => Editor.addNoteTrack(data, 'lead'));
+  fail(() => Editor.addNoteTrack(data, 'bad\0id'));
+  fail(() => Editor.duplicateClip(data, 0, 'phrase', 'phrase-2', 0));
+  fail(() => Editor.moveClip(data, 0, 'phrase', -1));
+  fail(() => Editor.resizeClip(data, 0, 'phrase', 100));
+  fail(() => Editor.moveClip(data, 0, 'phrase', Number.MAX_SAFE_INTEGER));
+  fail(() => Editor.editNote(data, 0, 'phrase', 'n1', {velocity: 1.1}));
+  fail(() => Editor.editNote(data, 0, 'phrase', 'n1', {frequency_hz: 24000}));
+  fail(() => Editor.editNote(data, 0, 'phrase', 'n1', {duration_frames: 192001}));
+  fail(() => Editor.editNote(data, 0, 'phrase', 'n1', {id: 'n2'}));
+  fail(() => Editor.deleteNote(data, 0, 'phrase', 'missing'));
+  fail(() => Editor.deleteClip(data, 99, 'phrase'));
+  fail(() => Editor.addEffect(data, 0, {kind: 'vst3'}, 'plugin'));
+  const v2 = require('../examples/sessions/arpeggio.json');
+  const gained = Editor.addEffect(v2, 0, {kind: 'gain', gain: 0.5, bypass: false}, 'gain');
+  assert.equal(gained.schema_version, 3);
+  assert.equal(Editor.validate(gained), null);
+  assert.equal(v2.schema_version, 2);
+  const plugin = session([track('p', {mode: 'continuous', clips: [], effects: [{kind: 'vst3', id: 'v'}]})], {schema_version: 4});
+  assert.throws(() => Editor.addNoteTrack(plugin, 'notes'));
+});
+
+test('arrangement validation caps simultaneous voices and permits adjacent half-open clips', () => {
+  let data = Editor.addNoteTrack(Editor.createArrangementSession(), 'one');
+  const notes = Array.from({length: 65}, (_, i) => ({id: `n${i}`, start_frame: 0, duration_frames: 8, frequency_hz: 440, velocity: 1}));
+  assert.throws(() => Editor.addNoteClip(data, 0, {id: 'many', start_frame: 0, length_frames: 8, notes}), /64 voices/);
+  data = Editor.addNoteClip(data, 0, {id: 'a', start_frame: 0, length_frames: 8, notes: notes.slice(0, 64)});
+  data = Editor.duplicateClip(data, 0, 'a', 'b', 8);
+  assert.equal(Editor.validate(data), null);
 });

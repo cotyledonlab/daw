@@ -30,7 +30,7 @@
         <div>
           <p class="eyebrow">Session workspace</p>
           <h1 id="workspace-title">Track editor</h1>
-          <p class="intro">Shape sine tracks, edit saved sources, and export your sound.</p>
+          <p class="intro">Compose note clips, loop a phrase, and export your sound.</p>
         </div>
         <div class="sample-rate-wrap">
           <label for="sample-rate">Sample rate</label>
@@ -51,6 +51,7 @@
       <section class="render-panel live-panel" aria-label="Live playback">
         <div>
           <button id="play-button" class="button button-primary" type="button">Play</button>
+          <button id="stop-button" class="button button-quiet" type="button">Stop</button>
           <span id="play-state" role="status" aria-live="polite">Stopped</span>
         </div>
         <div class="output-mode-control">
@@ -83,6 +84,17 @@
           <button class="button button-quiet" id="add-csound-button" type="button" disabled>Add Csound</button>
           <button class="button button-primary" id="add-track-button" type="button"><span class="plus" aria-hidden="true">+</span> Add sine track</button>
         </div>
+      </section>
+
+      <section class="arrangement-section" aria-label="Arrangement workspace">
+        <div class="arrangement-actions">
+          <button class="button button-quiet" id="new-arrangement-button" type="button">New arrangement</button>
+          <button class="button button-quiet" id="demo-arrangement-button" type="button">Load note demo</button>
+          <button class="button button-primary" id="add-note-track-button" type="button">Add note track</button>
+          <button class="button button-quiet" id="undo-button" type="button" disabled>Undo</button>
+          <button class="button button-quiet" id="redo-button" type="button" disabled>Redo</button>
+        </div>
+        <div id="arrangement" hidden></div>
       </section>
 
       <p id="effects-hint" class="output-hint"></p>
@@ -121,6 +133,8 @@
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>
   <script src="/editor.js" defer></script>
+  <script src="/history.js" defer></script>
+  <script src="/timeline.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

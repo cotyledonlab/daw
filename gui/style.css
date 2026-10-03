@@ -157,3 +157,43 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .source-program { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .toolbar-actions { flex-wrap: wrap; }
+
+/* Frame-anchored note arrangement and numeric piano-roll authoring. */
+.arrangement-section { margin: 8px 0 25px; padding: 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.arrangement-actions, .arrangement-heading, .arrangement-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.arrangement-actions { margin-bottom: 18px; }
+.arrangement-heading { justify-content: space-between; align-items: center; margin: 20px 0 12px; }
+.arrangement-heading h2 { margin: 0; font-size: 19px; }
+.position-readout { font: 11px monospace; color: var(--teal); }
+.arrangement-help, .arrangement-status { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.arrangement-status { min-height: 18px; color: #b7c8c0; margin: 12px 0; }
+.arrangement-controls { margin: 12px 0; }
+.arrangement-controls label { display: grid; gap: 6px; font-size: 11px; color: var(--muted); }
+.arrangement-controls input { width: 110px; min-height: 44px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; color: var(--text); background: var(--bg); font: 12px monospace; }
+.arrangement-controls select { min-width: 110px; }
+.timeline-scroll { overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.arrangement-svg, .piano-roll-svg { width: 100%; min-width: 640px; display: block; }
+.timeline-ruler { fill: #26352f; cursor: crosshair; }
+.ruler-text { fill: var(--muted); font: 10px monospace; pointer-events: none; }
+.beat-grid { stroke: #35413c; stroke-width: 1; }
+.track-lane { fill: transparent; stroke: var(--line); stroke-width: 1; }
+.lane-name { fill: var(--text); font: 12px sans-serif; }
+.timeline-clip rect { fill: #225347; stroke: #4c957e; stroke-width: 1; }
+.timeline-clip { cursor: pointer; }
+.timeline-clip.selected rect { fill: #2d725e; stroke: var(--teal); stroke-width: 2; }
+.clip-label { fill: #e0f9ed; font: 11px sans-serif; pointer-events: none; }
+.clip-note-preview { stroke: #8ac8af; stroke-width: 3; pointer-events: none; }
+.playhead { stroke: #f1d68e; stroke-width: 2; pointer-events: none; }
+.loop-region { fill: #5bd5b411; stroke: #5bd5b477; stroke-width: 1; pointer-events: none; }
+.clip-editor { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
+.clip-heading { margin: 0 0 12px; font-size: 14px; overflow-wrap: anywhere; }
+.roll-row { fill: #1a2320; stroke: #2b3831; stroke-width: .5; }
+.roll-black { fill: #141b18; }
+.roll-note { cursor: pointer; }
+.roll-note rect { fill: #64b397; stroke: #c3f4df; stroke-width: .5; }
+.roll-note.selected rect { fill: #f1d68e; stroke: #fff2bb; stroke-width: 1.5; }
+.timeline-clip:focus-visible rect, .roll-note:focus-visible rect { stroke: white; stroke-width: 3; }
+@media (max-width: 480px) { .arrangement-section { padding: 12px; } .arrangement-controls { gap: 8px; } .arrangement-controls input { width: 100px; } .arrangement-actions .button { flex-grow: 1; } }
+
+.loop-status { margin: -5px 0 12px; font: 11px monospace; color: var(--teal); }
+.loop-pending { stroke-dasharray: 5 4; fill: #f1d68e11; stroke: #f1d68e; }
