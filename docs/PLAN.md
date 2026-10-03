@@ -33,7 +33,7 @@ Pre-existing uncommitted Pd receiver-control changes and tests are present (old 
 
 ## Execution order
 
-Only the next milestone receives detailed implementation tickets. Ship a playable result at each gate; do not require all adapters or schema variants to reach feature parity before proceeding.
+The immediate usability patch and next musical-device milestone receive detailed implementation tickets. Ship a playable result at each gate; do not require all adapters or schema variants to reach feature parity before proceeding.
 
 ### M1 — Compose and loop a note arrangement (implemented; early MVP)
 
@@ -45,25 +45,39 @@ Only the next milestone receives detailed implementation tickets. Ship a playabl
 
 Likely files: `gui/editor.js`, `gui/app.js`, `gui/index.html`, `gui/style.css`, `gui/server.py`, and focused editor/bridge tests. Touch Rust only where an actual interface gap is demonstrated. Use polling already available for transport; render jobs, subscriptions, MCP, waveform drawing and a generic scene/graph system are not M1 prerequisites.
 
-### M2 — Arrange audio and carry the project with it
+### M1d — Make the current sequencer practical (next patch)
+
+Close the short list of editor/transport correctness and usability gaps before increasing device scope:
+
+- **Preserve untouched data.** Frames remain authoritative. Round absolute tick positions once, snap in tick space, and do not re-quantize untouched notes after changing tempo or editing another field. Display off-grid timing honestly. Use A4=440 Hz/12-TET only for explicit pitch edits; non-12-TET saved Hz must remain unchanged when editing velocity/timing or saving. Add off-grid timing and microtonal load/edit/save cases to the workflow regression.
+- **Keep clip operations non-destructive.** Notes remain clip-relative, duplicates are independent deep copies, and same-pitch overlaps are allowed. The current schema cannot represent notes beyond a clip end, so keep rejecting a resize that would cut a note gate; do not silently hide, trim or delete it. Make that reason visible. Existing half-open clip and voice rules remain authoritative.
+- **Remove the musical loop cliff for built-ins.** Add an explicit until-stopped playback mode restricted to bounded built-in-only prepared sessions. Verify looping continues past 60 seconds, while Stop, EOF, errors and restart release resources. Retain bounded queues/storage and all existing runtime/plugin timeouts; ordinary finite playback/export stays supported. This is transport work with native checks, not a global timeout deletion.
+- **Offer an explicit Stop & edit workflow.** Keep the stopped structural replacement contract, but let the user enter editing through a clear action while playback is running. Automatic restart/position restoration can wait. Validate candidate edits before disrupting playback where possible; revision/engine rejection must preserve the applied session and offer recovery from the authoritative state without silently losing a local draft.
+
+Gate: one bridge-driven regression creates and edits a phrase, rejects an invalid/stale edit, saves/reloads and compares note/clip frames and pitch values, then compares WAV output. Add a bounded native check past the old 60-second loop limit and one quiet listening pass. Use this end-to-end gate alongside focused boundary tests; it does not replace allocation, ownership or failure-path checks.
+
+### M2 — Give the sequencer drums and a useful synth
+
+Prioritize a small built-in sound set ahead of user-audio import and ZIP packaging. M1's note editor already gives it a place to play. Basic music creation must work without installing SC, Csound or Pd.
+
+1. **M2a — One compact drum kit.** Trigger project-owned kick, snare and hat samples from note clips, with a fixed pitch-to-pad mapping, gain and one-shot behavior. Reuse decoded PCM buffers and scheduling/voice storage where appropriate; PCM clip playback alone does not yet provide note-triggered sample voices. Save stable bundled sample IDs, resolve them to a versioned app-owned registry outside callbacks, and reject unknown IDs transactionally. Provide one shipped beat preset. No file browser, arbitrary user assets, pad routing matrix or generic sample format is needed.
+2. **M2b — One simple polyphonic synth.** Add a saw/square voice with envelope, one useful low-pass filter and a few bass/lead presets. Reuse note scheduling and the bounded voice contract. Match saved parameters, GUI controls, offline/native behavior and explicit reset semantics. Add only concrete device fields and explicit migration/old-file coverage. No generic processor/device rewrite.
+
+Gate: author a 16-bar drum/bass/lead arrangement in the GUI using the shipped devices, loop it, save/reload, and export it. Inspect basic audible quality as well as timing, headroom and allocation behavior. These are planned devices, not present capabilities.
+
+The wider one-shot sampler, extra kits, richer synth controls and filter/EQ, delay and saturation effects follow this gate in small slices. A full device collection is not required before the first drum-and-synth arrangement ships. Only use project-owned or appropriately licensed sounds/presets with pinned notices.
+
+### M3 — Import audio and carry the project with it
 
 Add PCM WAV import through browser file input, audio track lanes and clip move/trim/duplicate/gain/source-offset editing. Use the current integer-PCM and matching-rate contract first; report unsupported inputs clearly. Waveforms can follow a working clip workflow.
 
-This needs a real project/asset flow: the current bridge downloads JSON and does not establish a portable audio-project package. Implement bounded upload into an owned project directory, checked session replacement using that root, and project export/import containing JSON plus relative assets. A ZIP package is sufficient; validate paths and sizes, reject traversal, and clean temporary files outside callbacks. Keep JSON-only save for asset-free sessions. Do not expose arbitrary host filesystem paths through HTTP.
+Now implement the user-asset/project flow against the concrete sampler and clip contracts: bounded upload into an owned project directory, checked replacement using that root, and project export/import containing JSON plus relative assets. A ZIP package is sufficient; validate paths and sizes, reject traversal, and clean temporary files outside callbacks. Bundled IDs stay resolvable through the shipped registry; user samples need portable project assets. Keep JSON-only save for asset-free sessions. Do not expose arbitrary host filesystem paths through HTTP.
 
-Gate: import a WAV, combine it with the M1 note phrase, trim and duplicate it, save the project, reload from a different directory and export identical clip placement/audio. Missing or invalid assets leave the applied project intact.
-
-### M3 — Supply a small musical device collection
-
-Target three instrument roles: a polyphonic subtractive synth, a one-shot sampler and a small drum kit/pad instrument. Start with the synth, then build sampler/drum behavior on shared sample playback. Add a compact effect set: filter/EQ, delay and a simple saturator, alongside gain. Each device needs useful presets, saved parameters, note/clip integration, GUI controls, offline rendering and native playback. Bundle only project-owned or appropriately licensed presets/samples with exact notices.
-
-Use direct built-in DSP for the first note-playable synth so basic sequencing needs no external runtime installation. Runtime patches may supply additional presets once their note/event contract works; today's continuous source controls are not a polyphonic note-device interface. Do not add three implementations of the same instrument just to exercise all runtimes.
-
-Gate: build a short drums/bass/lead arrangement using the shipped collection, save/reload it and export it. Add schema changes only for concrete saved device data, with explicit migration and old-file coverage; do not invent a universal device format in advance.
+Gate: import a WAV, combine it with the M2 musical arrangement, trim/duplicate it, save the project, reload from a different directory and export identical clip placement/audio. Missing or invalid assets leave the applied project intact.
 
 ### M4 — Finish a short track reliably
 
-Add track mute/solo/pan and metering, basic gain automation editing, useful clip fades and reliable project recovery. Extend built-in/prepared playback and export to a three-minute arrangement through explicit bounded resource policy; looping must not expire after 60 seconds of wall time. Do not simply remove every timeout or foreign-runtime memory bound. Longer export may require progress/cancellation here, driven by measured UI blocking rather than as a timeline prerequisite.
+Add track mute/solo/pan and metering, basic gain automation editing, useful clip fades and reliable project recovery. Extend built-in/prepared playback and export to a three-minute arrangement through explicit bounded resource policy; the built-in until-stopped loop mode from M1d remains available. Do not simply remove every timeout or foreign-runtime memory bound. Longer export may require progress/cancellation here, driven by measured UI blocking rather than as a timeline prerequisite.
 
 Gate: finish and reopen a three-minute arrangement with notes, samples, automation and effects; loop while editing between playback runs; render it; verify native start/stop/restart and resource release. Run at least one quiet acoustic listening check as well as deterministic export and callback tests. Failure/asset recovery and audible quality belong to this milestone, not only harness statistics.
 
@@ -95,8 +109,10 @@ Three GPT-6.1 Sol agents at medium reasoning implemented the editor model/histor
 
 Verified: 33 Node player/editor/history tests; 38 HTTP bridge tests; a 481-pixel browser layout with no page overflow; Rust format/native Clippy/native tests; real-browser clip duplication, note-pitch changes, undo/redo, track/clip/note creation and fixture import; muted native play/pause/seek/loop/stop with frame-48000 paused seek acknowledgment. All-feature engine build restored after native checks. No acoustic quality claim or installed-runtime regression claim is made by these checks. Editing uses fields/buttons rather than drag gestures; visual polish, recording and richer instruments remain later work. The 32-second demo saves/reloads through the engine and renders byte-identical stereo PCM16 WAVs with zero clipping. Browser save/export were exercised, but the in-app browser did not provide a download-event artifact for independent file inspection.
 
-The requested Opus 5.5 review is pending specific approval to send the roadmap and implementation summary to OpenRouter. Automatic approval review rejected that external transfer. No Opus feedback is claimed; implementation continued independently.
+The requested Opus 5.5 review completed through pi's OpenCode provider after the user selected OpenCode. The full response is preserved in [OPUS-REVIEW.md](OPUS-REVIEW.md). The earlier OpenRouter transfer was rejected and was not performed.
+
+Accepted feedback: move drums/simple synth ahead of user-asset packaging; bring practical built-in looping forward; explicitly preserve untouched frame/Hz data; keep snapshot undo; use one musical workflow gate; defer waveforms, velocity lanes, automatic restart and infrastructure. The review also supports the existing separate playhead updates and field-based velocity editing. Keep the current shared session helpers rather than introduce another canonical model or broad schema migration. Clip-end hiding conflicts with the engine schema, so retain non-destructive resize rejection instead. Stop & edit is an explicit next-patch affordance, not a claim that current playback editing is already supported.
 
 ## Immediate next task
 
-Start **M2** with the owned project directory and one bounded browser PCM upload, then show an audio clip on the existing timeline. Implement the minimum project save/reload path that keeps assets usable before expanding editing tools. In parallel, a narrowly scoped built-in synth design can be reviewed without rewriting the engine. Avoid new runtime adapters, render subscriptions and wholesale schema changes as prerequisites.
+Start **M1d** with the unchanged-field pitch/timing regression and built-in until-stopped transport design. Then implement **M2a** drums and **M2b** synth as separate device slices. Independent fixture/preset/UI work can run in parallel once the concrete saved-device contracts are settled. Full user-audio import/project packaging is M3. Avoid new runtime adapters, render subscriptions and wholesale schema changes as prerequisites.

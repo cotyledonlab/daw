@@ -6,7 +6,7 @@ Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Aud
 
 ## Development direction
 
-The active [roadmap](docs/PLAN.md) prioritizes an editable arrangement and piano roll, audio-project import/save, a small built-in instrument/effect collection, and a reliable short-track workflow. The first note-arrangement editor is implemented, including a piano roll, native timeline controls and undo/redo; audio-project editing is the next milestone. Earlier adapter tickets and verification records are preserved in [plan history](docs/PLAN-HISTORY.md).
+The active [roadmap](docs/PLAN.md) prioritizes practical note sequencing, a built-in drum kit and simple synth, then audio-project import/save and a reliable short-track workflow. The first note-arrangement editor is implemented, including a piano roll, native timeline controls and undo/redo; practical looping and a drum/synth sound set come next, followed by audio-project editing. The [Opus 5.5 review](docs/OPUS-REVIEW.md) informed that order. Earlier adapter tickets and verification records are preserved in [plan history](docs/PLAN-HISTORY.md).
 
 ## Run
 
