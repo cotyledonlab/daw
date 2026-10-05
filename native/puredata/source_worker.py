@@ -140,7 +140,7 @@ def _actual_receiver(name, dollarzero):
     return name
 
 
-def perform_source(rate, source, library, emit_block, before_dsp=None):
+def perform_source(rate, source, library, emit_block, before_dsp=None, before_block=None):
     """Render complete libpd ticks and copy trimmed interleaved float64 PCM."""
     validate_job({"job_version": 1, "sample_rate": rate, "source": source})
     library_path = Path(library)
@@ -210,8 +210,10 @@ def perform_source(rate, source, library, emit_block, before_dsp=None):
 
         def set_control(control, value):
             receiver = _actual_receiver(control["name"], dollarzero).encode("utf-8")
-            if not exists(receiver) or api.libpd_float(receiver, C.c_float(value).value) != 0:
+            delivered = C.c_float(value).value
+            if not exists(receiver) or api.libpd_float(receiver, delivered) != 0:
                 raise RuntimeError(f"Pure Data receiver does not exist: {control['name']}")
+            return delivered
 
         events = {}
         for control in source["controls"]:
@@ -232,6 +234,8 @@ def perform_source(rate, source, library, emit_block, before_dsp=None):
         for frame in range(0, source["duration_frames"], _BLOCK):
             for control, value in events.get(frame, ()):
                 set_control(control, value)
+            if before_block is not None:
+                before_block(frame, set_control)
             if api.libpd_process_float(1, inputs, outputs) != 0:
                 raise RuntimeError(f"libpd processing failed at frame {frame}")
             count = min(_BLOCK, source["duration_frames"] - frame)
@@ -241,8 +245,8 @@ def perform_source(rate, source, library, emit_block, before_dsp=None):
                 if not math.isfinite(value):
                     raise RuntimeError("Pure Data source produced nonfinite PCM")
                 block.extend(struct.pack("<d", float(value)))
-            emit_block(frame, bytes(block))
             _check_callbacks(hook_state)
+            emit_block(frame, bytes(block))
     finally:
         try:
             api.libpd_set_instance(instance)

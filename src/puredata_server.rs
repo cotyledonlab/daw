@@ -233,6 +233,67 @@ impl Server {
         }
         Ok(())
     }
+    pub(crate) fn begin_control(
+        &mut self,
+        name: &str,
+        value: f64,
+        revision: u64,
+    ) -> Result<(), String> {
+        self.check()?;
+        if self.complete {
+            return Err("Pure Data source ended before control delivery".into());
+        }
+        let temporary = self.directory.join("control.partial");
+        let destination = self.directory.join("control.json");
+        let bytes = serde_json::to_vec(
+            &json!({"version":1,"revision":revision.to_string(),"name":name,"value":value}),
+        )
+        .map_err(|e| e.to_string())?;
+        use std::io::Write;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        drop(file);
+        // Publish atomically and exclusively; one owner command is in flight.
+        fs::hard_link(&temporary, &destination).map_err(|e| e.to_string())?;
+        fs::remove_file(temporary).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub(crate) fn poll_control(
+        &mut self,
+        value: f64,
+        revision: u64,
+    ) -> Result<Option<u64>, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Ack {
+            version: u32,
+            revision: String,
+            value: f64,
+            frame: u64,
+        }
+        self.check()?;
+        let path = self.directory.join("ack.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let ack: Ack = serde_json::from_value(read_json(&path)?).map_err(|e| e.to_string())?;
+        if ack.version != 1
+            || ack.revision != revision.to_string()
+            || ack.value != f64::from(value as f32)
+            || !ack.value.is_finite()
+            || ack.frame == 0
+            || ack.frame > self.frames
+            || (ack.frame % 64 != 0 && ack.frame != self.frames)
+        {
+            return Err("invalid Pure Data receiver control acknowledgment".into());
+        }
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+        Ok(Some(ack.frame))
+    }
     pub(crate) fn stop(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else {
             return Ok(());

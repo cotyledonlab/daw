@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import resource
 import struct
+import stat
 import sys
 import time
 
@@ -37,13 +38,53 @@ def stream(job, queue, nonce, bridge, library, ready, report, gate=None):
     producer = api.daw_cs_queue_open(os.fsencode(queue), int(nonce), error, len(error))
     if not producer:
         raise RuntimeError(error.value.decode('utf-8', 'replace'))
+    pending_control = None
+    last_revision = 0
+    saved_controls = {control["name"]: control for control in source["controls"]}
+    def before_block(frame, set_control):
+        nonlocal pending_control, last_revision
+        if gate is None:
+            return
+        command = Path(gate).parent / "control.json"
+        try:
+            fd = os.open(command, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            return
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise RuntimeError("Pure Data control command must be a regular file")
+            raw = os.read(fd, 4097)
+        finally:
+            os.close(fd)
+        if len(raw) > 4096:
+            raise RuntimeError("Pure Data control command exceeds 4 KiB")
+        edit = json.loads(raw)
+        if not isinstance(edit, dict) or set(edit) != {"version", "revision", "name", "value"}:
+            raise RuntimeError("invalid Pure Data control command fields")
+        revision = edit["revision"]
+        value = edit["value"]
+        if (type(edit["version"]) is not int or edit["version"] != 1 or
+                not isinstance(revision, str) or not revision.isascii() or
+                not revision.isdecimal() or str(int(revision)) != revision or
+                not last_revision < int(revision) <= 18446744073709551615 or
+                not isinstance(edit["name"], str) or edit["name"] not in saved_controls or
+                type(value) not in (int, float) or not math.isfinite(value) or not math.isfinite(C.c_float(value).value)):
+            raise RuntimeError("invalid Pure Data control command")
+        control = saved_controls[edit["name"]]
+        if control["points"] or pending_control is not None:
+            raise RuntimeError("Pure Data control is automated or delivery is pending")
+        command.unlink()
+        delivered = set_control(control, value)  # receiver delivery on the Pd owner
+        last_revision = int(revision)
+        pending_control = {"version": 1, "revision": revision, "value": delivered,
+                           "frame": min(frame + 64, source["duration_frames"])}
     count = waits = 0
     digest = hashlib.sha256()
     blocks = (source['duration_frames'] + 63) // 64
     prefill = min(4, blocks)
 
     def emit(frame, raw):
-        nonlocal count, waits
+        nonlocal count, waits, pending_control
         if frame != count * 64:
             raise RuntimeError('Pure Data source block discontinuity')
         raw += bytes(1024 - len(raw))
@@ -66,6 +107,9 @@ def stream(job, queue, nonce, bridge, library, ready, report, gate=None):
             time.sleep(.001)
         digest.update(pcm)
         count += 1
+        if pending_control is not None:
+            publish_json(Path(gate).parent / "ack.json", pending_control)
+            pending_control = None
         if count == prefill:
             publish_json(ready, {'version': 1, 'prefill_blocks': prefill})
 
@@ -83,7 +127,7 @@ def stream(job, queue, nonce, bridge, library, ready, report, gate=None):
             time.sleep(.001)
 
     try:
-        perform_source(rate, source, library, emit, before_dsp)
+        perform_source(rate, source, library, emit, before_dsp, before_block)
     finally:
         api.daw_cs_queue_close(producer)
     publish_json(report, {'version': 1, 'published_blocks': count,

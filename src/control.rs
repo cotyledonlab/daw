@@ -156,7 +156,7 @@ fn capabilities() -> Value {
     result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
     result["csound_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":7,"session_schema_versions":[7,8],"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"max_pending_controls":8,"requires_queue_bridge":true});
     result["csound_sources"] = json!({"implemented":cfg!(unix),"schema_version":7,"preparation":"owned_block_float64","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_controls":64,"max_points":512,"ksmps":64,"native_requires_matching_sample_rate":true,"interactive_dsp":false,"runtime_abi":"csound7_double"});
-    result["puredata_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":8,"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":false,"requires_queue_bridge":true,"gui":false});
+    result["puredata_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":8,"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"max_pending_controls":8,"control_acknowledgment":"receiver_message_and_block_publication","requires_queue_bridge":true,"gui":false});
     result["puredata_sources"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_LIBPD_LIBRARY").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"schema_version":8,"preparation":"owned_block_float32_to_float64","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_abstractions":16,"max_controls":64,"max_points":512,"blocksize":64,"native_requires_matching_sample_rate":true,"interactive_dsp":false,"gui":false,"runtime_abi":"libpd_public_float_multi"});
     result["device_metadata"]["csound"] = json!({"session_schema_versions":[7,8],"track_modes":["continuous"],"required_fields":["program","duration_frames","gain","controls"],"description":"Embedded CSD program prepared as finite stereo float64 audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"native_scalar_float64","control_points":"saved_step_events","interactive_edits":false});
     result["device_metadata"]["puredata"] = json!({"session_schema_versions":[8],"track_modes":["continuous"],"required_fields":["program","abstractions","duration_frames","gain","controls"],"description":"Embedded Pd patch and explicit abstractions prepared as finite stereo audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"receiver_scalar_float32","control_points":"saved_step_events","interactive_edits":false});
@@ -451,6 +451,7 @@ impl Controller {
                     .iter_mut()
                     .find(|track| track.id == p.track_id)
                     .ok_or_else(|| ControlError::new("invalid_params", "track not found"))?;
+                let mut pd_target = false;
                 let native_index = match &mut track.device {
                     session::Device::Supercollider(source) => {
                         let program = crate::synthdef::inspect(
@@ -519,11 +520,30 @@ impl Controller {
                         source.prepared = None;
                         None
                     }
-                    session::Device::Puredata(_) => {
-                        return Err(ControlError::new(
-                            "invalid_params",
-                            "live Pure Data receiver edits are unavailable",
-                        ));
+                    session::Device::Puredata(source) => {
+                        if p.values.len() != 1 || !(p.values[0] as f32).is_finite() {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "Pd controls require one finite float32 value",
+                            ));
+                        }
+                        let control = source
+                            .controls
+                            .iter_mut()
+                            .find(|control| control.name == p.control_name)
+                            .ok_or_else(|| {
+                                ControlError::new("invalid_params", "saved Pd control not found")
+                            })?;
+                        if !control.points.is_empty() {
+                            return Err(ControlError::new(
+                                "invalid_params",
+                                "live edits cannot override saved control automation",
+                            ));
+                        }
+                        control.value = p.values[0];
+                        source.prepared = None;
+                        pd_target = true;
+                        None
                     }
                     _ => {
                         return Err(ControlError::new(
@@ -555,6 +575,11 @@ impl Controller {
                                     index: index as u32,
                                     values: p.values.iter().map(|value| *value as f32).collect(),
                                 }
+                            } else if pd_target {
+                                crate::sc_session::ControlTarget::Puredata {
+                                    name: p.control_name,
+                                    value: p.values[0],
+                                }
                             } else {
                                 crate::sc_session::ControlTarget::Csound {
                                     name: p.control_name,
@@ -572,7 +597,7 @@ impl Controller {
                 }
                 #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
                 {
-                    let _ = (revision, native_index);
+                    let _ = (revision, native_index, pd_target);
                     Err(ControlError::new(
                         "audio_unavailable",
                         "live source edits require native-audio on macOS",

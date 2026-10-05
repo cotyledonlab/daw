@@ -72,12 +72,13 @@ pub(crate) struct ParameterChange {
 pub(crate) enum ControlTarget {
     Supercollider { index: u32, values: Vec<f32> },
     Csound { name: String, value: f64 },
+    Puredata { name: String, value: f64 },
 }
 pub(crate) struct Updates {
     sender: mpsc::SyncSender<ParameterChange>,
-    acks: mpsc::Receiver<(u64, u64)>,
+    acks: mpsc::Receiver<(u64, u64, Option<f64>)>,
     pending: usize,
-    applied: Option<(u64, u64)>,
+    applied: Option<(u64, u64, Option<f64>)>,
 }
 impl Updates {
     fn collect(&mut self) {
@@ -99,7 +100,7 @@ impl Updates {
     }
     pub(crate) fn status(&mut self, callback_frame: u64) -> Value {
         self.collect();
-        json!({"pending":self.pending,"applied_revision":self.applied.map(|(revision,_)|revision.to_string()),"applied_frame":self.applied.map(|(_,frame)|frame),"callback_observed":self.applied.is_some_and(|(_,frame)|callback_frame>=frame)})
+        json!({"pending":self.pending,"applied_revision":self.applied.map(|(revision,_,_)|revision.to_string()),"applied_frame":self.applied.map(|(_,frame,_)|frame),"callback_observed":self.applied.is_some_and(|(_,frame,_)|callback_frame>=frame),"delivered_value":self.applied.and_then(|(_,_,value)|value),"delivery":self.applied.and_then(|(_,_,value)|value.map(|_|"receiver_message_and_block_publication"))})
     }
 }
 
@@ -153,6 +154,9 @@ impl SourceProcess {
             (Self::Csound(server), ControlTarget::Csound { name, value }) => {
                 server.begin_control(name, *value, change.revision)
             }
+            (Self::Puredata(server), ControlTarget::Puredata { name, value }) => {
+                server.begin_control(name, *value, change.revision)
+            }
             _ => Err("live control target does not match its runtime".into()),
         }
     }
@@ -171,6 +175,13 @@ impl SourceProcess {
                 let frame = server.poll_control(*value, change.revision)?;
                 if frame.is_some_and(|frame| frame > u64::from(queue.written()) * 64) {
                     return Err("Csound acknowledgment precedes queue publication".into());
+                }
+                Ok(frame)
+            }
+            (Self::Puredata(server), ControlTarget::Puredata { value, .. }) => {
+                let frame = server.poll_control(*value, change.revision)?;
+                if frame.is_some_and(|frame| frame > u64::from(queue.written()) * 64) {
+                    return Err("Pd acknowledgment precedes queue publication".into());
                 }
                 Ok(frame)
             }
@@ -409,7 +420,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
             let mut digest = live_ring::DIGEST_START;
             let mut energies = [0.0f64; 4];
             let mut counts = [0u64; 4];
-            let mut pending_acks: std::collections::VecDeque<(u64, u64)> =
+            let mut pending_acks: std::collections::VecDeque<(u64, u64, Option<f64>)> =
                 std::collections::VecDeque::new();
             let mut in_flight: Option<(ParameterChange, Instant)> = None;
             'play: while position < frames {
@@ -422,8 +433,13 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                         .find(|runtime| runtime.track.id == change.track_id)
                         .ok_or("live source track not found")?;
                     if let Some(target) = runtime.server.poll_control(change, &runtime.queue)? {
-                        let target = target.max(pending_acks.back().map_or(0, |(_, frame)| *frame));
-                        pending_acks.push_back((change.revision, target));
+                        let target =
+                            target.max(pending_acks.back().map_or(0, |(_, frame, _)| *frame));
+                        let delivered = match change.target {
+                            ControlTarget::Puredata { value, .. } => Some(f64::from(value as f32)),
+                            _ => None,
+                        };
+                        pending_acks.push_back((change.revision, target, delivered));
                         in_flight = None;
                     } else if sent.elapsed() > Duration::from_secs(2) {
                         return Err("source control readback timed out".into());
@@ -531,7 +547,7 @@ pub(crate) fn start(session: &Session, seconds: f64) -> Result<(Consumer, Worker
                 }
                 while pending_acks
                     .front()
-                    .is_some_and(|(_, target)| position >= *target)
+                    .is_some_and(|(_, target, _)| position >= *target)
                 {
                     let ack = pending_acks.pop_front().unwrap();
                     acknowledged
@@ -686,7 +702,7 @@ mod tests {
         // Receiving a command alone must not free capacity or claim DSP delivery.
         assert_eq!(receiver.recv().unwrap().revision, 1);
         assert!(updates.queue(change(9)).is_err());
-        acks.send((1, 1024)).unwrap();
+        acks.send((1, 1024, None)).unwrap();
         let status = updates.status(1023);
         assert_eq!(status["pending"], 7);
         assert_eq!(status["applied_revision"], "1");
