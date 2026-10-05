@@ -11,7 +11,7 @@ use crate::{
 };
 use std::io::{Seek, Write};
 
-const MAX_SECONDS: f64 = 10.0;
+const MAX_SECONDS: f64 = render::MAX_PLUGIN_RENDER_SECONDS;
 
 /// A fully rendered, unclipped stereo mix ready for PCM16 WAV encoding.
 #[derive(Debug)]
@@ -75,6 +75,11 @@ pub fn prepare(session: &Session, seconds: f64) -> Result<PreparedPluginRender, 
                         samples[0] *= value;
                         samples[1] *= value;
                     }
+                }
+                Effect::Lowpass { .. } | Effect::Delay { .. } => {
+                    return Err(
+                        "schema 11 built-in effects cannot be mixed with foreign plugins".into(),
+                    );
                 }
                 Effect::Vst3 { bypass, .. } | Effect::Au { bypass, .. } if *bypass => {}
                 Effect::Vst3 { .. } | Effect::Au { .. } => {

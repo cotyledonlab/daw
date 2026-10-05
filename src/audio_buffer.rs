@@ -1,15 +1,27 @@
 //! Device-independent, bounded callback buffer adapter. No device access here.
-use crate::{engine::Engine, render::validate_duration, session::Session};
+use crate::{
+    engine::Engine,
+    render::validate_duration,
+    session::{Device, Session},
+};
 
 pub struct PlaybackBuffer {
     engine: Option<Engine>,
+    metronome: Option<crate::metronome::Metronome>,
+    loop_region: Option<(u64, u64)>,
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    pd: Option<crate::pd_playback::Reader>,
+    mixer_peaks: crate::engine::MixerPeaks,
+    mixer_available: bool,
     #[cfg(all(feature = "native-audio", target_os = "macos"))]
     plugin: Option<crate::live_ring::Consumer>,
     timeline: u64,
     #[cfg(all(feature = "native-audio", target_os = "macos"))]
     source_digest: u64,
     channels: usize,
+    device_rate: u32,
     remaining: u64,
+    until_stopped: bool,
     volume: f64,
 }
 
@@ -22,6 +34,13 @@ impl PlaybackBuffer {
         volume: f64,
     ) -> Result<Self, String> {
         session.validate()?;
+        if session
+            .tracks
+            .iter()
+            .any(|track| matches!(track.device, Device::PdInstrument(_)))
+        {
+            return Err("Pd instrument playback requires its owned DSP worker".into());
+        }
         validate_duration(seconds)?;
         if !(1..=32).contains(&channels) {
             return Err("device must have 1..32 channels".into());
@@ -41,15 +60,105 @@ impl PlaybackBuffer {
         let engine = Engine::prepare(&adjusted)?;
         Ok(Self {
             engine: Some(engine),
+            metronome: None,
+            loop_region: None,
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
+            pd: None,
+            mixer_peaks: Default::default(),
+            mixer_available: session.schema_version >= 10,
             #[cfg(all(feature = "native-audio", target_os = "macos"))]
             plugin: None,
             timeline: 0,
             #[cfg(all(feature = "native-audio", target_os = "macos"))]
             source_digest: crate::live_ring::DIGEST_START,
             channels,
+            device_rate,
             remaining: (seconds * f64::from(device_rate)).round() as u64,
+            until_stopped: false,
             volume,
         })
+    }
+
+    /// Indefinite playback accepts bounded built-in devices and preloaded PCM audio.
+    /// Validate before any source/plugin preparation can initialize foreign code.
+    pub fn validate_until_stopped(session: &Session) -> Result<(), String> {
+        if session.tracks.iter().any(|track| {
+            !matches!(
+                track.device,
+                Device::Sine { .. }
+                    | Device::Synth { .. }
+                    | Device::Drumkit { .. }
+                    | Device::Audio { .. }
+                    | Device::PdInstrument(_)
+            ) || track
+                .effects
+                .iter()
+                .flatten()
+                .any(|effect| !effect.is_builtin())
+        }) {
+            return Err("until-stopped playback supports built-in sine, synth, drumkit, preloaded audio and Pd instrument devices with gain, lowpass and delay effects".into());
+        }
+        session.validate()
+    }
+
+    pub fn prepare_until_stopped(
+        session: &Session,
+        device_rate: u32,
+        channels: usize,
+        volume: f64,
+    ) -> Result<Self, String> {
+        Self::validate_until_stopped(session)?;
+        let mut playback = Self::prepare(session, device_rate, channels, 1.0, volume)?;
+        // This sentinel is never decremented. Work remains bounded by each callback.
+        playback.remaining = u64::MAX;
+        playback.until_stopped = true;
+        Ok(playback)
+    }
+
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    pub(crate) fn prepare_pd(
+        session: &Session,
+        device_rate: u32,
+        channels: usize,
+        seconds: Option<f64>,
+        volume: f64,
+    ) -> Result<(Self, crate::pd_playback::Worker), String> {
+        session.validate()?;
+        if device_rate != session.sample_rate
+            || !(1..=32).contains(&channels)
+            || !volume.is_finite()
+            || !(0.0..=1.0).contains(&volume)
+        {
+            return Err(
+                "Pd playback requires matching device rate, 1..32 channels and volume 0..1".into(),
+            );
+        }
+        if let Some(seconds) = seconds {
+            validate_duration(seconds)?;
+        } else {
+            Self::validate_until_stopped(session)?;
+        }
+        let (reader, worker) = crate::pd_playback::start(session)?;
+        Ok((
+            Self {
+                engine: None,
+                metronome: None,
+                loop_region: None,
+                pd: Some(reader),
+                mixer_peaks: Default::default(),
+                mixer_available: true,
+                plugin: None,
+                timeline: 0,
+                source_digest: crate::live_ring::DIGEST_START,
+                channels,
+                device_rate,
+                remaining: seconds
+                    .map_or(u64::MAX, |s| (s * f64::from(device_rate)).round() as u64),
+                until_stopped: seconds.is_none(),
+                volume,
+            },
+            worker,
+        ))
     }
 
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
@@ -82,11 +191,18 @@ impl PlaybackBuffer {
         Ok((
             Self {
                 engine: None,
+                metronome: None,
+                loop_region: None,
+                pd: None,
+                mixer_peaks: Default::default(),
+                mixer_available: false,
                 plugin: Some(consumer),
                 timeline: 0,
                 source_digest: crate::live_ring::DIGEST_START,
                 channels,
+                device_rate,
                 remaining,
+                until_stopped: false,
                 volume,
             },
             Some(guard),
@@ -109,12 +225,19 @@ impl PlaybackBuffer {
         }
         Ok(Self {
             engine: None,
+            metronome: None,
+            loop_region: None,
+            pd: None,
+            mixer_peaks: Default::default(),
+            mixer_available: false,
             plugin: Some(consumer),
             timeline: 0,
             #[cfg(all(feature = "native-audio", target_os = "macos"))]
             source_digest: crate::live_ring::DIGEST_START,
             channels,
+            device_rate: 0,
             remaining: frames,
+            until_stopped: false,
             volume,
         })
     }
@@ -124,23 +247,77 @@ impl PlaybackBuffer {
         self.source_digest
     }
 
+    /// Finite frames remaining, or `u64::MAX` for until-stopped playback.
+    /// The indefinite sentinel stays constant across callbacks.
+    pub fn mixer_peaks(&self) -> Option<&crate::engine::MixerPeaks> {
+        self.mixer_available.then_some(&self.mixer_peaks)
+    }
+
+    /// Configure before starting callbacks; no click state enters Session or exports.
+    pub fn configure_metronome(
+        &mut self,
+        session: &Session,
+        enabled: bool,
+        bars: u8,
+    ) -> Result<(), String> {
+        if !enabled && bars == 0 {
+            self.metronome = None;
+            return Ok(());
+        }
+        if self.engine.is_none() || !crate::metronome::supports_session(session) {
+            return Err("metronome and count-in require built-in prepared playback".into());
+        }
+        if self.device_rate != session.sample_rate {
+            return Err("metronome requires matching device and session sample rates".into());
+        }
+        self.metronome = Some(crate::metronome::Metronome::new(
+            session.sample_rate,
+            session.tempo_milli_bpm.unwrap_or(120000),
+            enabled,
+            bars,
+        )?);
+        Ok(())
+    }
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome
+            .as_ref()
+            .is_some_and(crate::metronome::Metronome::enabled)
+    }
+    pub fn count_in_remaining_frames(&self) -> u64 {
+        self.metronome
+            .as_ref()
+            .map_or(0, crate::metronome::Metronome::count_in_remaining_frames)
+    }
+
     pub fn remaining_frames(&self) -> u64 {
         self.remaining
     }
 
     pub fn frame_position(&self) -> u64 {
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        if let Some(pd) = &self.pd {
+            return pd.frame_position();
+        }
         self.engine
             .as_ref()
             .map_or(self.timeline, Engine::frame_position)
     }
 
     pub fn output_position(&self) -> u64 {
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        if let Some(pd) = &self.pd {
+            return pd.output_position();
+        }
         self.engine
             .as_ref()
             .map_or(self.timeline, Engine::output_position)
     }
 
     pub fn seek(&mut self, frame: u64) -> Result<(), String> {
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        if let Some(pd) = &mut self.pd {
+            return pd.seek(frame);
+        }
         self.engine
             .as_mut()
             .ok_or("plugin playback does not support seek")?
@@ -148,10 +325,16 @@ impl PlaybackBuffer {
     }
 
     pub fn set_loop(&mut self, region: Option<(u64, u64)>) -> Result<(), String> {
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        if let Some(pd) = &mut self.pd {
+            return pd.set_loop(region);
+        }
         self.engine
             .as_mut()
             .ok_or("plugin playback does not support loops")?
-            .set_loop(region)
+            .set_loop(region)?;
+        self.loop_region = region;
+        Ok(())
     }
 
     /// Fill all samples, including silence after the duration and on malformed buffers.
@@ -161,11 +344,81 @@ impl PlaybackBuffer {
         output: &mut [T],
         convert: impl Fn(f64) -> T,
     ) -> Result<u64, &'static str> {
+        self.mixer_peaks = Default::default();
         output.fill(convert(0.0));
         if output.len() % self.channels != 0 {
             return Err("partial device frame");
         }
-        let frames = (output.len() / self.channels).min(self.remaining as usize);
+        let available = output.len() / self.channels;
+        if self.metronome.is_some() {
+            let mut rendered = 0;
+            for destination in output.chunks_exact_mut(self.channels) {
+                let count_sample = self.metronome.as_mut().unwrap().next_count_in();
+                let frame = if let Some(click) = count_sample {
+                    [click, click]
+                } else {
+                    if self.remaining == 0 {
+                        break;
+                    }
+                    let mut position = self.engine.as_ref().unwrap().frame_position();
+                    if let Some((start, end)) = self.loop_region {
+                        if position >= end {
+                            position = start;
+                        }
+                    }
+                    let click = self.metronome.as_ref().unwrap().sample(position);
+                    let mut frame = [[0.0; 2]; 1];
+                    self.engine.as_mut().unwrap().render_block(&mut frame);
+                    self.mixer_peaks
+                        .merge(self.engine.as_ref().unwrap().mixer_peaks());
+                    if !self.until_stopped {
+                        self.remaining -= 1;
+                    }
+                    rendered += 1;
+                    [
+                        (frame[0][0] + click).clamp(-1.0, 1.0),
+                        (frame[0][1] + click).clamp(-1.0, 1.0),
+                    ]
+                };
+                destination[0] = convert(if self.channels == 1 {
+                    (frame[0] + frame[1]) * 0.5 * self.volume
+                } else {
+                    frame[0] * self.volume
+                });
+                if self.channels >= 2 {
+                    destination[1] = convert(frame[1] * self.volume);
+                }
+            }
+            return Ok(rendered);
+        }
+        let frames = if self.until_stopped {
+            available
+        } else {
+            available.min(usize::try_from(self.remaining).unwrap_or(usize::MAX))
+        };
+        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+        if let Some(pd) = &mut self.pd {
+            pd.begin_callback(&mut self.mixer_peaks);
+            let mut rendered = 0;
+            for destination in output.chunks_exact_mut(self.channels).take(frames) {
+                let Some(frame) = pd.next(&mut self.mixer_peaks)? else {
+                    break;
+                };
+                destination[0] = convert(if self.channels == 1 {
+                    (frame[0] + frame[1]) * 0.5 * self.volume
+                } else {
+                    frame[0] * self.volume
+                });
+                if self.channels >= 2 {
+                    destination[1] = convert(frame[1] * self.volume);
+                }
+                rendered += 1;
+            }
+            if !self.until_stopped {
+                self.remaining -= rendered;
+            }
+            return Ok(rendered);
+        }
         #[cfg(all(feature = "native-audio", target_os = "macos"))]
         if let Some(consumer) = &mut self.plugin {
             if consumer.failed() {
@@ -201,6 +454,8 @@ impl PlaybackBuffer {
                 .as_mut()
                 .expect("built-in source")
                 .render_block(&mut block[..count]);
+            self.mixer_peaks
+                .merge(self.engine.as_ref().expect("built-in source").mixer_peaks());
             for (index, frame) in block[..count].iter().enumerate() {
                 let destination = &mut output[(offset + index) * self.channels..][..self.channels];
                 destination[0] = convert(if self.channels == 1 {
@@ -214,7 +469,9 @@ impl PlaybackBuffer {
                 // Channels beyond stereo intentionally remain silent.
             }
         }
-        self.remaining -= frames as u64;
+        if !self.until_stopped {
+            self.remaining -= frames as u64;
+        }
         Ok(frames as u64)
     }
 }
@@ -266,12 +523,19 @@ mod live_tests {
         }
         let mut playback = PlaybackBuffer {
             engine: None,
+            metronome: None,
+            loop_region: None,
+            pd: None,
+            mixer_peaks: Default::default(),
+            mixer_available: false,
             plugin: Some(consumer),
             timeline: 0,
             #[cfg(all(feature = "native-audio", target_os = "macos"))]
             source_digest: crate::live_ring::DIGEST_START,
             channels: 4,
+            device_rate: 0,
             remaining: 8,
+            until_stopped: false,
             volume: 0.5,
         };
         let mut output = [1.0; 32];
@@ -300,6 +564,114 @@ mod live_tests {
         assert!(output.iter().all(|s| *s == 0.0));
         producer.set_failed();
         assert!(playback.fill(&mut output, |s| s).is_err());
+    }
+    #[test]
+    fn owned_renderer_callback_is_allocation_free_and_discards_stale_transport_blocks() {
+        // The Pd worker can render built-ins too. This fixture proves its callback
+        // contract on every native CI run without requiring a foreign runtime.
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "schema_version":10,"sample_rate":48000,"tempo_milli_bpm":120000,
+            "tracks":[{"id":"melody","mode":"sequenced",
+            "device":{"kind":"sine","frequency_hz":440,"gain":0.2},"effects":[],
+            "clips":[{"kind":"notes","id":"c","start_frame":0,"length_frames":4096,
+            "notes":[{"id":"first","start_frame":0,"duration_frames":1024,"frequency_hz":440,"velocity":0.8},
+            {"id":"second","start_frame":2048,"duration_frames":1024,"frequency_hz":880,"velocity":0.4}]}]}]
+        })).unwrap();
+        let (mut playback, mut worker) =
+            PlaybackBuffer::prepare_pd(&session, 48000, 2, None, 0.5).unwrap();
+        assert!(
+            playback.engine.is_none(),
+            "callback cannot own the renderer engine"
+        );
+        let mut reference = Engine::prepare(&session).unwrap();
+        let mut actual = [0.0; 74];
+        let mut expected = [[0.0; 2]; 37];
+        fn compare_frames(
+            playback: &mut PlaybackBuffer,
+            reference: &mut Engine,
+            actual: &mut [f64; 74],
+            expected: &mut [[f64; 2]; 37],
+            count: usize,
+        ) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut done = 0;
+            while done < count {
+                let requested = (count - done).min(37);
+                let before_timeline = playback.frame_position();
+                let before_output = playback.output_position();
+                OPERATIONS.set(0);
+                WATCH.set(true);
+                let filled = playback.fill(&mut actual[..requested * 2], |sample| sample);
+                WATCH.set(false);
+                assert_eq!(OPERATIONS.get(), 0, "callback performed a heap operation");
+                let rendered = filled.unwrap() as usize;
+                if rendered == 0 {
+                    assert_eq!(playback.frame_position(), before_timeline);
+                    assert_eq!(playback.output_position(), before_output);
+                    assert!(actual[..requested * 2].iter().all(|&value| value == 0.0));
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "renderer queue failed to refill"
+                    );
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    continue;
+                }
+                reference.render_block(&mut expected[..rendered]);
+                for index in 0..rendered {
+                    assert_eq!(actual[index * 2], expected[index][0] * 0.5);
+                    assert_eq!(actual[index * 2 + 1], expected[index][1] * 0.5);
+                }
+                assert_eq!(playback.frame_position(), reference.frame_position());
+                assert_eq!(playback.output_position(), reference.output_position());
+                assert_eq!(playback.remaining_frames(), u64::MAX);
+                done += rendered;
+            }
+        }
+        // Startup has queued four blocks. Leave most of them unread, then seek.
+        compare_frames(
+            &mut playback,
+            &mut reference,
+            &mut actual,
+            &mut expected,
+            137,
+        );
+        OPERATIONS.set(0);
+        WATCH.set(true);
+        let sought = playback.seek(2048);
+        WATCH.set(false);
+        assert_eq!(OPERATIONS.get(), 0);
+        sought.unwrap();
+        reference.seek(2048).unwrap();
+        // The second note differs in frequency/velocity; any stale first-note
+        // samples or partially consumed local block would fail exact parity.
+        compare_frames(
+            &mut playback,
+            &mut reference,
+            &mut actual,
+            &mut expected,
+            311,
+        );
+        OPERATIONS.set(0);
+        WATCH.set(true);
+        let looped = playback.set_loop(Some((2048, 2304)));
+        let sought = playback.seek(2048);
+        WATCH.set(false);
+        assert_eq!(OPERATIONS.get(), 0);
+        looped.unwrap();
+        sought.unwrap();
+        reference.set_loop(Some((2048, 2304))).unwrap();
+        reference.seek(2048).unwrap();
+        compare_frames(
+            &mut playback,
+            &mut reference,
+            &mut actual,
+            &mut expected,
+            1025,
+        );
+        // Stop while the producer may be waiting behind a full bounded queue.
+        drop(playback);
+        worker.finish().unwrap();
+        worker.finish().unwrap();
     }
     #[cfg(feature = "vst3-live")]
     #[test]

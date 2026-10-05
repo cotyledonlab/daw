@@ -284,7 +284,7 @@ pub(crate) fn start(
     }
     let session: Session = serde_json::from_value(json!({"schema_version":3,"sample_rate":48000,"tempo_milli_bpm":120000,"tracks":[{"id":"stream","mode":"continuous","clips":[],"device":{"kind":"sine","frequency_hz":440,"gain":1},"effects":[{"kind":"gain","id":"gain","gain":gain,"bypass":false}],"automation":[]}]})).map_err(|e| e.to_string())?;
     session.validate()?;
-    let mut chain = PreparedChain::prepare(&session.tracks[0]);
+    let mut chain = PreparedChain::prepare(&session.tracks[0], session.sample_rate);
     let path = path.to_owned();
     let (mut producer, consumer, control) = live_ring::pair();
     let (opened, opening) = mpsc::sync_channel(1);

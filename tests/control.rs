@@ -71,7 +71,7 @@ fn capabilities_report_the_implemented_build_surface() {
     );
     assert_eq!(capabilities["render"]["format"], "wav_pcm16");
     assert_eq!(capabilities["render"]["channels"], 2);
-    assert_eq!(capabilities["render"]["max_seconds"], 60);
+    assert_eq!(capabilities["render"]["max_seconds"], 180);
     assert!(
         capabilities["methods"]
             .as_array()

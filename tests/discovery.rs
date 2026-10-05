@@ -189,7 +189,13 @@ fn discovered_render_duration_bounds_match_validation() {
     let min = caps["render"]["min_seconds"].as_f64().unwrap();
     let max = caps["render"]["max_seconds"].as_f64().unwrap();
     assert!(daw::render::validate_duration(min).is_ok());
-    assert!(daw::render::validate_duration(max).is_ok());
+    assert!(daw::render::validate_render_duration(&daw::session::Session::default(), max).is_ok());
+    let native_max = caps["render"]["native_max_seconds"].as_f64().unwrap();
+    assert!(daw::render::validate_duration(native_max).is_ok());
+    assert!(daw::render::validate_duration(native_max + 0.001).is_err());
     assert!(daw::render::validate_duration(min / 2.0).is_err());
-    assert!(daw::render::validate_duration(max + 0.001).is_err());
+    assert!(
+        daw::render::validate_render_duration(&daw::session::Session::default(), max + 0.001)
+            .is_err()
+    );
 }

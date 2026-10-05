@@ -13,6 +13,10 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import webbrowser
+try:
+    from .audio_projects import AudioProjects, LIMITS, MAX_AUDIO_BODY, MAX_PROJECT_BODY, metadata, strict_json
+except ImportError:
+    from audio_projects import AudioProjects, LIMITS, MAX_AUDIO_BODY, MAX_PROJECT_BODY, metadata, strict_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BODY = 1024 * 1024
@@ -20,7 +24,9 @@ MAX_FRAME = 9007199254740991
 
 
 class EngineError(Exception):
-    pass
+    def __init__(self, message, *, commit_outcome_unknown=False):
+        super().__init__(message)
+        self.commit_outcome_unknown = commit_outcome_unknown
 
 
 def validate_editor_session_shape(session):
@@ -34,11 +40,15 @@ def validate_editor_session_shape(session):
     version = session.get("schema_version")
     if type(version) is int and version in (5, 8):
         raise ValueError("Use the scripting interface for this session format.")
-    if type(version) is not int or version not in (2, 3, 4, 6, 7):
+    if type(version) is not int or version not in (2, 3, 4, 6, 7, 9, 10, 11, 12):
         return
     if version in (2, 3, 4):
-        supported = ("sine",)
-        message = "This editor supports continuous sine tracks and sequenced sine note clips in v2/v3/v4."
+        supported = ("sine", "audio")
+        message = "This editor supports continuous sine tracks, sine note clips and owned audio clips in v2/v3/v4."
+    elif version in (9, 10, 11, 12):
+        supported = ("sine", "audio", "drumkit", "synth") + (("pd_instrument",) if version == 12 else ())
+        effects = "gain, lowpass and delay" if version >= 11 else "gain"
+        message = f"This editor supports built-in note instruments and owned audio clips with {effects} effects in v{version}."
     elif version == 6:
         supported = ("sine", "supercollider")
         message = "This editor supports continuous sine/SuperCollider tracks with gain effects in v6."
@@ -58,13 +68,14 @@ def validate_editor_session_shape(session):
         if (not isinstance(device, dict) or device.get("kind") not in supported
                 or not isinstance(clips, list)
                 or (mode == "continuous" and clips != [])
-                or (mode == "sequenced" and (version not in (2, 3, 4)
-                    or any(not isinstance(clip, dict) or clip.get("kind") != "notes" for clip in clips)))
+                or (mode == "sequenced" and (version not in (2, 3, 4, 9, 10, 11, 12)
+                    or any(not isinstance(clip, dict) or clip.get("kind") != ("audio" if device.get("kind") == "audio" else "notes") for clip in clips)))
+                or (device.get("kind") in ("audio", "drumkit", "synth", "pd_instrument") and mode != "sequenced")
                 or mode not in ("continuous", "sequenced")):
             raise ValueError(message)
 
-        if (version in (3, 6, 7) or (version == 4 and sequenced_session)) and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") != "gain" for effect in track.get("effects", []))):
-            raise ValueError(f"Schema-v{version} GUI sessions support gain effects only.")
+        if (version in (3, 6, 7, 9, 10, 11, 12) or (version == 4 and sequenced_session)) and (not isinstance(track.get("effects"), list) or any(not isinstance(effect, dict) or effect.get("kind") not in (("gain", "lowpass", "delay") if version >= 11 else ("gain",)) for effect in track.get("effects", []))):
+            raise ValueError(f"Schema-v{version} GUI sessions require compatible built-in effects.")
 
 
 def validate_revision(value):
@@ -80,10 +91,10 @@ def _finite_number(value):
 
 
 class Engine:
-    def __init__(self, binary):
+    def __init__(self, binary, cwd=None):
         self.process = subprocess.Popen(
-            [str(binary), "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            cwd=ROOT,
+            [str(Path(binary).resolve()), "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            cwd=ROOT if cwd is None else cwd,
         )
         self.lock = threading.Lock()
         self.sequence = 0
@@ -104,13 +115,13 @@ class Engine:
                     selector.register(self.process.stdout, selectors.EVENT_READ)
                     if not selector.select(timeout=120):
                         self.process.kill()
-                        raise EngineError("Engine timed out. Restart the GUI server.")
+                        raise EngineError("Engine timed out. Restart the GUI server.", commit_outcome_unknown=True)
                 line = self.process.stdout.readline(MAX_BODY + 1)
                 response = json.loads(line)
             except (OSError, ValueError) as error:
-                raise EngineError("Engine connection lost. Restart the GUI server.") from error
+                raise EngineError("Engine connection lost. Restart the GUI server.", commit_outcome_unknown=True) from error
             if response.get("id") != request_id:
-                raise EngineError("Engine response did not match the request.")
+                raise EngineError("Engine response did not match the request.", commit_outcome_unknown=True)
             if not response.get("ok"):
                 raise EngineError(response["error"]["message"])
             return response["result"]
@@ -130,17 +141,24 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, binary, port=0):
         self.token = secrets.token_urlsafe(32)
-        self.engine = Engine(binary)
+        self.project_lock = threading.RLock()
+        self.asset_directory = tempfile.TemporaryDirectory(prefix="daw-project-")
+        self.asset_root = Path(self.asset_directory.name)
         try:
+            self.engine = Engine(binary, cwd=self.asset_root)
+            self.projects = AudioProjects(self.engine, self.asset_root, validate_editor_session_shape)
             super().__init__(("127.0.0.1", port), Handler)
         except BaseException:
-            self.engine.close()
+            if hasattr(self, "engine"):
+                self.engine.close()
+            self.asset_directory.cleanup()
             raise
         self.origin = f"http://127.0.0.1:{self.server_port}"
 
     def server_close(self):
         super().server_close()
         self.engine.close()
+        self.asset_directory.cleanup()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -183,12 +201,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.authorized(api=self.path.startswith("/api/")):
             return
+        if self.path == "/api/project":
+            try:
+                with self.server.project_lock:
+                    body = self.server.projects.export_project()
+                self.send_bytes(200, body, "application/zip", {
+                    "Content-Disposition": 'attachment; filename="session.daw.zip"',
+                })
+            except (ValueError, EngineError) as error:
+                self.send_json(422, {"error": str(error)})
+            return
         if self.path in ("/api/session", "/api/session/inspect", "/api/capabilities", "/api/transport"):
             try:
                 method = {"/api/session": "session.get", "/api/session/inspect": "session.inspect", "/api/capabilities": "capabilities", "/api/transport": "transport.status"}[self.path]
-                result = self.server.engine.call(method)
+                with self.server.project_lock:
+                    result = self.server.engine.call(method)
                 if self.path == "/api/capabilities":
-                    result = {**result, "gui_bridge": {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True}}
+                    result = {**result, "gui_bridge": {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True, "audio_projects": True, "audio_project_limits": LIMITS, "note_preview": True}}
                 self.send_json(200, result)
             except EngineError as error:
                 self.send_json(422, {"error": str(error)})
@@ -198,6 +227,11 @@ class Handler(BaseHTTPRequestHandler):
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
                   "/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
+                  "/mixer.js": ("mixer.js", "text/javascript; charset=utf-8"),
+                  "/automation.js": ("automation.js", "text/javascript; charset=utf-8"),
+                  "/pd_instrument.js": ("pd_instrument.js", "text/javascript; charset=utf-8"),
+                  "/note_input.js": ("note_input.js", "text/javascript; charset=utf-8"),
+                  "/note_recording.js": ("note_recording.js", "text/javascript; charset=utf-8"),
                   "/history.js": ("history.js", "text/javascript; charset=utf-8"),
                   "/style.css": ("style.css", "text/css; charset=utf-8")}
         if self.path not in assets:
@@ -213,7 +247,44 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorized(api=True):
             return
+        with self.server.project_lock:
+            self._post_locked()
+
+    def read_body(self, limit):
+        lengths = self.headers.get_all("Content-Length", [])
+        if (len(lengths) != 1 or not re.fullmatch(r"[1-9][0-9]{0,9}", lengths[0])
+                or self.headers.get("Transfer-Encoding")):
+            raise ValueError("Expected one Content-Length and no Transfer-Encoding.")
+        length = int(lengths[0])
+        if length > limit:
+            self.send_json(413, {"error": f"Request must be at most {limit} bytes."})
+            self.close_connection = True
+            return None
+        body = self.rfile.read(length)
+        if len(body) != length:
+            raise ValueError("Request body is truncated.")
+        return body
+
+    def _post_locked(self):
         try:
+            if self.path in ("/api/audio/import", "/api/project"):
+                content_type = self.headers.get("Content-Type", "").split(";")[0].strip()
+                allowed = ("audio/wav", "application/octet-stream") if self.path == "/api/audio/import" else ("application/zip", "application/octet-stream")
+                if content_type not in allowed:
+                    self.send_json(415, {"error": "Expected a binary WAV or project ZIP content type."})
+                    self.close_connection = True
+                    return
+                headers = self.headers.get_all("X-DAW-Metadata", [])
+                if len(headers) != 1:
+                    raise ValueError("Expected one X-DAW-Metadata header.")
+                keys = ("expected_revision", "track_id", "clip_id", "start_frame") if self.path == "/api/audio/import" else ("expected_revision",)
+                meta = metadata(headers[0], keys)
+                body = self.read_body(MAX_AUDIO_BODY if self.path == "/api/audio/import" else MAX_PROJECT_BODY)
+                if body is None:
+                    return
+                result = self.server.projects.import_audio(meta, body) if self.path == "/api/audio/import" else self.server.projects.import_project(meta, body)
+                self.send_json(200, result)
+                return
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= MAX_BODY or self.headers.get("Transfer-Encoding"):
                 self.send_json(413, {"error": "Request must be at most 1 MiB."})
@@ -221,16 +292,25 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 self.send_json(415, {"error": "Expected application/json."})
                 return
-            data = json.loads(self.rfile.read(length))
+            body = self.read_body(MAX_BODY)
+            if body is None:
+                return
+            data = strict_json(body)
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
-            if self.path == "/api/session":
+            if self.path in ("/api/session", "/api/note/take"):
                 if set(data) not in ({"session"}, {"session", "expected_revision"}):
                     raise ValueError("Expected session and optional expected_revision only.")
+                if self.path == "/api/note/take" and "expected_revision" not in data:
+                    raise ValueError("A recorded take requires expected_revision.")
                 if "expected_revision" in data:
                     validate_revision(data["expected_revision"])
                 validate_editor_session_shape(data["session"])
-                self.send_json(200, self.server.engine.call("session.replace", data))
+                self.server.projects.registered(data["session"])
+                result = self.server.engine.call("session.replace", data)
+                if self.path == "/api/note/take":
+                    result = self.server.engine.call("session.inspect")
+                self.send_json(200, result)
             elif self.path == "/api/transport":
                 action = data.pop("action", None)
                 if action not in ("play", "pause", "resume", "stop", "volume"):
@@ -302,6 +382,25 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
                     raise ValueError("value must be a finite number from 0 to 1.")
                 self.send_json(200, self.server.engine.call("effect.set_parameter", data))
+            elif self.path == "/api/note/preview":
+                if set(data) != {"expected_revision", "track_id", "frequency_hz", "velocity"}:
+                    raise ValueError("Expected expected_revision, track_id, frequency_hz and velocity only.")
+                validate_revision(data["expected_revision"])
+                track_id = data["track_id"]
+                if not isinstance(track_id, str) or not 0 < len(track_id.encode("utf-8")) <= 128:
+                    raise ValueError("track_id must be a nonempty string of at most 128 UTF-8 bytes.")
+                for key in ("frequency_hz", "velocity"):
+                    value = data[key]
+                    if type(value) not in (int, float) or not _finite_number(value):
+                        raise ValueError(f"{key} must be a finite number.")
+                if not 0 < data["frequency_hz"] < 96000 or not 0 <= data["velocity"] <= 1:
+                    raise ValueError("frequency_hz must be positive and below Nyquist; velocity must be from 0 to 1.")
+                with tempfile.TemporaryDirectory(prefix="daw-note-preview-") as directory:
+                    path = Path(directory) / "preview.wav"
+                    report = self.server.engine.call("note.preview", {**data, "path": str(path)})
+                    self.send_bytes(200, path.read_bytes(), "audio/wav", {
+                        "X-Clipped-Frames": report["clipped_frames"],
+                    })
             elif self.path == "/api/render":
                 if set(data) != {"seconds"}:
                     raise ValueError("Expected seconds only.")

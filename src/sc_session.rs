@@ -210,7 +210,7 @@ impl Runtime {
                 queue,
                 server: SourceProcess::Puredata(server),
                 track: track.clone(),
-                chain: PreparedChain::prepare(track),
+                chain: PreparedChain::prepare(track, 48000),
             });
         }
         if let Device::Csound(source) = &track.device {
@@ -220,7 +220,7 @@ impl Runtime {
                 queue,
                 server: SourceProcess::Csound(server),
                 track: track.clone(),
-                chain: PreparedChain::prepare(track),
+                chain: PreparedChain::prepare(track, 48000),
             });
         }
         let Device::Supercollider(source) = &track.device else {
@@ -269,7 +269,7 @@ impl Runtime {
             queue,
             server: SourceProcess::Supercollider(server),
             track: track.clone(),
-            chain: PreparedChain::prepare(track),
+            chain: PreparedChain::prepare(track, 48000),
         })
     }
     fn duration_gain(&self) -> (u64, f64) {

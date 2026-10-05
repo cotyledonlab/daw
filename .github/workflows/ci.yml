@@ -23,8 +23,8 @@ jobs:
       - if: runner.os == 'macOS'
         run: cargo test --locked --features native-audio
       - run: cargo build --locked
-      - run: python3 -m unittest gui.test_server
+      - run: python3 -m unittest gui.test_server gui.test_musical_workflow gui.test_audio_projects gui.test_mixer_workflow gui.test_processing_workflow gui.test_finishing_workflow gui.test_pd_instrument_workflow gui.test_note_preview gui.test_note_input_workflow gui.test_note_recording_workflow
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test gui/test_live.cjs gui/test_editor.cjs gui/test_history.cjs
+      - run: node --test gui/test_*.cjs

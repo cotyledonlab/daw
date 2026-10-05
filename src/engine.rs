@@ -1,6 +1,7 @@
 //! Prepared sine and note rendering. All scheduling storage is allocated before playback.
 use crate::{
     assets::{self, PreparedAudioClip},
+    builtins::{self, DrumBank, Waveform},
     effects::PreparedChain,
     session::{
         Clip, Device, MAX_FRAME, MAX_TRACKS, MAX_VOICES, Session, TrackMode, envelope_frames,
@@ -16,6 +17,18 @@ struct Voice {
     gain: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum NoteSound {
+    Sine,
+    Drum(usize),
+    Synth {
+        waveform: Waveform,
+        attack: f64,
+        release: f64,
+        filter_alpha: f64,
+    },
+}
+
 #[derive(Debug)]
 struct PreparedNote {
     track_index: usize,
@@ -25,18 +38,24 @@ struct PreparedNote {
     increment: f64,
     gain: f64,
     release_level: f64,
+    sound: NoteSound,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ActiveNote {
     index: usize,
     phase: f64,
+    filter: f64,
 }
 
 /// Validated, preallocated state for rendering a session in blocks.
 #[derive(Debug)]
 pub struct Engine {
+    max_render_seconds: f64,
+    mixer: Vec<[f64; 2]>,
+    meters: MixerPeaks,
     voices: Vec<Voice>,
+    pd: Vec<crate::pd_instrument::Prepared>,
     // Schema-v3 tracks sum into independent stereo buses before serial effects.
     effect_chains: Option<Vec<PreparedChain>>,
     audio: Vec<PreparedAudioClip>,
@@ -45,6 +64,7 @@ pub struct Engine {
     active_audio: [usize; MAX_VOICES],
     audio_count: usize,
     notes: Vec<PreparedNote>,
+    drum_bank: Option<DrumBank>,
     starts: Vec<usize>,
     next_start: usize,
     active: [ActiveNote; MAX_VOICES],
@@ -53,6 +73,34 @@ pub struct Engine {
     frame_position: u64,
     output_position: u64,
     loop_region: Option<(u64, u64)>,
+}
+
+/// Absolute linear peaks of the last rendered block, before master clamp/monitor.
+/// A channel is clipped when its peak is >= 1.0. Fixed storage is callback-safe.
+#[derive(Debug, Clone, Copy)]
+pub struct MixerPeaks {
+    pub tracks: [[f64; 2]; MAX_TRACKS],
+    pub master: [f64; 2],
+}
+impl Default for MixerPeaks {
+    fn default() -> Self {
+        Self {
+            tracks: [[0.0; 2]; MAX_TRACKS],
+            master: [0.0; 2],
+        }
+    }
+}
+impl MixerPeaks {
+    pub fn merge(&mut self, other: &Self) {
+        for (target, source) in self.tracks.iter_mut().zip(&other.tracks) {
+            for channel in 0..2 {
+                target[channel] = target[channel].max(source[channel]);
+            }
+        }
+        for channel in 0..2 {
+            self.master[channel] = self.master[channel].max(other.master[channel]);
+        }
+    }
 }
 
 impl Engine {
@@ -67,23 +115,52 @@ impl Engine {
         crate::runtime_sources::check_budget(audio.iter())?;
         let mut audio_starts: Vec<_> = (0..audio.len()).collect();
         audio_starts.sort_by_key(|&index| (audio[index].start, index));
+        let mut pd = Vec::new();
+        for (index, track) in session.tracks.iter().enumerate() {
+            if matches!(track.device, Device::PdInstrument(_)) {
+                pd.push(crate::pd_instrument::Prepared::prepare(
+                    track,
+                    index,
+                    session.sample_rate,
+                )?);
+            }
+        }
         let rate = f64::from(session.sample_rate);
         let envelope = envelope_frames(session.sample_rate);
         let mut voices = Vec::new();
         let mut ordered = Vec::new();
         for (track_index, track) in session.tracks.iter().enumerate() {
-            let Device::Sine { frequency_hz, gain } = track.device else {
-                continue;
-            };
-            if track.mode != Some(TrackMode::Sequenced) {
-                voices.push(Voice {
-                    track_index,
-                    phase: 0.0,
-                    increment: TAU * frequency_hz / rate,
+            let (gain, sound) = match track.device {
+                Device::Sine { frequency_hz, gain } => {
+                    if track.mode != Some(TrackMode::Sequenced) {
+                        voices.push(Voice {
+                            track_index,
+                            phase: 0.0,
+                            increment: TAU * frequency_hz / rate,
+                            gain,
+                        });
+                        continue;
+                    }
+                    (gain, NoteSound::Sine)
+                }
+                Device::Drumkit { gain, .. } => (gain, NoteSound::Drum(0)),
+                Device::Synth {
+                    waveform,
                     gain,
-                });
-                continue;
-            }
+                    attack_ms,
+                    release_ms,
+                    cutoff_hz,
+                } => (
+                    gain,
+                    NoteSound::Synth {
+                        waveform,
+                        attack: builtins::envelope_frames(attack_ms, session.sample_rate) as f64,
+                        release: builtins::envelope_frames(release_ms, session.sample_rate) as f64,
+                        filter_alpha: 1.0 - (-TAU * cutoff_hz / rate).exp(),
+                    },
+                ),
+                _ => continue,
+            };
             for clip in track.clips.as_ref().expect("validated clips") {
                 let Clip::Notes(clip) = clip else {
                     continue;
@@ -91,16 +168,35 @@ impl Engine {
                 for note in &clip.notes {
                     let start = clip.start_frame + note.start_frame;
                     let off = start + note.duration_frames;
+                    let sound = match sound {
+                        NoteSound::Drum(_) => NoteSound::Drum(
+                            builtins::drum_index(note.frequency_hz).expect("validated drum pitch"),
+                        ),
+                        sound => sound,
+                    };
+                    let (tail_start, tail_length, attack) = match sound {
+                        NoteSound::Sine => (off, envelope, envelope as f64),
+                        NoteSound::Drum(index) => (
+                            start,
+                            builtins::drum_frames(index, session.sample_rate),
+                            1.0,
+                        ),
+                        NoteSound::Synth {
+                            attack, release, ..
+                        } => (off, release as u64, attack),
+                    };
                     ordered.push((
                         (&track.id, &clip.id, &note.id),
                         PreparedNote {
                             track_index,
                             start,
                             off,
-                            end: (off + envelope).min(clip.start_frame + clip.length_frames),
+                            end: (tail_start + tail_length)
+                                .min(clip.start_frame + clip.length_frames),
                             increment: TAU * note.frequency_hz / rate,
                             gain: gain * note.velocity,
-                            release_level: (note.duration_frames as f64 / envelope as f64).min(1.0),
+                            release_level: (note.duration_frames as f64 / attack).min(1.0),
+                            sound,
                         },
                     ));
                 }
@@ -110,10 +206,33 @@ impl Engine {
         let notes: Vec<_> = ordered.into_iter().map(|(_, note)| note).collect();
         let mut starts: Vec<_> = (0..notes.len()).collect();
         starts.sort_by_key(|&index| (notes[index].start, index));
-        let effect_chains = (session.schema_version >= 3)
-            .then(|| session.tracks.iter().map(PreparedChain::prepare).collect());
+        let effect_chains = (session.schema_version >= 3).then(|| {
+            session
+                .tracks
+                .iter()
+                .map(|track| PreparedChain::prepare(track, session.sample_rate))
+                .collect()
+        });
+        let drum_bank = session
+            .tracks
+            .iter()
+            .any(|track| matches!(track.device, Device::Drumkit { .. }))
+            .then(|| DrumBank::prepare(session.sample_rate));
+        let any_solo = session
+            .tracks
+            .iter()
+            .any(|track| track.mixer.is_some_and(|m| m.solo));
+        let mixer = session
+            .tracks
+            .iter()
+            .map(|track| track.mixer.unwrap_or_default().coefficients(any_solo))
+            .collect();
         Ok(Self {
+            max_render_seconds: crate::render::max_render_seconds(session),
+            mixer,
+            meters: MixerPeaks::default(),
             voices,
+            pd,
             effect_chains,
             audio,
             audio_starts,
@@ -121,6 +240,7 @@ impl Engine {
             active_audio: [0; MAX_VOICES],
             audio_count: 0,
             notes,
+            drum_bank,
             starts,
             next_start: 0,
             active: [ActiveNote::default(); MAX_VOICES],
@@ -130,6 +250,18 @@ impl Engine {
             output_position: 0,
             loop_region: None,
         })
+    }
+
+    pub fn has_pd(&self) -> bool {
+        !self.pd.is_empty()
+    }
+
+    pub fn max_render_seconds(&self) -> f64 {
+        self.max_render_seconds
+    }
+
+    pub fn mixer_peaks(&self) -> &MixerPeaks {
+        &self.meters
     }
 
     pub fn frame_position(&self) -> u64 {
@@ -169,6 +301,9 @@ impl Engine {
             for chain in chains {
                 chain.seek(frame);
             }
+        }
+        for pd in &mut self.pd {
+            pd.reset(frame);
         }
         self.active_count = 0;
         for voice in &mut self.voices {
@@ -211,7 +346,11 @@ impl Engine {
                 self.active[..self.active_count].partition_point(|voice| voice.index < index);
             self.active
                 .copy_within(insertion..self.active_count, insertion + 1);
-            self.active[insertion] = ActiveNote { index, phase: 0.0 };
+            self.active[insertion] = ActiveNote {
+                index,
+                phase: 0.0,
+                filter: 0.0,
+            };
             self.active_count += 1;
             self.next_start += 1;
         }
@@ -254,6 +393,7 @@ impl Engine {
     }
 
     fn render_inner(&mut self, output: &mut [[f64; 2]], clip: bool) -> u64 {
+        self.meters = MixerPeaks::default();
         let mut clipped_frames = 0;
         for frame in output {
             if let Some((start, end)) = self.loop_region {
@@ -281,22 +421,48 @@ impl Engine {
             }
             for voice in &mut self.active[..self.active_count] {
                 let note = &self.notes[voice.index];
-                let envelope = if self.frame_position < note.off {
-                    ((self.frame_position - note.start) as f64 / self.envelope).min(1.0)
-                } else {
-                    note.release_level
-                        * (1.0 - (self.frame_position - note.off) as f64 / self.envelope)
+                let elapsed = self.frame_position - note.start;
+                let sample = match note.sound {
+                    NoteSound::Drum(index) => {
+                        self.drum_bank.as_ref().expect("prepared bank").samples[index]
+                            [elapsed as usize]
+                            * note.gain
+                    }
+                    NoteSound::Sine => {
+                        let envelope = if self.frame_position < note.off {
+                            (elapsed as f64 / self.envelope).min(1.0)
+                        } else {
+                            note.release_level
+                                * (1.0 - (self.frame_position - note.off) as f64 / self.envelope)
+                        };
+                        let sample = voice.phase.sin() * note.gain * envelope;
+                        voice.phase = (voice.phase + note.increment) % TAU;
+                        sample
+                    }
+                    NoteSound::Synth {
+                        waveform,
+                        attack,
+                        release,
+                        filter_alpha,
+                    } => {
+                        let envelope = if self.frame_position < note.off {
+                            (elapsed as f64 / attack).min(1.0)
+                        } else {
+                            note.release_level
+                                * (1.0 - (self.frame_position - note.off) as f64 / release)
+                        };
+                        let step = note.increment / TAU;
+                        let raw = builtins::oscillator(waveform, voice.phase, step);
+                        voice.filter += filter_alpha * (raw - voice.filter);
+                        voice.phase = (voice.phase + step) % 1.0;
+                        voice.filter * note.gain * envelope
+                    }
                 };
-                let sample = voice.phase.sin() * note.gain * envelope;
                 if self.effect_chains.is_some() {
                     track_frames[note.track_index][0] += sample;
                     track_frames[note.track_index][1] += sample;
                 } else {
                     mixed += sample;
-                }
-                voice.phase += note.increment;
-                if voice.phase >= TAU {
-                    voice.phase -= TAU;
                 }
             }
             let mut stereo = [mixed, mixed];
@@ -304,20 +470,35 @@ impl Engine {
                 let clip = &self.audio[index];
                 let source = clip.source_offset + (self.frame_position - clip.start) as usize;
                 let samples = clip.frames[source];
+                let gain = clip.gain * clip.envelope(self.frame_position);
                 if self.effect_chains.is_some() {
-                    track_frames[clip.track_index][0] += samples[0] * clip.gain;
-                    track_frames[clip.track_index][1] += samples[1] * clip.gain;
+                    track_frames[clip.track_index][0] += samples[0] * gain;
+                    track_frames[clip.track_index][1] += samples[1] * gain;
                 } else {
-                    stereo[0] += samples[0] * clip.gain;
-                    stereo[1] += samples[1] * clip.gain;
+                    stereo[0] += samples[0] * gain;
+                    stereo[1] += samples[1] * gain;
                 }
             }
+            for pd in &mut self.pd {
+                let sample = pd.sample(self.frame_position);
+                track_frames[pd.track_index][0] += sample[0];
+                track_frames[pd.track_index][1] += sample[1];
+            }
             if let Some(chains) = &mut self.effect_chains {
-                for (frame, chain) in track_frames.iter_mut().zip(chains.iter_mut()) {
+                for (index, (frame, chain)) in
+                    track_frames.iter_mut().zip(chains.iter_mut()).enumerate()
+                {
                     chain.process(frame, self.frame_position);
-                    stereo[0] += frame[0];
-                    stereo[1] += frame[1];
+                    for channel in 0..2 {
+                        frame[channel] *= self.mixer[index][channel];
+                        self.meters.tracks[index][channel] =
+                            self.meters.tracks[index][channel].max(frame[channel].abs());
+                        stereo[channel] += frame[channel];
+                    }
                 }
+            }
+            for (peak, sample) in self.meters.master.iter_mut().zip(stereo) {
+                *peak = peak.max(sample.abs());
             }
             if stereo.iter().any(|sample| sample.abs() > 1.0) {
                 clipped_frames += 1;

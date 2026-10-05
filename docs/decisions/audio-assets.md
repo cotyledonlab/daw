@@ -18,9 +18,11 @@ An audio track uses `device: {"kind":"audio","gain":1}` and `mode: "sequenced"`.
 }
 ```
 
-All fields are required. Unknown fields and null are rejected. Sine tracks accept note clips; audio tracks accept audio clips. Audio devices are not valid in schema v1 or continuous mode. Track and clip gains are finite 0–1 and multiply. A base frequency edit on an audio track returns `invalid_params`.
+The fields above are required. Optional `fade_in_frames` and `fade_out_frames` default to zero and are omitted when zero on save. Unknown fields and null are rejected. Sine tracks accept note clips; audio tracks accept audio clips. Audio devices are not valid in schema v1 or continuous mode. Track and clip gains are finite 0–1 and multiply. A base frequency edit on an audio track returns `invalid_params`.
 
-The clip owns [start,start+length), reading source frames [offset,offset+length). Length must be positive, integer ends must fit the existing MAX_FRAME bound, and the source range must fit the decoded file. No implicit padding, looping, fade, or resampling occurs. Clip IDs remain unique within a track. The 1,024-clip session cap includes both note and audio clips. Each active audio clip consumes one of the shared 64 voice slots; note release tails and continuous sine tracks count toward that same limit.
+The clip owns [start,start+length), reading source frames [offset,offset+length). Length must be positive, integer ends must fit the existing MAX_FRAME bound, and the source range must fit the decoded file. No implicit padding, looping, fade, or resampling occurs. Explicit linear fades are supported across schemas 2–11: each is a nonnegative integer no longer than the clip, and their sum cannot exceed its length. Clip IDs remain unique within a track. The 1,024-clip session cap includes both note and audio clips. Each active audio clip consumes one of the shared 64 voice slots; note release tails and continuous sine tracks count toward that same limit.
+
+For relative clip frame `i`, length `L`, and fade count `N >= 2`, fade-in multiplies the first N samples by `i/(N-1)` and fade-out multiplies the last N by `(L-1-i)/(N-1)`; elsewhere the factor is one. A one-frame fade mutes its edge sample. Zero leaves the old audio unchanged. These envelopes use the clip timeline rather than its source offset and multiply before track effects/mixer. Seek and loop recompute the same factor without state, allocation or asset changes. Shortening a clip rejects when its existing fades no longer fit.
 
 Mono sources are duplicated into stereo. Stereo channels remain separate. Continuous sine tracks mix first in serialized order, followed by sequenced notes in stable identity order, then audio clips in (track ID, clip ID) UTF-8 order. Clamp the final stereo sum per channel; `clipped_frames` counts a frame once if either channel exceeds [-1,1]. Native mono output averages the two already-mixed channels; extra device channels remain silent.
 
@@ -32,7 +34,7 @@ The containing directory of a successfully loaded session is its project root. `
 
 `session.save` with an audio track requires the destination's parent to be the active project root. It writes a fresh JSON file and leaves relative asset references unchanged. Saving elsewhere returns `invalid_params` before creating output. There is no implicit asset copying or relocation. To move a project, copy its directory with its assets, then load the copied session. Sessions without audio tracks retain existing save behavior.
 
-The v1 browser editor rejects v2 uploads, so it does not acquire a new route for reading arbitrary WAV paths. Audio clips are currently script-controlled; no audio upload or timeline editor is added in this slice.
+The original T07a slice was script-controlled. The browser now imports owned WAV assets and represents note/audio arrangements; it cannot read arbitrary WAV paths from JSON. Portable ZIP save/reopen and private temporary roots are defined in the [GUI audio-project contract](gui-audio-projects.md). The headless root/save restrictions above are unchanged.
 
 ## Bounded preparation
 

@@ -11,6 +11,9 @@
   let historyAction = false;
   let timelineBusy = false;
   let arrangementView = null;
+  let mixerView = null;
+  let automationViews = [];
+  let automationDraftStates = new Map();
   let appliedGeneration = 0;
   let metadataRequestTail = Promise.resolve();
   let metadataCache = new Map();
@@ -27,6 +30,10 @@
   let bridgeDiscovered = false;
   let capabilitiesLoading = Promise.resolve();
   let sourceBridgeAvailable = false;
+  let audioProjectsAvailable = false;
+  let renderLimits = {};
+  let audioProjectByteLimit = 128 * 1024 * 1024;
+  let untilStoppedDevices = [];
   let sourceMetadata = new Map();
   let sourceUpdateText = null;
   const liveParameterValues = new Map();
@@ -42,6 +49,11 @@
   const tracksEl = $('#tracks');
   const emptyEl = $('#empty-state');
   const noticeEl = $('#notice');
+  const recoverButton = document.createElement('button');
+  recoverButton.type = 'button'; recoverButton.className = 'button button-quiet';
+  recoverButton.textContent = 'Reload engine state (discard local edits)'; recoverButton.hidden = true;
+  noticeEl.after(recoverButton);
+  recoverButton.addEventListener('click', () => { void loadCurrentSession(); });
   const applyButton = $('#apply-button');
   const saveButton = $('#save-button');
   const loadButton = $('#load-button');
@@ -54,6 +66,18 @@
   let playGeneration = 0;
   let nativeAvailable = false;
   let nativePluginsAvailable = false;
+  let untilStoppedAvailable = false;
+  let processingAvailable = false;
+  let pdInstrumentAvailable = false;
+  let notePreviewAvailable = false;
+  let noteInput = null;
+  let noteProjectGeneration = 0;
+  let noteTargetKey = null;
+  let stepCapturing = false;
+  let noteRecording = null;
+  let recordingStarting = false;
+  let takeApplying = false;
+  let metronomeAvailable = false;
   let offlinePluginsAvailable = false;
   let parameterMetadataAvailable = false;
   let effectCatalog = [];
@@ -107,6 +131,7 @@
   function canPlaySources() { return SessionEditor.sources(draft).every(track => track.device.kind === 'csound' ? csoundLiveAvailable : liveSourcesAvailable); }
 
   function hasSources() { return SessionEditor.sources(draft).length > 0; }
+  function hasAudio() { return draft.tracks.some(track => track.device.kind === 'audio'); }
 
   async function inspectCurrentSession() {
     const response = await request('/api/session/inspect');
@@ -121,7 +146,7 @@
     if (snapshot.state === 'playing') {
       const device = snapshot.device ? ` · ${snapshot.device}` : '';
       const rate = snapshot.sample_rate ? ` · ${(snapshot.sample_rate / 1000).toLocaleString()} kHz` : '';
-      return `Playing${device}${rate}`;
+      return snapshot.count_in_remaining_frames > 0 ? `Count-in · ${Math.ceil(snapshot.count_in_remaining_frames / snapshot.sample_rate * (applied?.tempo_milli_bpm || 120000) / 60000)} beats` : `Playing${device}${rate}`;
     }
     if (snapshot.state === 'paused') return 'Paused';
     if (snapshot.state === 'error') return 'Native audio error';
@@ -137,6 +162,12 @@
       outputMode.value = 'native';
     }
     nativeSnapshot = snapshot;
+    if (noteRecording?.active && !recordingStarting) {
+      if (snapshot.state === 'error') noteRecording.cancel('Native playback failed. Take discarded.');
+      else if (snapshot.state === 'stopped') void finishNoteTake(snapshot);
+      else if (snapshot.sample_rate) noteRecording.updateTransport({...snapshot, timestamp: performance.now()});
+    }
+    mixerView?.updateMeters(snapshot.mixer_meters, snapshot.state);
     const sourceUpdate = snapshot.source_control_update;
     if (sourceUpdate) {
       const cancelled = snapshot.state === 'stopped' && (sourceUpdate.pending || (sourceUpdate.applied_revision && !sourceUpdate.callback_observed));
@@ -194,6 +225,7 @@
     try {
       await nativeCommand({ action: 'stop' });
       requestAppliedEffectMetadata();
+      if (nativeSnapshot.state === 'stopped') stopNoteInput();
       return nativeSnapshot.state === 'stopped';
     } catch (error) {
       announceError(`Could not stop native audio. ${error.message}`);
@@ -207,7 +239,16 @@
       const capabilities = await response.json();
       if (!capabilities || typeof capabilities !== 'object') throw new Error('Invalid server capabilities.');
       bridgeDiscovered = true;
+      renderLimits = capabilities.render || {};
+      processingAvailable = capabilities.supported_session_schema_versions?.includes(11) === true;
+      pdInstrumentAvailable = capabilities.supported_session_schema_versions?.includes(12) === true;
+      untilStoppedAvailable = capabilities.timeline_transport?.until_stopped === true;
+      untilStoppedDevices = capabilities.timeline_transport?.until_stopped_devices || [];
+      audioProjectsAvailable = capabilities.gui_bridge?.audio_projects === true;
+      audioProjectByteLimit = capabilities.gui_bridge?.audio_project_limits?.project_bytes || audioProjectByteLimit;
       checkedReplacementAvailable = capabilities.gui_bridge?.checked_replacement === true;
+      notePreviewAvailable = capabilities.note_preview?.implemented === true && capabilities.gui_bridge?.note_preview === true;
+      metronomeAvailable = capabilities.timeline_transport?.metronome === true;
       sourceBridgeAvailable = capabilities.gui_bridge?.supercollider_sources === true;
       csoundBridgeAvailable = capabilities.gui_bridge?.csound_sources === true;
       csoundLiveAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.implemented === true;
@@ -263,11 +304,12 @@
   }
 
   async function playLive() {
+    stopNoteInput();
     if (draft.schema_version !== 1) { announceError('Effects require native audio output.'); return; }
     if (starting || (player.context && !paused) || busy) return;
     const error = validateSession(draft);
     if (error) { announceError(error); return; }
-    if (!draft.tracks.length) { setNotice('Add a sine track, then press Play.'); return; }
+    if (!draft.tracks.length) { setNotice('Add a note track or open the musical demo, then press Play.'); return; }
     starting = true;
     const generation = ++playGeneration;
     playState.textContent = 'Starting…';
@@ -317,6 +359,8 @@
     noticeEl.textContent = message;
     noticeEl.classList.toggle('error', isError);
     noticeEl.hidden = !message;
+    recoverButton.hidden = !isError;
+    recoverButton.disabled = busy || nativeLocked();
   }
 
   function setBusy(value) {
@@ -434,12 +478,18 @@
     const dirty = isDirty();
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
-    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'All changes applied';
-    const locked = nativeLocked();
+    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'Applied to engine';
+    const locked = nativeLocked() || Boolean(noteRecording?.pending) || recordingStarting;
     applyButton.disabled = unsupportedSession || busy || locked || !dirty;
     saveButton.disabled = unsupportedSession || busy || locked;
     loadButton.disabled = unsupportedSession || busy || locked;
     fileInput.disabled = unsupportedSession || busy || locked;
+    const audioImport = $('#import-audio-button');
+    audioImport.disabled = unsupportedSession || busy || locked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    audioImport.title = audioProjectsAvailable ? 'Import WAV into a new audio lane at Insert at (beat).' : 'Restart the local server to enable WAV imports.';
+    $('#audio-file').disabled = audioImport.disabled;
+    saveButton.textContent = hasAudio() ? 'Save project ZIP' : 'Save session';
+    saveButton.title = hasAudio() ? 'Download session and referenced WAV assets together.' : 'Download session JSON.';
     renderButton.disabled = unsupportedSession || busy || locked;
     outputMode.disabled = unsupportedSession || busy || nativeModeChange;
     playButton.disabled = nativeModeChange || (unsupportedSession && !nativeActive()) || (busy && !player.context && !starting && !nativeActive());
@@ -451,10 +501,13 @@
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
     if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
-    if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
+    recoverButton.disabled = busy || locked;
+    if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     const addCsound = $('#add-csound-button');
     addCsound.disabled = unsupportedSession || busy || locked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0 || SessionEditor.arrangement(draft);
     addCsound.title = csoundBridgeAvailable ? 'Add a CSD program as a Csound track (format 7).' : 'Restart the local server to enable Csound imports.';
+    mixerView?.setState({locked: unsupportedSession || busy || locked || Boolean(player.context) || starting});
+    automationViews.forEach(({view}) => view.setState({locked: unsupportedSession || busy || locked || Boolean(player.context) || starting}));
     tracksEl.querySelectorAll('button, input').forEach(control => {
       const row = control.closest('.effect-row');
       const source = control.closest('[data-source-control]');
@@ -471,18 +524,195 @@
     if (hasSources()) playButton.disabled ||= !canPlaySources() || draft.sample_rate !== 48000;
     renderButton.disabled ||= SessionEditor.plugins(draft).length > 0 && !offlinePluginsAvailable;
     tracksEl.querySelectorAll('select').forEach(control => { control.disabled = unsupportedSession || busy || locked; });
+    tracksEl.querySelectorAll('.add-processing').forEach(control => { control.disabled ||= !processingAvailable; });
     tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable || SessionEditor.arrangement(draft); });
     for (const id of ['new-arrangement-button', 'demo-arrangement-button']) {
       const control = document.getElementById(id);
       if (control) control.disabled = busy || locked || unsupportedSession;
     }
     const noteTrack = $('#add-note-track-button');
-    if (noteTrack) noteTrack.disabled = busy || locked || unsupportedSession || !SessionEditor.arrangement(draft) || draft.tracks.length >= 64;
+    if (noteTrack) noteTrack.disabled = busy || locked || unsupportedSession || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    if ($('#note-device')) {
+      $('#note-device').disabled = noteTrack?.disabled === true;
+      const pdOption = $('#note-device option[value="pd_instrument"]');
+      if (pdOption) pdOption.disabled = !pdInstrumentAvailable || draft.sample_rate !== 48000;
+    }
+    $('#import-pd-button').disabled = noteTrack?.disabled === true || !pdInstrumentAvailable || draft.sample_rate !== 48000;
+    $('#import-pd-button').title = draft.sample_rate !== 48000 ? 'Pd instruments require a 48 kHz session.' : 'Load a portable Pd Filtered Sine device JSON package.';
+    $('#pd-file').disabled = $('#import-pd-button').disabled;
+    if ($('#stop-edit-button')) { $('#stop-edit-button').hidden = !locked; $('#stop-edit-button').disabled = busy; }
     if ($('#undo-button')) $('#undo-button').disabled = busy || locked || isDirty() || !editHistory.canUndo;
     if ($('#redo-button')) $('#redo-button').disabled = busy || locked || isDirty() || !editHistory.canRedo;
     if ($('#stop-button')) $('#stop-button').disabled = !nativeActive() && !player.context && !starting;
     arrangementView?.updateTransport({...nativeSnapshot, loop_region: nativeActive() ? nativeSnapshot.loop_region : null, locked: busy || locked, pending: timelineBusy || nativeSnapshot.timeline_command_pending === true,
       transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state) && nativeSnapshot.source_mode !== 'live'});
+    syncNoteInput();
+    syncRecordingControls();
+  }
+
+  function noteInputTarget() {
+    if (!notePreviewAvailable || !applied || !sessionRevision || unsupportedSession || noteRecording?.pending || recordingStarting || nativeLocked() || player.context || starting || historyAction ||
+        ((busy || isDirty()) && !stepCapturing)) return null;
+    const selected = arrangementView?.getNoteTarget();
+    const track = selected && applied.tracks[selected.trackIndex];
+    if (!track || track.id !== selected.trackId || track.mode !== 'sequenced' || !['sine', 'synth', 'drumkit', 'pd_instrument'].includes(track.device.kind)) return null;
+    let stepTarget = null;
+    if ($('#step-entry-enabled').checked && !stepCapturing && !busy) {
+      try { stepTarget = arrangementView.getStepTarget(); } catch (_) { /* The capture reports invalid cursor fields after audition. */ }
+    }
+    return {key: JSON.stringify([noteProjectGeneration, applied.sample_rate, track.id, selected.clipId, track.device, track.effects, track.automation, track.mixer]),
+      track_id: track.id, expected_revision: sessionRevision, drum: track.device.kind === 'drumkit', trackIndex: selected.trackIndex, clipId: selected.clipId,
+      stepArmed: $('#step-entry-enabled').checked, stepTarget};
+  }
+
+  function syncNoteInput() {
+    if (!noteInput) return;
+    const performanceTarget = typeof recordingInputTarget === 'function' ? recordingInputTarget() : null;
+    const target = performanceTarget || noteInputTarget();
+    const key = target?.key || null;
+    if (key !== noteTargetKey) { noteInput.reset(); noteTargetKey = key; }
+    $('#note-input').hidden = !SessionEditor.arrangement(draft);
+    $('#note-input-enabled').disabled = !target;
+    $('#step-entry-enabled').disabled = !target || Boolean(performanceTarget);
+    $('#note-input-octave').disabled = !target || target.drum;
+    $('#note-preview-button').disabled = !target || stepCapturing || Boolean(performanceTarget);
+    $('#connect-midi-button').disabled = !notePreviewAvailable || busy || nativeLocked();
+    $('#note-preview-button').textContent = target?.drum ? 'Preview kick' : `Preview ${$('#note-input-octave').selectedOptions[0].textContent}`;
+    noteInput.setEnabled(Boolean(target && $('#note-input-enabled').checked));
+    if (noteInput.enabled) $('#stop-button').disabled = false;
+    noteInput.setVolume(Number($('#monitor-volume').value));
+    $('#note-input-help').textContent = !notePreviewAvailable ? 'Restart the local server with the current engine to enable note preview.' : !target
+      ? 'Select a note clip and stop playback to play or enter notes. Apply pending changes first.'
+      : `${target.track_id} · ${target.drum ? 'A / S / D: kick / snare / closed hat.' : 'A W S E D F T G Y H U J K: one chromatic octave.'} Each press previews a ¼-second gate through the saved instrument and effects. Step entry adds a note at Step position and advances after successful application. This uses browser listening audio while the arrangement is stopped.`;
+  }
+
+  function stopNoteInput() {
+    $('#note-input-enabled').checked = false;
+    noteInput?.setEnabled(false);
+  }
+
+  function resetNoteProject() {
+    noteProjectGeneration += 1;
+    stopNoteInput();
+    noteInput?.reset();
+    $('#step-entry-enabled').checked = false;
+  }
+
+  function noteInputError(error) {
+    const status = $('#note-input-status');
+    status.textContent = error?.message || String(error);
+    status.classList.add('error');
+  }
+
+  async function captureStepNote(note) {
+    if (!$('#step-entry-enabled').checked || (note.target && !note.target.stepArmed)) return;
+    if (stepCapturing || busy) { noteInputError('The previous step note is still applying. Press the note again when it has finished.'); return; }
+    const current = arrangementView?.getStepTarget();
+    const target = note.target?.stepTarget || current;
+    if (!target) return;
+    if (!current || target.key !== current.key) { noteInputError('The step position changed during preview. Press the note again at the new position.'); return; }
+    stepCapturing = true;
+    try {
+      const accepted = await editArrangement({type: 'addNote', trackIndex: target.trackIndex, clipId: target.clipId,
+        note: {start_frame: target.start_frame, duration_frames: target.duration_frames, frequency_hz: note.frequency_hz, velocity: note.velocity}});
+      if (accepted) {
+        arrangementView.acceptStepAdvance(target);
+        $('#note-input-status').classList.remove('error');
+        $('#note-input-status').textContent = `Note entered in ${target.clipId}. Undo removes this note.`;
+      } else noteInputError('Note entry was rejected. The step cursor has not advanced; see the arrangement error.');
+    } finally { stepCapturing = false; syncNoteInput(); }
+  }
+
+  function beatControlsEligible() {
+    return metronomeAvailable && nativeAvailable && SessionEditor.arrangement(draft) && draft.tracks.every(track =>
+      ['sine', 'synth', 'drumkit', 'audio'].includes(track.device.kind) && (track.effects || []).every(effect => ['gain', 'lowpass', 'delay'].includes(effect.kind)));
+  }
+
+  function recordingInputTarget() {
+    if (!noteRecording?.active || recordingStarting || !nativeActive()) return null;
+    const take = noteRecording.take;
+    const track = applied?.tracks[take.trackIndex];
+    return track ? {key: `record:${noteProjectGeneration}:${take.revision}:${take.clipId}`, track_id: track.id,
+      drum: track.device.kind === 'drumkit'} : null;
+  }
+
+  function syncRecordingControls() {
+    const active = Boolean(noteRecording?.active), pending = Boolean(noteRecording?.pending);
+    const eligible = beatControlsEligible();
+    $('#beat-controls').hidden = !SessionEditor.arrangement(draft);
+    $('#metronome-enabled').disabled = !eligible || nativeLocked() || busy || recordingStarting;
+    $('#count-in-bars').disabled = $('#metronome-enabled').disabled;
+    $('#beat-controls-help').textContent = eligible ? '4/4 click and count-in for native playback; listening only.' : 'Click/count-in currently require built-in instruments/audio and native output.';
+    $('#record-notes-button').disabled = !nativeAvailable || !checkedReplacementAvailable || !noteInputTarget() || nativeLocked() || busy || active || pending || recordingStarting;
+    $('#apply-take-button').hidden = !pending;
+    $('#apply-take-button').disabled = busy || nativeLocked() || takeApplying;
+    $('#discard-take-button').hidden = !pending;
+    $('#discard-take-button').disabled = busy || nativeLocked();
+    if (active || pending || recordingStarting) outputMode.disabled = true;
+    if (active && nativeActive()) {
+      arrangementView?.updateTransport({...nativeSnapshot, transportAvailable: false, locked: true});
+      playButton.textContent = 'Stop recording';
+      $('#note-input-enabled').checked = true;
+      $('#note-input-enabled').disabled = true;
+      $('#note-input-help').textContent = `${applied.tracks[noteRecording.take.trackIndex].id} · recording held keyboard/MIDI gates into ${noteRecording.take.clipId}. Stop applies the overdub as one undoable take. Input is not monitored during playback. Loop/seek are disabled.`;
+    }
+    if (pending) { playButton.disabled = true; recoverButton.disabled = true; }
+  }
+
+  async function startNoteRecording() {
+    const target = noteInputTarget();
+    if (!target || busy || nativeLocked() || noteRecording?.take) return;
+    try {
+      noteInput.reset();
+      noteRecording.arm({session: applied, revision: sessionRevision, trackIndex: target.trackIndex, clipId: target.clipId});
+      recordingStarting = true;
+      $('#step-entry-enabled').checked = false;
+      $('#note-input-enabled').checked = true;
+      outputMode.value = 'native';
+      await toggleNative();
+      if (noteRecording.take) noteTargetKey = `record:${noteProjectGeneration}:${noteRecording.take.revision}:${noteRecording.take.clipId}`;
+      recordingStarting = false;
+      if (!nativeActive() || nativeSnapshot.state === 'error') noteRecording.cancel('Recording could not start. The project is unchanged.');
+      else noteRecording.updateTransport({...nativeSnapshot, timestamp: performance.now()});
+      syncStatus();
+    } catch (error) {
+      recordingStarting = false;
+      noteRecording.cancel(error.message);
+      syncStatus();
+    }
+  }
+
+  async function finishNoteTake(snapshot) {
+    if (!noteRecording?.active) return;
+    try {
+      noteRecording.finish({session: applied, revision: sessionRevision, transport: snapshot});
+      stopNoteInput();
+      if (noteRecording.pending) await applyNoteTake();
+    } catch (error) { noteInputError(error); }
+    syncStatus();
+  }
+
+  async function applyNoteTake() {
+    if (!noteRecording?.pending || busy || nativeLocked() || takeApplying) return false;
+    takeApplying = true;
+    const take = noteRecording.pending;
+    setBusy(true);
+    try {
+      if (take.revision !== sessionRevision || isDirty()) throw new Error('Project changed. Discard the take or reload the original project before retrying.');
+      const validation = validateSession(take.draft);
+      if (validation) throw new Error(validation);
+      const response = await request('/api/note/take', {method: 'POST', body: JSON.stringify({session: take.draft, expected_revision: take.revision})});
+      const result = await response.json();
+      acceptImportedSession(result);
+      const count = take.notes.length;
+      noteRecording.accept();
+      $('#record-notes-status').textContent = `${count} recorded notes applied. Undo removes the whole take.${take.truncated ? ' New gates ending beyond the clip were shortened to its end.' : ''}`;
+      return true;
+    } catch (error) {
+      $('#record-notes-status').textContent = `Take kept for retry. ${error.message}`;
+      setNotice(`Recorded take could not be applied. ${error.message}`, true);
+      return false;
+    } finally { takeApplying = false; setBusy(false); syncStatus(); }
   }
 
   function announceError(message) {
@@ -590,12 +820,17 @@
     if (SessionEditor.arrangement(draft)) {
       $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Edits apply while stopped; tempo changes the grid only.';
     }
-    durationInput.max = hasSources() || SessionEditor.plugins(draft).length ? '10' : '60';
+    durationInput.max = String(SessionEditor.exportMaximum(draft, renderLimits));
+    $('#render-limit').textContent = `Export up to ${durationInput.max} seconds for this project.`;
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
     $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live sources. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved scalar/array controls without automation can change live; SC initialization-rate slots remain read-only. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
-    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, or load a saved VST3 session to reuse its validated effects.';
-    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = 'Native playback uses the applied arrangement. Click Play/Pause or Stop. Seek and loop become available during playback or pause; edits require stopped playback. The current run ends after 60 seconds, including pauses.';
-    if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Edits apply while stopped; tempo changes the grid only.';
+    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, lowpass or delay, or load a saved VST3 session to reuse its validated effects.';
+    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = `Native playback uses the applied arrangement. Seek and loop are available during playback or pause. Use Stop & edit to change notes. ${untilStoppedAvailable ? `Built-in playback runs until Stop; WAV export supports up to ${durationInput.max} seconds.` : 'This engine limits playback to 60 seconds.'}`;
+    if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = `${hasAudio() ? 'Arrangement' : 'Note arrangement'} · native playback. Select a clip to ${hasAudio() ? 'edit notes or trim audio' : 'edit notes'}. Edits apply while stopped; tempo changes the grid only.`;
+    if (draft.tracks.some(track => track.device.kind === 'pd_instrument')) {
+      $('#effects-hint').textContent += ' Pd notes are monophonic; cutoff and gain edits apply while stopped. Playback and export require libpd.';
+      $('.live-help').textContent = `Native playback uses the applied arrangement. Use Stop & edit to change notes and Pd controls. Pd notes are scheduled in 64-frame blocks. WAV export supports up to ${durationInput.max} seconds.`;
+    }
   }
 
   function makeId() {
@@ -634,6 +869,9 @@
 
   function makeTrackCard(track, index) {
     const card = element('article', 'track-card');
+    if (track.device.kind === 'pd_instrument') return makePdInstrumentCard(track, index);
+    if (['synth', 'drumkit'].includes(track.device.kind)) return makeInstrumentCard(track, index);
+    if (track.device.kind === 'audio') return makeAudioCard(track, index);
     card.setAttribute('aria-label', `Sine track ${index + 1}`);
 
     const ident = element('div', 'track-ident');
@@ -713,6 +951,105 @@
     });
 
     card.append(ident, frequency, gain, remove, makeEffectPanel(track, index));
+    return card;
+  }
+
+  function makeAudioCard(track, index) {
+    const card = element('article', 'track-card instrument-card');
+    card.setAttribute('aria-label', `${track.id} audio`);
+    const ident = element('div', 'track-ident');
+    const title = element('div', 'track-title');
+    title.append(element('h2', '', track.id), element('p', '', 'PCM audio · select a clip to trim its source or change gain'));
+    ident.append(element('span', 'track-icon', 'AU'), title);
+    const controls = element('div', 'instrument-controls');
+    const gain = element('label', 'instrument-control', 'Gain');
+    const input = element('input', 'number-input');
+    input.type = 'number'; input.min = '0'; input.max = '1'; input.step = '0.01'; input.value = String(track.device.gain);
+    input.setAttribute('aria-label', `${track.id} Gain`);
+    input.addEventListener('input', () => { draft.tracks[index].device.gain = input.value.trim() ? Number(input.value) : NaN; markEdited(); });
+    gain.append(input); controls.append(gain);
+    const remove = element('button', 'remove-button', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${track.id}`);
+    remove.addEventListener('click', () => { draft.tracks.splice(index, 1); renderTracks(); markEdited(); });
+    card.append(ident, controls, remove, makeEffectPanel(track, index));
+    return card;
+  }
+
+  function makePdInstrumentCard(track, index) {
+    const d = track.device;
+    const card = element('article', 'track-card instrument-card pd-instrument-card');
+    card.setAttribute('aria-label', `${track.id} Pd instrument`);
+    const ident = element('div', 'track-ident'), title = element('div', 'track-title');
+    title.append(element('h2', '', track.id), element('p', '', 'Pd · Filtered Sine · monophonic'));
+    ident.append(element('span', 'track-icon', 'PD'), title);
+    const controls = element('div', 'instrument-controls');
+    function numeric(label, value, min, max, edit) {
+      const wrap = element('label', 'instrument-control', label), input = element('input', 'number-input');
+      input.type = 'number'; input.min = String(min); input.max = String(max); input.step = 'any'; input.value = String(value);
+      input.dataset.structural = 'true';
+      input.setAttribute('aria-label', `${track.id} ${label}`);
+      input.addEventListener('change', () => {
+        const value = input.value.trim() ? Number(input.value) : NaN;
+        void editArrangement({type: 'editPdInstrument', trackIndex: index, patch: edit(value)});
+      });
+      wrap.append(input); controls.append(wrap);
+    }
+    numeric('Gain', d.gain, 0, 1, value => ({gain: value}));
+    for (const control of d.controls) numeric(`${control.name} (Hz)`, control.value, control.min, control.max, value => ({controls: d.controls.map(item => item.name === control.name ? {...item, value} : {...item})}));
+    const save = element('button', 'button button-quiet', 'Save Pd preset'); save.type = 'button';
+    save.addEventListener('click', () => download(new Blob([JSON.stringify(d, null, 2) + '\n'], {type: 'application/json'}), 'pd-filtered-sine.json'));
+    controls.append(save);
+    const remove = element('button', 'remove-button', '×'); remove.type = 'button'; remove.dataset.structural = 'true';
+    remove.setAttribute('aria-label', `Remove ${track.id}`);
+    remove.addEventListener('click', () => { void editArrangement({type: 'deleteTrack', trackIndex: index}); });
+    const details = element('details', 'pd-program');
+    details.append(element('summary', '', 'Embedded Pd program'));
+    details.append(element('p', 'output-hint', 'The program and declared controls travel with this session. Change gain or cutoff while stopped; Undo restores the previous applied values. Requires the libpd runtime for playback and rendering.'));
+    details.append(element('pre', '', d.program));
+    card.append(ident, controls, remove, details, makeEffectPanel(track, index));
+    return card;
+  }
+
+  function makeInstrumentCard(track, index) {
+    const d = track.device, drum = d.kind === 'drumkit';
+    const card = element('article', 'track-card instrument-card');
+    card.setAttribute('aria-label', `${track.id} ${drum ? 'drum kit' : 'synth'}`);
+    const ident = element('div', 'track-ident');
+    const title = element('div', 'track-title');
+    title.append(element('h2', '', track.id), element('p', '', drum ? 'Factory kit · 36 Kick / 38 Snare / 42 Hat' : 'Polyphonic synth'));
+    ident.append(element('span', 'track-icon', drum ? 'DR' : 'SY'), title);
+    const controls = element('div', 'instrument-controls');
+    function numeric(key, label, min, max, step) {
+      const wrap = element('label', 'instrument-control', label);
+      const input = element('input', 'number-input');
+      input.type = 'number'; input.min = min; input.max = max; input.step = step; input.value = String(d[key]);
+      input.setAttribute('aria-label', `${track.id} ${label}`);
+      input.addEventListener('input', () => { draft.tracks[index].device[key] = input.value.trim() ? Number(input.value) : NaN; markEdited(); });
+      wrap.append(input); controls.append(wrap);
+    }
+    numeric('gain', 'Gain', 0, 1, 0.01);
+    if (!drum) {
+      const presetLabel = element('label', 'instrument-control', 'Preset');
+      const preset = element('select');
+      for (const [value, name] of [['custom','Custom'], ['bass','Bass'], ['lead','Lead']]) { const o = element('option','',name); o.value=value; preset.append(o); }
+      preset.setAttribute('aria-label', `${track.id} synth preset`);
+      preset.addEventListener('change', () => {
+        if (preset.value === 'custom') return;
+        const settings = preset.value === 'bass' ? {waveform:'square',gain:0.13,attack_ms:4,release_ms:60,cutoff_hz:700} : {waveform:'saw',gain:0.13,attack_ms:8,release_ms:90,cutoff_hz:Math.min(2800,draft.sample_rate/2-1)};
+        Object.assign(draft.tracks[index].device,settings); markEdited(); renderTracks();
+      });
+      presetLabel.append(preset); controls.append(presetLabel);
+      const waveformLabel = element('label', 'instrument-control', 'Waveform'), waveform = element('select');
+      for (const kind of ['saw','square']) { const o = element('option','',kind); o.value=kind; waveform.append(o); }
+      waveform.value=d.waveform; waveform.setAttribute('aria-label',`${track.id} waveform`);
+      waveform.addEventListener('change',()=>{ draft.tracks[index].device.waveform=waveform.value; markEdited(); });
+      waveformLabel.append(waveform); controls.append(waveformLabel);
+      numeric('attack_ms', 'Attack (ms)', 1, 2000, 1);
+      numeric('release_ms', 'Release (ms)', 0, 2000, 1);
+      numeric('cutoff_hz', 'Cutoff (Hz)', 20, Math.min(20000,draft.sample_rate/2-1), 1);
+    }
+    const remove = element('button', 'remove-button', '×'); remove.type='button'; remove.setAttribute('aria-label', `Remove ${track.id}`);
+    remove.addEventListener('click',()=>{ draft.tracks.splice(index,1); renderTracks(); markEdited(); });
+    card.append(ident, controls, remove, makeEffectPanel(track,index));
     return card;
   }
 
@@ -829,7 +1166,7 @@
       const row = element('div', 'effect-row');
       row.dataset.trackId = track.id;
       row.dataset.effectId = effect.id;
-      const label = effect.kind === 'vst3' ? effect.bundle_path.split('/').pop().replace(/\.vst3$/, '') : 'Gain';
+      const label = effect.kind === 'vst3' ? effect.bundle_path.split('/').pop().replace(/\.vst3$/, '') : ({gain: 'Gain', lowpass: 'Lowpass', delay: 'Delay'}[effect.kind] || effect.kind);
       row.append(element('strong', '', label));
       const bypassLabel = element('label', 'bypass-control', 'Bypass');
       const bypass = element('input'); bypass.type = 'checkbox'; bypass.checked = effect.bypass;
@@ -840,6 +1177,33 @@
       remove.setAttribute('aria-label', `Remove ${label} from track ${index + 1}`);
       remove.addEventListener('click', () => { draft = SessionEditor.removeEffect(draft, index, effect.id); renderTracks(); markEdited(); });
       row.append(remove);
+      if (['lowpass', 'delay'].includes(effect.kind)) {
+        const fields = effect.kind === 'lowpass'
+          ? [['cutoff_hz', 'Cutoff (Hz)', 20, Math.min(20000, draft.sample_rate / 2 - 1), 1]]
+          : [['time_ms', 'Time (ms)', 1, 2000, 1], ['feedback', 'Feedback', 0, 0.95, 0.01], ['mix', 'Wet mix', 0, 1, 0.01]];
+        for (const [field, name, min, max, step] of fields) {
+          const control = element('label', 'effect-parameter', name);
+          const input = element('input'); input.type = 'number'; input.min = String(min); input.max = String(max); input.step = String(step); input.value = String(effect[field]);
+          input.setAttribute('aria-label', `${label} ${name} on track ${index + 1}`);
+          input.addEventListener('input', () => { effect[field] = input.value.trim() ? Number(input.value) : NaN; markEdited(); });
+          control.append(input); row.append(control);
+        }
+        const preset = element('select', 'effect-select');
+        preset.setAttribute('aria-label', `${label} preset on track ${index + 1}`);
+        const prompt = element('option', '', 'Choose preset…'); prompt.value = ''; preset.append(prompt);
+        for (const name of Object.keys(SessionEditor.effectPresets[effect.kind])) {
+          const option = element('option', '', name[0].toUpperCase() + name.slice(1)); option.value = name; preset.append(option);
+        }
+        preset.addEventListener('change', () => {
+          if (!preset.value) return;
+          try {
+            const {kind, bypass, ...settings} = SessionEditor.effectPreset(effect.kind, preset.value, draft.sample_rate);
+            draft = SessionEditor.editEffect(draft, index, effect.id, settings);
+            renderTracks(); markEdited();
+          } catch (error) { announceError(error.message); }
+        });
+        row.append(preset); panel.append(row); continue;
+      }
       const params = effect.kind === 'gain' ? [{id: 'gain', value: effect.gain, points: (track.automation || []).find(lane => lane.effect_id === effect.id)?.points || []}] : effect.parameters;
       for (const param of params) {
         const control = element('label', 'effect-parameter');
@@ -878,6 +1242,16 @@
         control.append(range, value); row.append(control);
         if (param.points.length) row.append(element('p', 'output-hint', `${param.points.length} saved automation points override this base value; live editing is locked for this parameter.`));
       }
+      if (effect.kind === 'gain' && draft.schema_version !== 1) {
+        const holder = element('div', 'gain-automation');
+        const key = JSON.stringify([track.id, effect.id]);
+        holder.dataset.automationTrack = String(index);
+        const view = AutomationView.create(holder, {editor: SessionEditor, trackIndex: index, effectId: effect.id,
+          draftState: automationDraftStates.get(key), onEdit: applyAutomationEdit, onError: announceError});
+        view.render(draft, {locked: busy || nativeLocked() || unsupportedSession || Boolean(player.context) || starting});
+        automationViews.push({key, view});
+        row.append(holder);
+      }
       if (effect.kind === 'vst3') {
         const details = element('details', 'effect-identity');
         details.append(element('summary', '', 'Saved plugin identity'), element('p', '', `${effect.bundle_path} · ${effect.class_id}`));
@@ -903,6 +1277,14 @@
     const vst = element('button', 'button button-quiet add-vst3', 'Add VST3'); vst.type = 'button';
     vst.addEventListener('click', () => { const effect = effectCatalog[Number(select.value)]; if (effect) add(effect); });
     actions.append(gain);
+    if (SessionEditor.mixerSupported(draft)) {
+      for (const [kind, name, preset] of [['lowpass', 'Add lowpass', 'warm'], ['delay', 'Add delay', 'echo']]) {
+        const button = element('button', 'button button-quiet add-processing', name); button.type = 'button';
+        button.title = 'Saved built-in processing requires an engine supporting format 11.';
+        button.addEventListener('click', () => add(SessionEditor.effectPreset(kind, preset, draft.sample_rate)));
+        actions.append(button);
+      }
+    }
     if (![6, 7].includes(draft.schema_version) && !SessionEditor.arrangement(draft)) actions.append(select, vst);
     panel.append(actions);
     return panel;
@@ -918,6 +1300,10 @@
 
   function renderTracks() {
     configureSessionMode();
+    automationDraftStates = new Map(automationViews.map(({key, view}) => [key, view.getDraftState()]));
+    automationViews = [];
+    mixerView?.render(draft, {locked: busy || nativeLocked() || unsupportedSession || Boolean(player.context) || starting});
+    mixerView?.updateMeters(nativeSnapshot.mixer_meters, nativeSnapshot.state);
     tracksEl.replaceChildren(...draft.tracks.map((track, index) => (['supercollider', 'csound'].includes(track.device.kind) ? makeSourceCard(track, index) : makeTrackCard(track, index))));
     const empty = draft.tracks.length === 0;
     emptyEl.hidden = !empty;
@@ -926,6 +1312,35 @@
     $('#arrangement').hidden = !SessionEditor.arrangement(draft);
     arrangementView?.render(draft, {locked: busy || nativeLocked(), frame: nativeSnapshot.timeline_frame || 0, loop: nativeActive() ? nativeSnapshot.loop_region : null, transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state), pending: timelineBusy});
     syncStatus();
+  }
+
+  async function applyMixerEdit(next) {
+    if (busy || nativeLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    if (player.context || starting) return false;
+    const before = clone(draft);
+    draft = next;
+    if (await applyDraft()) return true;
+    draft = before;
+    renderTracks();
+    return false;
+  }
+
+  async function applyAutomationEdit(next, focus) {
+    if (busy || nativeLocked() || historyAction || unsupportedSession || player.context || starting) return false;
+    const before = clone(draft);
+    draft = next;
+    if (await applyDraft()) {
+      if (focus) {
+        const holder = [...tracksEl.querySelectorAll('.gain-automation')].find(node => node.dataset.automationTrack === String(focus.trackIndex) &&
+          node.closest('.effect-row')?.dataset.effectId === focus.effectId);
+        const input = [...(holder?.querySelectorAll('input') || [])].find(node => node.dataset.automationKey === String(focus.frame) && node.dataset.automationField === focus.field);
+        input?.focus();
+      }
+      return true;
+    }
+    draft = before;
+    syncStatus();
+    return false;
   }
 
   function markEdited() {
@@ -945,7 +1360,7 @@
   }
 
   async function editArrangement(action) {
-    if (busy || nativeLocked() || historyAction || unsupportedSession) return;
+    if (busy || nativeLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
     const before = clone(draft);
     try {
       const index = action.trackIndex;
@@ -956,10 +1371,13 @@
         return `${prefix}-${number}`;
       };
       switch (action.type) {
-        case 'addTrack': draft = SessionEditor.addNoteTrack(draft, nextId('notes', draft.tracks)); break;
+        case 'addTrack': { const kind = action.device ? 'pd_instrument' : $('#note-device')?.value || 'synth'; const id = nextId(kind === 'pd_instrument' ? 'pd' : kind === 'drumkit' ? 'drums' : kind === 'synth' ? 'synth' : 'notes', draft.tracks); draft = action.device ? SessionEditor.addPdInstrument(draft, id, action.device) : SessionEditor.addNoteTrack(draft, id, kind); break; }
+        case 'editPdInstrument': draft = SessionEditor.editPdInstrument(draft, index, action.patch); break;
+        case 'deleteTrack': draft = clone(draft); draft.tracks.splice(index, 1); break;
         case 'addClip': draft = SessionEditor.addNoteClip(draft, index, {id: nextId('clip', draft.tracks[index]?.clips), start_frame: action.start_frame, length_frames: action.length_frames, notes: []}); break;
         case 'moveClip': draft = SessionEditor.moveClip(draft, index, action.clipId, action.start_frame); break;
         case 'resizeClip': draft = SessionEditor.resizeClip(draft, index, action.clipId, action.length_frames); break;
+        case 'editAudioClip': draft = SessionEditor.editAudioClip(draft, index, action.clipId, action.patch); break;
         case 'duplicateClip': draft = SessionEditor.duplicateClip(draft, index, action.clipId, nextId('clip', draft.tracks[index]?.clips), action.start_frame); break;
         case 'deleteClip': draft = SessionEditor.deleteClip(draft, index, action.clipId); break;
         case 'addNote': draft = SessionEditor.addNote(draft, index, action.clipId, {...action.note, id: nextId('n', draft.tracks[index]?.clips.find(clip => clip.id === action.clipId)?.notes)}); break;
@@ -971,26 +1389,38 @@
       const error = validateSession(draft);
       if (error) throw new Error(error);
       renderTracks();
-      if (!await applyDraft()) { draft = before; renderTracks(); }
-    } catch (error) { draft = before; renderTracks(); announceError(error.message); }
+      if (!await applyDraft()) { const message = noticeEl.textContent; draft = before; renderTracks(); arrangementView?.reportError(message); return false; }
+      return true;
+    } catch (error) { draft = before; renderTracks(); arrangementView?.reportError(error); announceError(error.message); return false; }
+  }
+
+  async function importPdPreset(file) {
+    if (!file || busy || nativeLocked() || unsupportedSession) return;
+    try {
+      if (file.size > PdInstrument.packageByteLimit) throw new Error('Pd preset packages must be JSON no larger than 128 KiB.');
+      const device = PdInstrument.parsePackage(await file.text());
+      await editArrangement({type: 'addTrack', device});
+    } catch (error) { announceError(`Could not load the Pd preset. ${error.message}`); }
   }
 
   async function replaceWithArrangement(demo = false) {
     if (busy || nativeLocked() || unsupportedSession) return;
     if ((isDirty() || draft.tracks.length) && !window.confirm('Replace this session with a note arrangement? Save your current session first if needed.')) return;
     const before = clone(draft);
+    resetNoteProject();
     stopLive();
-    draft = demo ? SessionEditor.createDemoSession() : SessionEditor.createArrangementSession(draft.sample_rate);
+    automationViews = []; automationDraftStates.clear();
+    draft = demo ? SessionEditor.createMusicalDemoSession() : SessionEditor.createArrangementSession(draft.sample_rate);
     selectSampleRate(draft.sample_rate);
     renderTracks();
     if (!await applyDraft()) { draft = before; selectSampleRate(draft.sample_rate); renderTracks(); return; }
     const end = Math.max(draft.sample_rate, ...draft.tracks.flatMap(track => track.clips || []).map(clip => clip.start_frame + clip.length_frames));
-    durationInput.value = String(Math.min(60, end / draft.sample_rate));
+    durationInput.value = String(Math.min(SessionEditor.exportMaximum(draft, renderLimits), end / draft.sample_rate));
     setNotice(demo ? 'Demo arrangement ready. Select a clip to edit notes, then play or export.' : 'Note arrangement ready. Add a note track and a clip to begin.');
   }
 
   async function traverseHistory(direction) {
-    if (busy || nativeLocked() || isDirty() || historyAction) return;
+    if (busy || nativeLocked() || noteRecording?.pending || isDirty() || historyAction) return;
     const target = direction === 'undo' ? editHistory.undoTarget(applied) : editHistory.redoTarget(applied);
     if (!target) return;
     historyAction = true;
@@ -1008,6 +1438,7 @@
   }
 
   async function timelineCommand(path, payload) {
+    if (noteRecording?.active) { noteInputError('Stop recording before seeking or looping.'); return; }
     if (!nativeAvailable || !nativeActive() || timelineBusy || nativeSnapshot.source_mode === 'live') return;
     timelineBusy = true;
     const generation = ++nativeCommandGeneration;
@@ -1032,6 +1463,45 @@
     try { await operation; }
     catch (error) { announceError(error.message); }
     finally { timelineBusy = false; nativeCommandsPending -= 1; syncStatus(); }
+  }
+
+  function acceptImportedSession(result, {resetHistory = false} = {}) {
+    if (resetHistory) resetNoteProject();
+    if (!result?.session || typeof result.revision !== 'string') throw new Error('The server returned an invalid project revision.');
+    const validation = validateSession(result.session);
+    if (validation) throw new Error(`The imported project cannot be edited: ${validation}`);
+    if (resetHistory) { editHistory.reset(); automationViews = []; automationDraftStates.clear(); }
+    else if (applied) editHistory.commit(applied, result.session);
+    invalidateEffectMetadata();
+    sessionRevision = result.revision;
+    applied = clone(result.session); draft = clone(applied);
+    unsupportedSession = false;
+    rememberEffects(); configureSessionMode(); selectSampleRate(draft.sample_rate);
+    suggestArrangementDuration(); arrangementView?.reportError(''); renderTracks();
+  }
+
+  async function importAudioFile(file) {
+    if (!file || busy || nativeLocked() || unsupportedSession) return;
+    try {
+      await capabilitiesLoading;
+      if (!audioProjectsAvailable) throw new Error('Restart the local server to enable WAV imports.');
+      if (file.size <= 0 || file.size > 32 * 1024 * 1024) throw new Error('WAV files must be nonempty and at most 32 MiB.');
+      const beat = Number($('#arrangement [data-field="insertBeat"]')?.value || 0);
+      if (!Number.isFinite(beat) || beat < 0) throw new Error('Insert at (beat) must be a nonnegative number.');
+      const start_frame = SessionEditor.ticksToFrames({...draft, tempo_milli_bpm:draft.tempo_milli_bpm || 120000}, Math.round(beat * 960));
+      if (!await applyDraft()) return;
+      stopLive(); setBusy(true);
+      setNotice(`Importing ${file.name}…`);
+      const stem = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 60) || 'audio';
+      const ids = new Set(draft.tracks.map(track => track.id));
+      let track_id = stem, suffix = 2;
+      while (ids.has(track_id)) track_id = `${stem}-${suffix++}`;
+      const response = await request('/api/audio/import', {method:'POST', body:file, headers:{'Content-Type':'audio/wav', 'X-DAW-Metadata':JSON.stringify({expected_revision:sessionRevision, track_id, clip_id:'take-1', start_frame})}});
+      const result = await response.json();
+      acceptImportedSession(result);
+      setNotice(`Imported ${file.name} as ${track_id}. Select its clip to trim or change gain. Save project ZIP includes the audio.`);
+    } catch (error) { announceError(`Could not import WAV. ${error.message}`); }
+    finally { $('#audio-file').value = ''; setBusy(false); requestAppliedEffectMetadata(); }
   }
 
   async function addCsoundFile(file) {
@@ -1121,6 +1591,18 @@
     setNotice('');
     const ok = await applyDraft();
     if (!ok) return;
+    if (hasAudio()) {
+      if (!audioProjectsAvailable) { announceError('Restart the local server to save audio projects with their assets.'); return; }
+      setBusy(true);
+      setNotice('Packing session and audio assets…');
+      try {
+        const response = await request('/api/project');
+        download(await response.blob(), `daw-project-${timestamp()}.zip`);
+        setNotice('Project ZIP downloaded with session and audio assets.');
+      } catch (error) { announceError(`Could not save project. ${error.message}`); }
+      finally { setBusy(false); }
+      return;
+    }
     const blob = new Blob([`${JSON.stringify(applied, null, 2)}\n`], { type: 'application/json' });
     download(blob, `daw-session-${timestamp()}.json`);
     setNotice('Validated session downloaded as JSON.');
@@ -1129,7 +1611,7 @@
   function suggestArrangementDuration() {
     if (!SessionEditor.arrangement(draft)) return;
     const end = Math.max(draft.sample_rate, ...draft.tracks.flatMap(track => track.clips || []).map(clip => clip.start_frame + clip.length_frames));
-    durationInput.value = String(Math.min(60, end / draft.sample_rate));
+    durationInput.value = String(Math.min(SessionEditor.exportMaximum(draft, renderLimits), end / draft.sample_rate));
   }
 
   async function loadSession(file) {
@@ -1142,6 +1624,18 @@
     setBusy(true);
     setNotice('Reading and validating session…');
     try {
+      const projectZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
+      if (projectZip) {
+        await capabilitiesLoading;
+        if (!audioProjectsAvailable) throw new Error('Restart the local server to reopen project ZIPs.');
+        if (file.size > audioProjectByteLimit) throw new Error(`Project ZIPs must be at most ${Math.floor(audioProjectByteLimit / (1024 * 1024))} MiB.`);
+        await liveParameterQueue;
+        const response = await request('/api/project', {method:'POST', body:file, headers:{'Content-Type':'application/zip', 'X-DAW-Metadata':JSON.stringify({expected_revision:sessionRevision})}});
+        const result = await response.json();
+        acceptImportedSession(result, {resetHistory:true});
+        setNotice(`Loaded ${file.name} with its audio assets.`);
+        return;
+      }
       if (file.size > 1024 * 1024) throw new Error('Session files must be no larger than 1 MiB.');
       let parsed;
       try { parsed = JSON.parse(await file.text()); }
@@ -1159,6 +1653,8 @@
       invalidateEffectMetadata();
       const inspected = await inspectCurrentSession();
       editHistory.reset();
+      resetNoteProject();
+      automationViews = []; automationDraftStates.clear();
       applied = clone(inspected.session || session);
       draft = clone(applied);
       rememberEffects();
@@ -1180,7 +1676,7 @@
   async function renderAudio() {
     setNotice('');
     const seconds = Number(durationInput.value);
-    const maxSeconds = SessionEditor.plugins(draft).length ? 10 : 60;
+    const maxSeconds = SessionEditor.exportMaximum(draft, renderLimits);
     if (!Number.isFinite(seconds) || seconds < 0.001 || seconds > maxSeconds) {
       durationInput.setCustomValidity(`Duration must be between 0.001 and ${maxSeconds} seconds.`);
       durationInput.reportValidity();
@@ -1212,6 +1708,9 @@
 
   async function toggleNative() {
     if (!nativeAvailable || busy || nativeModeChange) return;
+    if (noteRecording?.active && nativeActive()) { await stopNative(); return; }
+    if (noteRecording?.pending) return;
+    if (!recordingStarting) stopNoteInput();
     if (nativeSnapshot.state === 'starting') {
       await stopNative();
       return;
@@ -1239,14 +1738,15 @@
     paused = false;
     player.stop();
     $('#output-level').value = 0;
-    if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a sine track, then press Play.'); return; }
+    if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a note track or open the musical demo, then press Play.'); return; }
     nativeSnapshot = { state: 'starting' };
     if (hasSources()) setNotice('Starting live sources…');
     playState.textContent = 'Starting native audio…';
     syncStatus();
     try {
       const seconds = hasSources() ? Math.max(...SessionEditor.sources(draft).map(track => track.device.duration_frames)) / draft.sample_rate : 60;
-      await nativeCommand({ action: 'play', seconds, volume: Number($('#monitor-volume').value), ...(hasSources() ? {source_mode: 'live'} : {}) });
+      const untilStopped = untilStoppedAvailable && SessionEditor.arrangement(draft) && draft.tracks.every(track => untilStoppedDevices.includes(track.device.kind)) && !hasSources() && !SessionEditor.plugins(draft).length;
+      await nativeCommand({ action: 'play', ...(untilStopped ? {until_stopped:true} : {seconds}), volume: Number($('#monitor-volume').value), ...(beatControlsEligible() ? {metronome: $('#metronome-enabled').checked, count_in_bars: Number($('#count-in-bars').value)} : {}), ...(hasSources() ? {source_mode: 'live'} : {}) });
       metadataSuppressed = false;
     } catch (error) {
       metadataSuppressed = false;
@@ -1294,6 +1794,7 @@
       if (session && !SessionEditor.supported(session)) {
         invalidateEffectMetadata();
         unsupportedSession = true;
+        mixerView?.render(session, {locked: true});
         emptyEl.hidden = true;
         $('#track-count').textContent = `${session.tracks.length} ${session.tracks.length === 1 ? "track" : "tracks"} · read-only`;
         selectSampleRate(session.sample_rate);
@@ -1304,12 +1805,15 @@
       if (validation) throw new Error(`The server returned an invalid session: ${validation}`);
       invalidateEffectMetadata();
       editHistory.reset();
+      resetNoteProject();
+      automationViews = []; automationDraftStates.clear();
       applied = clone(session);
       draft = clone(session);
       rememberEffects();
       configureSessionMode();
       selectSampleRate(draft.sample_rate);
       suggestArrangementDuration();
+      arrangementView?.reportError('');
       renderTracks();
       setNotice('Connected. Your session is ready to edit.');
     } catch (error) {
@@ -1321,17 +1825,66 @@
     }
   }
 
+  mixerView = MixerView.create($('#mixer'), {editor: SessionEditor, onEdit: applyMixerEdit, onError: announceError});
   arrangementView = ArrangementView.create($('#arrangement'), {
     onSeek: frame => { void timelineCommand('/api/transport/seek', {frame}); },
     onLoop: region => { void timelineCommand('/api/transport/loop', {region}); },
-    onEdit: action => { void editArrangement(action); },
+    onEdit: action => editArrangement(action),
+    onSelectionChange: () => { syncNoteInput(); syncRecordingControls(); },
+  });
+  noteInput = new NoteInput({
+    getTarget: noteInputTarget,
+    getPerformanceTarget: recordingInputTarget,
+    onPerformance: event => { if (!recordingStarting) noteRecording?.capture(event); },
+    requestPreview: async note => {
+      const response = await request('/api/note/preview', {method: 'POST', signal: note.signal, body: JSON.stringify({
+        expected_revision: note.target.expected_revision, track_id: note.target.track_id, frequency_hz: note.frequency_hz, velocity: note.velocity})});
+      return response.arrayBuffer();
+    },
+    onNote: async note => {
+      $('#note-input-status').classList.remove('error');
+      $('#note-input-status').textContent = `Previewing MIDI ${note.midi} · velocity ${note.velocity.toFixed(2)}.`;
+      await captureStepNote(note);
+    },
+    onError: noteInputError,
+    onMIDIStatus: status => {
+      const messages = {connecting: 'Requesting MIDI access…', connected: 'MIDI connected. Enable Play keyboard / MIDI notes to preview or enter notes.',
+        unsupported: 'Web MIDI is unavailable in this browser. Computer-keyboard notes still work.', unavailable: 'MIDI access was unavailable. Computer-keyboard notes still work.'};
+      $('#midi-status').textContent = messages[status] || 'MIDI disconnected.';
+    },
+  });
+  noteRecording = new NoteRecording({onStatus: message => { $('#record-notes-status').textContent = message; }});
+  $('#record-notes-button').addEventListener('click', () => { void startNoteRecording(); });
+  $('#apply-take-button').addEventListener('click', () => { void applyNoteTake(); });
+  $('#discard-take-button').addEventListener('click', () => { noteRecording.cancel(); stopNoteInput(); syncStatus(); });
+  $('#note-input-enabled').addEventListener('change', event => {
+    syncNoteInput();
+    if (event.target.checked) void noteInput.unlock();
+  });
+  $('#note-input-octave').addEventListener('change', event => { noteInput.setBaseMidi(Number(event.target.value)); syncNoteInput(); });
+  $('#note-preview-button').addEventListener('click', () => {
+    $('#note-input-enabled').checked = true;
+    syncNoteInput();
+    void noteInput.play(noteInputTarget()?.drum ? 36 : Number($('#note-input-octave').value));
+  });
+  $('#connect-midi-button').addEventListener('click', () => { void noteInput.connectMIDI(); });
+  $('#step-entry-enabled').addEventListener('change', event => {
+    if (event.target.checked) { $('#note-input-enabled').checked = true; syncNoteInput(); void noteInput.unlock(); }
   });
   $('#new-arrangement-button').addEventListener('click', () => { void replaceWithArrangement(); });
   $('#demo-arrangement-button').addEventListener('click', () => { void replaceWithArrangement(true); });
   $('#add-note-track-button').addEventListener('click', () => { void editArrangement({type: 'addTrack'}); });
   $('#undo-button').addEventListener('click', () => { void traverseHistory('undo'); });
   $('#redo-button').addEventListener('click', () => { void traverseHistory('redo'); });
-  $('#stop-button').addEventListener('click', () => { if (nativeActive()) void stopNative(); else stopLive(); });
+  $('#stop-edit-button').addEventListener('click', async () => {
+    if (await stopNative()) {
+      arrangementView?.setState({locked: false});
+      const target = $('#arrangement .piano-roll-svg [aria-pressed="true"]') || $('#arrangement .arrangement-svg [aria-pressed="true"]') || $('#arrangement [data-field="track"]');
+      target?.focus();
+      setNotice('Playback stopped. Edit the selected phrase, then press Play.');
+    }
+  });
+  $('#stop-button').addEventListener('click', () => { if (nativeActive()) void stopNative(); else { stopNoteInput(); stopLive(); } });
   document.addEventListener('keydown', event => {
     if (event.target.closest('input, textarea, select') || busy || nativeLocked()) return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -1341,6 +1894,14 @@
 
   $('#add-track-button').addEventListener('click', addTrack);
   $('#add-csound-button').addEventListener('click', () => $('#csound-file').click());
+  $('#import-pd-button').addEventListener('click', () => $('#pd-file').click());
+  $('#pd-file').addEventListener('change', event => {
+    const file = event.target.files[0]; event.target.value = ''; void importPdPreset(file);
+  });
+  $('#import-audio-button').addEventListener('click', () => $('#audio-file').click());
+  $('#audio-file').addEventListener('change', event => {
+    const file = event.target.files[0]; event.target.value = ''; void importAudioFile(file);
+  });
   $('#csound-file').addEventListener('change', event => {
     const file = event.target.files[0]; event.target.value = ''; void addCsoundFile(file);
   });
@@ -1389,6 +1950,7 @@
   $('#monitor-volume').addEventListener('input', event => {
     const volume = Number(event.target.value);
     player.setVolume(volume);
+    noteInput.setVolume(volume);
     if (outputMode.value === 'native' && nativeAvailable && nativeActive()) {
       clearTimeout(nativeVolumeTimer);
       nativeVolumeTimer = setTimeout(() => {
@@ -1398,6 +1960,7 @@
   });
   outputMode.addEventListener('change', () => { void changeOutputMode(); });
   window.addEventListener('pagehide', () => {
+    noteInput.dispose();
     stopLive();
     if (nativeAvailable && nativeActive()) {
       const headers = new Headers({ 'Content-Type': 'application/json' });
@@ -1407,11 +1970,12 @@
   });
   document.addEventListener('keydown', event => {
     if (event.code === 'Escape') {
+      if (!noteRecording?.active) stopNoteInput();
       if (outputMode.value === 'native') void stopNative();
       else stopLive();
     }
   });
-  $('#empty-add-button').addEventListener('click', addTrack);
+  $('#empty-add-button').addEventListener('click', () => { void editArrangement({type:'addTrack'}); });
   applyButton.addEventListener('click', () => { void applyDraft(); });
   saveButton.addEventListener('click', () => { void saveSession(); });
   loadButton.addEventListener('click', () => fileInput.click());
@@ -1430,7 +1994,7 @@
   });
   durationInput.addEventListener('input', () => durationInput.setCustomValidity(''));
   window.addEventListener('beforeunload', (event) => {
-    if (!isDirty()) return;
+    if (!isDirty() && !noteRecording?.active && !noteRecording?.pending) return;
     event.preventDefault();
     event.returnValue = '';
   });
@@ -1450,7 +2014,7 @@
     } catch (_) {
       nativePollFailures += 1;
       if (nativePollFailures === 3 && nativeActive()) {
-        setNotice('Native status is unavailable. Playback may still be active; its 60-second limit still applies. Try Stop or restart the studio.', true);
+        setNotice(`Native status is unavailable. Playback may still be active. ${nativeSnapshot.until_stopped ? 'Until-stopped playback requires Stop or engine shutdown.' : 'Its finite playback deadline still applies.'} Try Stop or restart the studio.`, true);
       }
     } finally { nativePollInFlight = false; }
   }, 300);

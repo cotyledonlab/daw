@@ -4,12 +4,15 @@ mod au_hosting;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 pub mod audio;
 pub mod audio_buffer;
+pub mod builtins;
 pub mod control;
 pub mod csound;
 pub mod csound_source;
 mod effects;
 pub mod engine;
 pub mod hosting;
+pub mod metronome;
+pub mod pd_instrument;
 pub mod plugin_render;
 pub mod puredata_source;
 pub mod render;
@@ -34,3 +37,6 @@ mod sc_stream;
 mod csound_server;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 mod puredata_server;
+
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+mod pd_playback;

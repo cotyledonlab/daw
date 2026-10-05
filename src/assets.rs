@@ -17,6 +17,8 @@ pub struct PreparedAudioClip {
     pub end: u64,
     pub source_offset: usize,
     pub gain: f64,
+    pub fade_in_frames: u64,
+    pub fade_out_frames: u64,
     pub frames: Arc<Vec<[f64; 2]>>,
 }
 
@@ -29,6 +31,32 @@ struct AudioReference<'a> {
     source_offset: u64,
     source_path: &'a str,
     gain: f64,
+    fade_in_frames: u64,
+    fade_out_frames: u64,
+}
+
+impl PreparedAudioClip {
+    /// Timeline-relative linear fade, independent of source offset and callback boundaries.
+    /// N >= 2 spans N samples including zero and unity; N = 1 mutes only the edge sample.
+    pub fn envelope(&self, frame: u64) -> f64 {
+        let relative = frame - self.start;
+        if relative < self.fade_in_frames {
+            return if self.fade_in_frames == 1 {
+                0.0
+            } else {
+                relative as f64 / (self.fade_in_frames - 1) as f64
+            };
+        }
+        let remaining = self.end - frame - 1;
+        if remaining < self.fade_out_frames {
+            return if self.fade_out_frames == 1 {
+                0.0
+            } else {
+                remaining as f64 / (self.fade_out_frames - 1) as f64
+            };
+        }
+        1.0
+    }
 }
 
 pub fn prepare(session: &Session) -> Result<Vec<PreparedAudioClip>, String> {
@@ -58,6 +86,8 @@ pub(crate) fn prepare_with_budget(
                 source_offset: audio.source_offset_frames,
                 source_path: &audio.source_path,
                 gain: *track_gain * audio.gain,
+                fade_in_frames: audio.fade_in_frames,
+                fade_out_frames: audio.fade_out_frames,
             });
         }
     }
@@ -146,6 +176,8 @@ pub(crate) fn prepare_with_budget(
             end,
             source_offset,
             gain: reference.gain,
+            fade_in_frames: reference.fade_in_frames,
+            fade_out_frames: reference.fade_out_frames,
             frames,
         });
     }

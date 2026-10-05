@@ -228,10 +228,13 @@ fn prepare<'a>(
             .enumerate()
         {
             match effect {
-                Effect::Gain { .. } => {
+                Effect::Gain { .. } | Effect::Lowpass { .. } | Effect::Delay { .. } => {
                     let mut gain = track.clone();
                     gain.effects = Some(vec![effect.clone()]);
-                    effects.push((index, Processor::Gain(PreparedChain::prepare(&gain))));
+                    effects.push((
+                        index,
+                        Processor::Gain(PreparedChain::prepare(&gain, session.sample_rate)),
+                    ));
                 }
                 Effect::Au { .. } => return Err("native AU playback is unavailable".into()),
                 Effect::Vst3 { bypass: true, .. } => {}

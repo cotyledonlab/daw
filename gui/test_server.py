@@ -10,6 +10,7 @@ import wave
 from unittest.mock import patch
 
 from gui.server import EngineError, MAX_FRAME, ROOT, Server
+from gui.audio_projects import LIMITS
 
 
 BINARY = ROOT / "target" / "debug" / "daw"
@@ -164,7 +165,7 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         capabilities = json.loads(body)
         self.assertIn("transport.status", capabilities["methods"])
-        self.assertEqual(capabilities["gui_bridge"], {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True})
+        self.assertEqual(capabilities["gui_bridge"], {"checked_replacement": True, "supercollider_sources": True, "csound_sources": True, "audio_projects": True, "audio_project_limits": LIMITS, "note_preview": True})
         self.assertIsInstance(capabilities["parameter_metadata"]["implemented"], bool)
 
         status, _, _ = self.request("GET", "/api/transport", token=False)
@@ -561,7 +562,9 @@ class ServerIntegrationTests(unittest.TestCase):
         status, _, _ = self.post("/api/session", {"session": SESSION})
         self.assertEqual(status, 200)
         unsupported = (
-            {"id": "audio", "mode": "sequenced", "clips": [],
+            {"id": "audio", "mode": "sequenced", "clips": [
+                {"kind": "audio", "id": "c", "start_frame": 0, "length_frames": 1,
+                 "source_path": "assets/unregistered.wav", "source_offset_frames": 0, "gain": 1}],
              "device": {"kind": "audio", "gain": 1}, "effects": []},
             {"id": "notes", "mode": "sequenced", "clips": [],
              "device": {"kind": "sine", "frequency_hz": 440, "gain": 0.2}, "effects": [{"kind": "vst3"}]},

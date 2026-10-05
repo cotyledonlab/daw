@@ -27,6 +27,7 @@ pub const METHODS: &[&str] = &[
     "session.save",
     "session.load",
     "render",
+    "note.preview",
     "supercollider.render",
     "supercollider.inspect",
     "csound.render",
@@ -46,7 +47,7 @@ fn capabilities() -> Value {
     let sc_live = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"source_mode":"live","max_seconds":10,"sample_rate":48000,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos")),"max_pending_controls":8,"requires_capture_plugin":true,"session_schema_versions":[6,7,8]});
     let mut result = json!({
         "methods": METHODS,
-        "devices": ["sine", "audio", "supercollider", "csound", "puredata"],
+        "devices": ["sine", "audio", "supercollider", "csound", "puredata", "drumkit", "synth", "pd_instrument"],
         "supercollider_sources": {"implemented":cfg!(unix),"schema_version":6,"preparation":"owned_nrt_float32","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_points":512,"native_requires_matching_sample_rate":true,"interactive_dsp":false},
         "supercollider_programs": {"inspection":true,"format":"scgf_v2","max_bytes":crate::synthdef::MAX_BYTES,"max_controls":crate::synthdef::MAX_CONTROLS,"max_parameters":crate::synthdef::MAX_PARAMETERS,"max_ugens":crate::synthdef::MAX_UGENS,"runtime_validation":false,"session_device":true},
         "supercollider_nrt": {"implemented":cfg!(unix), "configured":std::env::var_os("DAW_SCSYNTH").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()), "session_device":false, "native_playback":false, "command_acknowledgements":false, "max_score_bytes":1048576, "max_seconds":10, "channels":2, "sample_format":"wav_pcm16", "worker_timeout_seconds":15},
@@ -62,28 +63,33 @@ fn capabilities() -> Value {
             "live_edits": false
         },
         "effects": {
-            "schema_version": 3, "kinds": ["gain"],
+            "schema_version": 3, "builtin_schema_version": 11, "kinds": ["gain", "lowpass", "delay"],
             "max_per_track": session::MAX_EFFECTS_PER_TRACK,
             "gain": {"minimum": 0, "maximum": session::MAX_EFFECT_GAIN, "default": 1.0, "unit": "linear"},
             "bypass": true, "latency_frames": 0, "automation": true,
             "routing": "serial_track_stereo", "clipping": "master_only"
         },
-        "timeline_transport": {"native_only": true, "max_frame": session::MAX_FRAME, "note_chase": false, "persisted": false},
+        "timeline_transport": {"until_stopped":cfg!(all(feature="native-audio",target_os="macos")),"until_stopped_devices":["sine","synth","drumkit","audio"],"native_only": true, "max_frame": session::MAX_FRAME, "note_chase": false, "persisted": false},
         "audio_clips": {
             "schema_version": 2, "formats": ["wav_pcm16", "wav_pcm24", "wav_pcm32"],
             "channels": [1, 2], "requires_matching_sample_rate": true,
             "max_file_bytes": assets::MAX_FILE_BYTES, "max_decoded_bytes": assets::MAX_DECODED_BYTES,
             "max_assets": assets::MAX_ASSETS, "paths": "session_directory_relative",
-            "save_outside_project": false
+            "save_outside_project": false,
+            "fades": {"implemented": true, "fields": ["fade_in_frames", "fade_out_frames"],
+                "unit": "frames", "default": 0, "curve": "linear", "optional": true,
+                "max_combined": "length_frames", "position": "clip_timeline_relative",
+                "endpoints": "zero_at_first_and_last_faded_samples",
+                "one_frame": "mute_edge_sample", "native": true, "export": true}
         },
         "session_schema_version": session::SCHEMA_VERSION,
-        "supported_session_schema_versions": [1, 2, 3, 4, 5, 6, 7, 8],
+        "supported_session_schema_versions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         "offline_au": {"implemented":cfg!(all(feature="au-offline", target_os="macos")), "schema_version":5, "sample_rate":48000, "max_seconds":10, "native_playback":false, "supported_components":[{"type":"aufx","subtype":"lpas","manufacturer":"appl"}], "parameter_values":"native", "automation":false, "max_state_bytes":65536, "worker_timeout_seconds":15},
         "offline_vst3": {"implemented": cfg!(all(feature = "vst3-offline", target_os = "macos")), "schema_version": 4, "sample_rate": 48000, "max_seconds": 10, "native_playback": cfg!(all(feature = "vst3-live", target_os = "macos")), "routing": "serial_track_stereo", "state_encoding": "hex", "max_state_bytes": session::MAX_VST3_STATE_BYTES, "max_plugins": session::MAX_VST3_PLUGINS, "max_parameters": session::MAX_VST3_PARAMETERS, "worker_timeout_seconds": 15, "latency_compensation": false},
         "sequencing": {
             "schema_version": 2, "offline": true,
             "native_requires_matching_sample_rate": true,
-            "browser_audition": false,
+            "browser_audition": true,
             "max_clips": session::MAX_CLIPS, "max_notes": session::MAX_NOTES,
             "max_voices": session::MAX_VOICES, "max_frame": session::MAX_FRAME,
             "envelope_ms": 5, "ticks_per_quarter": 960,
@@ -97,7 +103,13 @@ fn capabilities() -> Value {
         "max_message_bytes": MAX_MESSAGE_BYTES,
         "render": {
             "format": "wav_pcm16", "channels": 2,
-            "min_seconds": render::MIN_SECONDS, "max_seconds": render::MAX_SECONDS as u64
+            "min_seconds": render::MIN_SECONDS, "max_seconds": render::MAX_BUILTIN_RENDER_SECONDS as u64,
+            "builtin_max_seconds":render::MAX_BUILTIN_RENDER_SECONDS as u64,
+            "runtime_max_seconds":render::MAX_SECONDS as u64,
+            "plugin_max_seconds":render::MAX_PLUGIN_RENDER_SECONDS as u64,
+            "native_max_seconds":render::MAX_SECONDS as u64,
+            "song_devices":["sine","synth","drumkit","audio","pd_instrument"], "song_effects":["gain","lowpass","delay"],
+            "streaming":true
         },
         "session": {
             "sample_rate": {
@@ -160,6 +172,56 @@ fn capabilities() -> Value {
     result["puredata_sources"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_LIBPD_LIBRARY").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"schema_version":8,"preparation":"owned_block_float32_to_float64","max_sources":4,"max_total_seconds":10,"max_program_bytes":61440,"max_abstractions":16,"max_controls":64,"max_points":512,"blocksize":64,"native_requires_matching_sample_rate":true,"interactive_dsp":false,"gui":false,"runtime_abi":"libpd_public_float_multi"});
     result["device_metadata"]["csound"] = json!({"session_schema_versions":[7,8],"track_modes":["continuous"],"required_fields":["program","duration_frames","gain","controls"],"description":"Embedded CSD program prepared as finite stereo float64 audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"native_scalar_float64","control_points":"saved_step_events","interactive_edits":false});
     result["device_metadata"]["puredata"] = json!({"session_schema_versions":[8],"track_modes":["continuous"],"required_fields":["program","abstractions","duration_frames","gain","controls"],"description":"Embedded Pd patch and explicit abstractions prepared as finite stereo audio.","parameters":{"gain":{"type":"number","unit":"linear","default":1.0,"minimum":0.0,"maximum":1.0,"finite":true,"required":true}},"control_values":"receiver_scalar_float32","control_points":"saved_step_events","interactive_edits":false});
+    result["device_metadata"]["drumkit"] = json!({"session_schema_versions":[9],"track_modes":["sequenced"],"required_fields":["kit_id","gain"],"parameters":{"gain":{"type":"number","unit":"linear","default":0.45,"minimum":0,"maximum":1,"finite":true,"required":true}},"kits":["factory-v1"],"kit_id_default":"factory-v1","pads":[{"midi":36,"name":"Kick"},{"midi":38,"name":"Snare"},{"midi":42,"name":"Closed hat"}],"one_shot":true});
+    result["device_metadata"]["synth"] = json!({"session_schema_versions":[9],"track_modes":["sequenced"],"required_fields":["waveform","gain","attack_ms","release_ms","cutoff_hz"],"waveforms":["saw","square"],"waveform_default":"saw","parameters":{"gain":{"type":"number","unit":"linear","default":0.12,"minimum":0,"maximum":1,"finite":true,"required":true},"attack_ms":{"type":"number","unit":"ms","default":8,"minimum":1,"maximum":2000,"finite":true,"required":true},"release_ms":{"type":"number","unit":"ms","default":90,"minimum":0,"maximum":2000,"finite":true,"required":true},"cutoff_hz":{"type":"number","unit":"Hz","default":3000,"minimum":20,"maximum":20000,"maximum_from":{"field":"session.sample_rate","factor":0.5,"exclusive":true},"finite":true,"required":true}}});
+    for kind in ["sine", "audio", "supercollider", "csound", "puredata"] {
+        result["device_metadata"][kind]["session_schema_versions"]
+            .as_array_mut()
+            .expect("metadata versions")
+            .push(json!(9));
+    }
+    for kind in ["sine", "audio", "synth", "drumkit"] {
+        result["device_metadata"][kind]["session_schema_versions"]
+            .as_array_mut()
+            .expect("metadata versions")
+            .push(json!(10));
+        result["device_metadata"][kind]["session_schema_versions"]
+            .as_array_mut()
+            .expect("metadata versions")
+            .push(json!(11));
+        result["device_metadata"][kind]["session_schema_versions"]
+            .as_array_mut()
+            .expect("metadata versions")
+            .push(json!(12));
+    }
+    result["pd_instrument"] = json!({"implemented": cfg!(unix), "configured": std::env::var_os("DAW_LIBPD_LIBRARY").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),
+        "schema_version": 12, "sample_rate": 48000, "preset": "pd-mono-v1", "polyphony": 1,
+        "block_frames": 64, "event_timing": "next_64_frame_tick", "minimum_note_frames": 64,
+        "native": cfg!(all(feature="native-audio",target_os="macos")), "native_dsp_owner": "bounded_worker",
+        "controls": ["cutoff"], "custom_programs": false, "gui": true,
+        "reset": "seek_loop_note_on", "held_note_chase": false,
+        "meter_scope": "peaks_of_consumed_256_frame_worker_blocks", "meter_lookahead_max_frames": 255});
+    result["device_metadata"]["pd_instrument"] = json!({"session_schema_versions":[12],"track_modes":["sequenced"],"required_fields":["program","abstractions","controls","gain"]});
+    result["effect_metadata"] = json!({
+        "gain": {"schema_version":3,"parameters":{"gain":{"minimum":0.0,"maximum":4.0,"default":1.0,"unit":"linear"}},"automation":["gain"]},
+        "lowpass": {"schema_version":11,"parameters":{"cutoff_hz":{"minimum":20.0,"maximum":20000.0,"default":4000.0,"unit":"Hz","below_nyquist":true}},"automation":[],"algorithm":"one_pole"},
+        "delay": {"schema_version":11,"parameters":{"time_ms":{"minimum":1.0,"maximum":2000.0,"default":250.0,"unit":"ms"},"feedback":{"minimum":0.0,"maximum":0.95,"default":0.3},"mix":{"minimum":0.0,"maximum":1.0,"default":0.25}},"automation":[],"algorithm":"stereo_feedback","time_rounding":"nearest_frame"}
+    });
+    result["effects"]["max_delay_state_bytes"] = json!(session::MAX_DELAY_STATE_BYTES);
+    result["effects"]["reset_on_seek_loop"] = json!(true);
+    result["effects"]["tail_policy"] = json!("within_requested_render_length");
+    result["timeline_transport"]["until_stopped_effects"] = json!(["gain", "lowpass", "delay"]);
+    result["timeline_transport"]["until_stopped_devices"] =
+        json!(["sine", "synth", "drumkit", "audio", "pd_instrument"]);
+    result["timeline_transport"]["metronome"] =
+        json!(cfg!(all(feature = "native-audio", target_os = "macos")));
+    result["timeline_transport"]["metronome_details"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"default":false,"time_signature":"4/4","accent":"bar_start","frame_grid":"960_ppq_half_up","persisted":false,"exported":false,"prepared_only":true,"foreign_workers":false});
+    result["timeline_transport"]["count_in_max_bars"] = json!(2);
+    result["timeline_transport"]["metronome_devices"] =
+        json!(["sine", "synth", "drumkit", "audio"]);
+    result["timeline_transport"]["count_in_bars"] = json!({"minimum":0,"maximum":2,"default":0,"timeline_frozen":true,"click_when_metronome_off":true});
+    result["note_preview"] = json!({"implemented":true,"devices":["sine","synth","drumkit","pd_instrument"],"effects":["gain","lowpass","delay"],"track_mode":"sequenced","stopped_only":true,"gate_seconds":0.25,"seconds":0.5,"format":"wav_pcm16","channels":2,"revision_required":true,"changes_session":false,"mixer":"saved_gain_pan_ignore_mute_solo","automation":"saved_at_preview_frame_zero","tail_policy":"truncate_at_0.5_seconds"});
+    result["mixer"] = json!({"implemented":true,"schema_version":10,"devices":["sine","synth","drumkit","audio","pd_instrument"],"effects":["gain","lowpass","delay"],"gain":{"minimum":0.0,"maximum":2.0,"default":1.0},"pan":{"minimum":-1.0,"maximum":1.0,"default":0.0,"law":"stereo_balance_cosine"},"mute_default":false,"solo_default":false,"solo":"inclusive_mute_overrides","position":"post_effect_pre_master","meters":{"native":cfg!(all(feature="native-audio",target_os="macos")),"scope":"last_callback_buffer","peak":"absolute_linear","clipped_at":1.0,"master":"pre_clamp_pre_monitor"}});
     result
 }
 
@@ -335,11 +397,31 @@ struct RenderParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct NotePreviewParams {
+    expected_revision: String,
+    track_id: String,
+    frequency_hz: f64,
+    velocity: f64,
+    path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PlayParams {
-    seconds: f64,
+    #[serde(default)]
+    metronome: bool,
+    #[serde(default)]
+    count_in_bars: u8,
+    #[serde(default, deserialize_with = "deserialize_seconds")]
+    seconds: Option<f64>,
+    #[serde(default)]
+    until_stopped: bool,
     volume: f64,
     #[serde(default)]
     source_mode: SourceMode,
+}
+fn deserialize_seconds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    f64::deserialize(d).map(Some)
 }
 #[derive(Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -635,6 +717,8 @@ impl Controller {
                     .iter()
                     .position(|effect| match effect {
                         session::Effect::Gain { id, .. }
+                        | session::Effect::Lowpass { id, .. }
+                        | session::Effect::Delay { id, .. }
                         | session::Effect::Vst3 { id, .. }
                         | session::Effect::Au { id, .. } => id == &p.effect_id,
                     })
@@ -722,6 +806,8 @@ impl Controller {
                     .iter()
                     .find(|effect| match effect {
                         session::Effect::Gain { id, .. }
+                        | session::Effect::Lowpass { id, .. }
+                        | session::Effect::Delay { id, .. }
                         | session::Effect::Vst3 { id, .. }
                         | session::Effect::Au { id, .. } => id == &p.effect_id,
                     })
@@ -801,7 +887,10 @@ impl Controller {
                                     *frequency_hz = value
                                 }
                                 (
-                                    Device::Sine { gain, .. } | Device::Audio { gain },
+                                    Device::Sine { gain, .. }
+                                    | Device::Audio { gain }
+                                    | Device::Drumkit { gain, .. }
+                                    | Device::Synth { gain, .. },
                                     Parameter::Gain,
                                 ) => *gain = value,
                                 (Device::Supercollider(source), Parameter::Gain) => {
@@ -813,13 +902,25 @@ impl Controller {
                                 (Device::Puredata(source), Parameter::Gain) => {
                                     source.gain = value;
                                 }
+                                (Device::PdInstrument(instrument), Parameter::Gain) => {
+                                    instrument.gain = value;
+                                }
                                 (
                                     Device::Audio { .. }
+                                    | Device::Drumkit { .. }
+                                    | Device::Synth { .. }
                                     | Device::Supercollider(_)
                                     | Device::Csound(_)
                                     | Device::Puredata(_),
+                                    // Frequency belongs to each sequenced note.
                                     Parameter::FrequencyHz,
                                 ) => {
+                                    return Err(ControlError::new(
+                                        "invalid_params",
+                                        "frequency_hz is available only on sine devices",
+                                    ));
+                                }
+                                (Device::PdInstrument(_), Parameter::FrequencyHz) => {
                                     return Err(ControlError::new(
                                         "invalid_params",
                                         "frequency_hz is available only on sine devices",
@@ -956,9 +1057,107 @@ impl Controller {
                 .map_err(|e| ControlError::new("runtime_error", e))?;
                 Ok(json!(report))
             }
+            "note.preview" => {
+                let p: NotePreviewParams = params(value)?;
+                self.check_revision(&p.expected_revision)?;
+                if p.track_id.is_empty()
+                    || p.track_id.len() > session::MAX_TRACK_ID_BYTES
+                    || !p.frequency_hz.is_finite()
+                    || p.frequency_hz <= 0.0
+                    || p.frequency_hz >= self.session.sample_rate as f64 / 2.0
+                    || !p.velocity.is_finite()
+                    || !(0.0..=1.0).contains(&p.velocity)
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "preview requires a bounded track_id, positive frequency below Nyquist and velocity between 0 and 1",
+                    ));
+                }
+                let mut track = self
+                    .session
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == p.track_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ControlError::new("invalid_params", "preview track does not exist")
+                    })?;
+                if track.mode != Some(session::TrackMode::Sequenced)
+                    || !matches!(
+                        track.device,
+                        Device::Sine { .. }
+                            | Device::Synth { .. }
+                            | Device::Drumkit { .. }
+                            | Device::PdInstrument(_)
+                    )
+                    || track.effects.as_ref().is_some_and(|effects| {
+                        effects.iter().any(|effect| {
+                            !matches!(
+                                effect,
+                                session::Effect::Gain { .. }
+                                    | session::Effect::Lowpass { .. }
+                                    | session::Effect::Delay { .. }
+                            )
+                        })
+                    })
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "preview requires a sequenced note instrument with built-in effects",
+                    ));
+                }
+                #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                if self
+                    .transport
+                    .status()
+                    .map_err(|e| ControlError::new("audio_error", e))?["state"]
+                    != "stopped"
+                {
+                    return Err(ControlError::new(
+                        "transport_active",
+                        "stop transport before previewing notes",
+                    ));
+                }
+                let frames = self.session.sample_rate as u64 / 4;
+                track.clips = Some(vec![session::Clip::Notes(session::NoteClip {
+                    kind: session::ClipKind::Notes,
+                    id: "preview-clip".into(),
+                    start_frame: 0,
+                    length_frames: self.session.sample_rate as u64 / 2,
+                    notes: vec![session::Note {
+                        id: "preview-note".into(),
+                        start_frame: 0,
+                        duration_frames: frames,
+                        frequency_hz: p.frequency_hz,
+                        velocity: p.velocity,
+                    }],
+                })]);
+                if let Some(mixer) = track.mixer.as_mut() {
+                    mixer.mute = false;
+                    mixer.solo = false;
+                }
+                // This owned snapshot never replaces the project or its asset root.
+                let preview = Session {
+                    schema_version: self.session.schema_version,
+                    sample_rate: self.session.sample_rate,
+                    tempo_milli_bpm: self.session.tempo_milli_bpm,
+                    asset_root: self.session.asset_root.clone(),
+                    tracks: vec![track],
+                };
+                preview
+                    .validate()
+                    .map_err(|e| ControlError::new("invalid_params", e))?;
+                let mut engine =
+                    Engine::prepare(&preview).map_err(|e| ControlError::new("runtime_error", e))?;
+                let report = write_new(&p.path, |file| {
+                    render::render_prepared(&mut engine, preview.sample_rate, 0.5, file)
+                        .map_err(|e| ControlError::new("io_error", e))
+                })?;
+                Ok(json!(report))
+            }
             "render" => {
                 let p: RenderParams = params(value)?;
-                render::validate_duration(p.seconds)
+                render::validate_render_duration(&self.session, p.seconds)
                     .map_err(|e| ControlError::new("invalid_params", e))?;
                 self.session
                     .validate()
@@ -1055,20 +1254,56 @@ impl Controller {
         let mut seconds = 0.0;
         let mut volume = 0.25;
         let mut source_mode = SourceMode::Prepared;
+        let mut until_stopped = false;
+        let mut metronome = false;
+        let mut count_in_bars = 0;
         match method {
             "transport.play" => {
                 let p: PlayParams = params(value)?;
-                seconds = p.seconds;
+                metronome = p.metronome;
+                count_in_bars = p.count_in_bars;
+                if count_in_bars > 2 {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "count_in_bars must be between 0 and 2",
+                    ));
+                }
+                if (metronome || count_in_bars != 0)
+                    && (p.source_mode == SourceMode::Live
+                        || !crate::metronome::supports_session(&self.session))
+                {
+                    return Err(ControlError::new(
+                        "invalid_params",
+                        "metronome and count-in require built-in prepared playback",
+                    ));
+                }
+                until_stopped = p.until_stopped;
                 volume = p.volume;
                 source_mode = p.source_mode;
+                if until_stopped {
+                    if p.seconds.is_some() || source_mode != SourceMode::Prepared {
+                        return Err(ControlError::new(
+                            "invalid_params",
+                            "until_stopped requires prepared mode and no seconds",
+                        ));
+                    }
+                    crate::audio_buffer::PlaybackBuffer::validate_until_stopped(&self.session)
+                        .map_err(|e| ControlError::new("invalid_params", e))?;
+                } else {
+                    seconds = p.seconds.ok_or_else(|| {
+                        ControlError::new("invalid_params", "finite playback requires seconds")
+                    })?;
+                }
                 if source_mode == SourceMode::Live && seconds > 10.0 {
                     return Err(ControlError::new(
                         "invalid_params",
                         "live runtime playback is limited to ten seconds",
                     ));
                 }
-                render::validate_duration(seconds)
-                    .map_err(|e| ControlError::new("invalid_params", e))?;
+                if !until_stopped {
+                    render::validate_duration(seconds)
+                        .map_err(|e| ControlError::new("invalid_params", e))?;
+                }
             }
             "transport.seek" => {
                 frame = params::<SeekParams>(value)?.frame;
@@ -1121,8 +1356,20 @@ impl Controller {
         #[cfg(all(feature = "native-audio", target_os = "macos"))]
         {
             let result = match method {
+                "transport.play" if metronome || count_in_bars != 0 => {
+                    self.transport.start_with_metronome(
+                        &self.session,
+                        if until_stopped { None } else { Some(seconds) },
+                        volume,
+                        metronome,
+                        count_in_bars,
+                    )
+                }
                 "transport.play" if source_mode == SourceMode::Live => {
                     self.transport.start_live(&self.session, seconds, volume)
+                }
+                "transport.play" if until_stopped => {
+                    self.transport.start_until_stopped(&self.session, volume)
                 }
                 "transport.play" => self.transport.start(&self.session, seconds, volume),
                 "transport.pause" => self.transport.pause(),
@@ -1137,9 +1384,19 @@ impl Controller {
         }
         #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
         {
-            let _ = (seconds, frame, region, source_mode);
+            let _ = (
+                seconds,
+                frame,
+                region,
+                source_mode,
+                until_stopped,
+                metronome,
+                count_in_bars,
+            );
             if matches!(method, "transport.status" | "transport.stop") {
-                Ok(json!({"state":"stopped","level":0}))
+                Ok(
+                    json!({"state":"stopped","level":0,"metronome":false,"count_in_remaining_frames":0}),
+                )
             } else {
                 Err(ControlError::new(
                     "audio_unavailable",

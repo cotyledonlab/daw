@@ -18,6 +18,11 @@ use std::{
 
 #[derive(Default)]
 struct Stats {
+    mixer_available: bool,
+    mixer_ids: Vec<String>,
+    mixer_peaks: Vec<[AtomicU64; 2]>,
+    mixer_master: [AtomicU64; 2],
+    mixer_revision: AtomicU64,
     error: AtomicBool,
     done: AtomicBool,
     calls: AtomicU64,
@@ -37,6 +42,89 @@ struct Stats {
     command_start: AtomicU64,
     command_end: AtomicU64,
     timeline: AtomicU64,
+    output_frame: AtomicU64,
+    metronome: AtomicBool,
+    count_in_remaining_frames: AtomicU64,
+}
+
+impl Stats {
+    fn prepared(session: &Session) -> Self {
+        if session.schema_version < 10 {
+            return Self::default();
+        }
+        Self {
+            mixer_available: true,
+            mixer_ids: session
+                .tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect(),
+            mixer_peaks: session.tracks.iter().map(|_| Default::default()).collect(),
+            ..Self::default()
+        }
+    }
+    fn publish_mixer(&self, peaks: Option<&crate::engine::MixerPeaks>) {
+        let Some(peaks) = peaks else {
+            return;
+        };
+        self.mixer_revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        for (target, source) in self.mixer_peaks.iter().zip(&peaks.tracks) {
+            for channel in 0..2 {
+                target[channel].store(
+                    source[channel].to_bits(),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+        }
+        for channel in 0..2 {
+            self.mixer_master[channel].store(
+                peaks.master[channel].to_bits(),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        self.mixer_revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn mixer_snapshot(&self) -> Value {
+        if !self.mixer_available {
+            return Value::Null;
+        }
+        // Bounded retry keeps status responsive during callback publication.
+        for _ in 0..3 {
+            let revision = self
+                .mixer_revision
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if revision % 2 != 0 {
+                continue;
+            }
+            let read = |peaks: &[AtomicU64; 2]| {
+                let peak = peaks
+                    .each_ref()
+                    .map(|value| f64::from_bits(value.load(std::sync::atomic::Ordering::SeqCst)));
+                json!({"peak":peak,"clipped":peak.iter().any(|p| *p >= 1.0)})
+            };
+            let tracks: Vec<_> = self
+                .mixer_ids
+                .iter()
+                .zip(&self.mixer_peaks)
+                .map(|(id, peaks)| {
+                    let mut meter = read(peaks);
+                    meter["id"] = json!(id);
+                    meter
+                })
+                .collect();
+            let result = json!({"tracks":tracks,"master":read(&self.mixer_master)});
+            if revision
+                == self
+                    .mixer_revision
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return result;
+            }
+        }
+        Value::Null
+    }
 }
 
 pub fn devices() -> Result<Value, String> {
@@ -61,24 +149,44 @@ pub fn play(session: &Session, seconds: f64, volume: f64) -> Result<Value, Strin
     let selected = device.default_output_config().map_err(|e| e.to_string())?;
     let format = selected.sample_format();
     let config: cpal::StreamConfig = selected.into();
+    let (pd_renderer, mut pd_worker) = if crate::pd_instrument::has_instruments(session) {
+        let (renderer, worker) = PlaybackBuffer::prepare_pd(
+            session,
+            config.sample_rate.0,
+            config.channels as usize,
+            Some(seconds),
+            volume,
+        )?;
+        (Some(renderer), Some(worker))
+    } else {
+        (None, None)
+    };
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
-    let (renderer, mut plugin_worker) = PlaybackBuffer::prepare_native(
-        session,
-        config.sample_rate.0,
-        config.channels as usize,
-        seconds,
-        volume,
-    )?;
+    let (renderer, mut plugin_worker) = if let Some(renderer) = pd_renderer {
+        (renderer, None)
+    } else {
+        PlaybackBuffer::prepare_native(
+            session,
+            config.sample_rate.0,
+            config.channels as usize,
+            seconds,
+            volume,
+        )?
+    };
     #[cfg(not(all(feature = "vst3-live", target_os = "macos")))]
-    let renderer = PlaybackBuffer::prepare(
-        session,
-        config.sample_rate.0,
-        config.channels as usize,
-        seconds,
-        volume,
-    )?;
+    let renderer = if let Some(renderer) = pd_renderer {
+        renderer
+    } else {
+        PlaybackBuffer::prepare(
+            session,
+            config.sample_rate.0,
+            config.channels as usize,
+            seconds,
+            volume,
+        )?
+    };
     let name = device.name().map_err(|e| e.to_string())?;
-    let stats = Arc::new(Stats::default());
+    let stats = Arc::new(Stats::prepared(session));
     stats.volume.store(1.0_f64.to_bits(), Relaxed);
     let stream = match format {
         cpal::SampleFormat::F32 => stream::<f32>(&device, &config, renderer, stats.clone()),
@@ -107,6 +215,13 @@ pub fn play(session: &Session, seconds: f64, volume: f64) -> Result<Value, Strin
         std::thread::sleep(Duration::from_secs_f64(tail.min(1.0) + 0.1));
     }
     drop(stream);
+    let pd_underruns = if let Some(worker) = &mut pd_worker {
+        let count = worker.underruns();
+        worker.finish()?;
+        count
+    } else {
+        0
+    };
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
     let underruns = if let Some(worker) = &mut plugin_worker {
         let count = worker.underruns();
@@ -128,7 +243,7 @@ pub fn play(session: &Session, seconds: f64, volume: f64) -> Result<Value, Strin
         "channels":config.channels,"format":format!("{format:?}"),"volume":volume,
         "submitted_frames":stats.frames.load(Relaxed),"callbacks":stats.calls.load(Relaxed),
         "max_callback_frames":stats.max_frames.load(Relaxed),"max_render_microseconds":stats.max_ns.load(Relaxed) as f64 / 1000.0,
-        "callbacks_over_buffer_budget":stats.over_budget.load(Relaxed),"stream_released":true,"plugin_worker_underruns":underruns
+        "callbacks_over_buffer_budget":stats.over_budget.load(Relaxed),"stream_released":true,"plugin_worker_underruns":underruns,"pd_worker_underruns":pd_underruns
     }))
 }
 
@@ -255,6 +370,7 @@ fn stream<T: SizedSample + FromSample<f64>>(
                 if stats.error.load(Relaxed) || stats.done.load(Relaxed) {
                     output.fill(T::EQUILIBRIUM);
                     stats.level.store(0, Relaxed);
+                    stats.publish_mixer(Some(&crate::engine::MixerPeaks::default()));
                     return;
                 }
                 let command = stats.command.load(Acquire);
@@ -275,12 +391,19 @@ fn stream<T: SizedSample + FromSample<f64>>(
                         return;
                     }
                     stats.timeline.store(renderer.frame_position(), Relaxed);
+                    stats
+                        .output_frame
+                        .store(renderer.output_position(), Relaxed);
+                    stats
+                        .count_in_remaining_frames
+                        .store(renderer.count_in_remaining_frames(), Relaxed);
                     stats.command.store(0, Release);
                 }
                 if stats.paused.load(Relaxed) {
                     output.fill(T::EQUILIBRIUM);
                     stats.observed.store(2, Relaxed);
                     stats.level.store(0, Relaxed);
+                    stats.publish_mixer(Some(&crate::engine::MixerPeaks::default()));
                     return;
                 }
                 stats.observed.store(1, Relaxed);
@@ -297,11 +420,18 @@ fn stream<T: SizedSample + FromSample<f64>>(
                     Ok(rendered) => {
                         stats.frames.fetch_add(rendered, Relaxed);
                         stats.timeline.store(renderer.frame_position(), Relaxed);
+                        stats
+                            .output_frame
+                            .store(renderer.output_position(), Relaxed);
+                        stats
+                            .count_in_remaining_frames
+                            .store(renderer.count_in_remaining_frames(), Relaxed);
                     }
                     Err(_) => {
                         stats.error.store(true, Relaxed);
                     }
                 }
+                stats.publish_mixer(renderer.mixer_peaks());
                 stats.source_digest.store(renderer.source_digest(), Relaxed);
                 stats.level.store(peak.get().to_bits(), Relaxed);
                 stats
@@ -336,6 +466,8 @@ pub struct Transport {
 
 enum Action {
     Play(Session, f64, f64),
+    PlayClick(Session, Option<f64>, f64, bool, u8),
+    PlayUntilStopped(Session, f64),
     PlayLive(Session, f64, f64),
     SourceControl(crate::sc_session::ParameterChange),
     Pause,
@@ -357,17 +489,33 @@ struct Active {
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
     plugin_worker: Option<crate::live_plugins::WorkerGuard>,
     sc_worker: Option<crate::sc_stream::Worker>,
+    pd_worker: Option<crate::pd_playback::Worker>,
     stats: Arc<Stats>,
     device: String,
     rate: u32,
-    deadline: Instant,
+    deadline: Option<Instant>,
     drain: Option<Instant>,
     loop_region: Option<(u64, u64)>,
 }
 impl Active {
     fn start(session: &Session, seconds: f64, volume: f64) -> Result<Self, String> {
+        Self::start_prepared(session, Some(seconds), volume, false, 0)
+    }
+    fn start_until_stopped(session: &Session, volume: f64) -> Result<Self, String> {
+        PlaybackBuffer::validate_until_stopped(session)?;
+        Self::start_prepared(session, None, volume, false, 0)
+    }
+    fn start_prepared(
+        session: &Session,
+        seconds: Option<f64>,
+        volume: f64,
+        metronome: bool,
+        count_in_bars: u8,
+    ) -> Result<Self, String> {
         session.validate()?;
-        crate::render::validate_duration(seconds)?;
+        if let Some(seconds) = seconds {
+            crate::render::validate_duration(seconds)?;
+        }
         validate_volume(volume)?;
         let device = cpal::default_host()
             .default_output_device()
@@ -375,23 +523,68 @@ impl Active {
         let selected = device.default_output_config().map_err(|e| e.to_string())?;
         let format = selected.sample_format();
         let config: cpal::StreamConfig = selected.into();
+        let (pd_renderer, pd_worker) = if crate::pd_instrument::has_instruments(session) {
+            let (renderer, worker) = PlaybackBuffer::prepare_pd(
+                session,
+                config.sample_rate.0,
+                config.channels as usize,
+                seconds,
+                1.0,
+            )?;
+            (Some(renderer), Some(worker))
+        } else {
+            (None, None)
+        };
         #[cfg(all(feature = "vst3-live", target_os = "macos"))]
-        let (renderer, plugin_worker) = PlaybackBuffer::prepare_native(
-            session,
-            config.sample_rate.0,
-            config.channels as usize,
-            seconds,
-            1.0,
-        )?;
+        let (renderer, plugin_worker) = if let Some(renderer) = pd_renderer {
+            (renderer, None)
+        } else if let Some(seconds) = seconds {
+            PlaybackBuffer::prepare_native(
+                session,
+                config.sample_rate.0,
+                config.channels as usize,
+                seconds,
+                1.0,
+            )?
+        } else {
+            (
+                PlaybackBuffer::prepare_until_stopped(
+                    session,
+                    config.sample_rate.0,
+                    config.channels as usize,
+                    1.0,
+                )?,
+                None,
+            )
+        };
         #[cfg(not(all(feature = "vst3-live", target_os = "macos")))]
-        let renderer = PlaybackBuffer::prepare(
-            session,
-            config.sample_rate.0,
-            config.channels as usize,
-            seconds,
-            1.0,
-        )?;
-        let stats = Arc::new(Stats::default());
+        let renderer = if let Some(renderer) = pd_renderer {
+            renderer
+        } else if let Some(seconds) = seconds {
+            PlaybackBuffer::prepare(
+                session,
+                config.sample_rate.0,
+                config.channels as usize,
+                seconds,
+                1.0,
+            )?
+        } else {
+            PlaybackBuffer::prepare_until_stopped(
+                session,
+                config.sample_rate.0,
+                config.channels as usize,
+                1.0,
+            )?
+        };
+        let mut renderer = renderer;
+        renderer.configure_metronome(session, metronome, count_in_bars)?;
+        let count_in_seconds =
+            renderer.count_in_remaining_frames() as f64 / f64::from(config.sample_rate.0);
+        let stats = Arc::new(Stats::prepared(session));
+        stats.metronome.store(metronome, Relaxed);
+        stats
+            .count_in_remaining_frames
+            .store(renderer.count_in_remaining_frames(), Relaxed);
         stats.volume.store(volume.to_bits(), Relaxed);
         let stream = match format {
             cpal::SampleFormat::F32 => stream::<f32>(&device, &config, renderer, stats.clone()),
@@ -407,10 +600,13 @@ impl Active {
             #[cfg(all(feature = "vst3-live", target_os = "macos"))]
             plugin_worker,
             sc_worker: None,
+            pd_worker,
             stats,
             device: name,
             rate: config.sample_rate.0,
-            deadline: Instant::now() + Duration::from_secs_f64(seconds),
+            deadline: seconds.map(|seconds| {
+                Instant::now() + Duration::from_secs_f64(seconds + count_in_seconds)
+            }),
             drain: None,
             loop_region: None,
         })
@@ -442,11 +638,12 @@ impl Active {
             #[cfg(all(feature = "vst3-live", target_os = "macos"))]
             plugin_worker: None,
             sc_worker: Some(worker),
+            pd_worker: None,
             stats,
             device: name,
             rate: 48000,
             // A source failure cannot be disguised as a wall-clock completion.
-            deadline: Instant::now() + Duration::from_secs_f64(seconds + 3.0),
+            deadline: Some(Instant::now() + Duration::from_secs_f64(seconds + 3.0)),
             drain: None,
             loop_region: None,
         })
@@ -458,6 +655,9 @@ impl Active {
         // Collect final scalar telemetry only after callbacks have stopped.
         report["submitted_frames"] = json!(self.stats.frames.load(Relaxed));
         report["timeline_frame"] = json!(self.stats.timeline.load(Relaxed));
+        report["output_frame"] = json!(self.stats.output_frame.load(Relaxed));
+        report["count_in_remaining_frames"] =
+            json!(self.stats.count_in_remaining_frames.load(Relaxed));
         report["callbacks"] = json!(self.stats.calls.load(Relaxed));
         if let Some(worker) = &self.sc_worker {
             report["live_source_underruns"] = json!(worker.control.underruns());
@@ -468,6 +668,11 @@ impl Active {
         }
         #[cfg(all(feature = "vst3-live", target_os = "macos"))]
         if let Some(mut worker) = self.plugin_worker {
+            worker.finish()?;
+        }
+        if let Some(mut worker) = self.pd_worker.take() {
+            report["pd_worker_underruns"] = json!(worker.underruns());
+            report["pd_transport_wait_buffers"] = json!(worker.transport_waits());
             worker.finish()?;
         }
         if let Some(mut worker) = self.sc_worker.take() {
@@ -504,10 +709,13 @@ impl Active {
             (false, 1) => "playing",
             _ => "starting",
         };
-        let mut report = json!({"state":state,"device":self.device,"sample_rate":self.rate,
+        let mut report = json!({"state":state,"device":self.device,"sample_rate":self.rate,"until_stopped":self.deadline.is_none(),
             "level":f64::from_bits(self.stats.level.load(Relaxed)),
             "submitted_frames":self.stats.frames.load(Relaxed),
             "timeline_frame":self.stats.timeline.load(Relaxed),
+            "output_frame":self.stats.output_frame.load(Relaxed),
+            "metronome":self.stats.metronome.load(Relaxed),
+            "count_in_remaining_frames":self.stats.count_in_remaining_frames.load(Relaxed),
             "callbacks":self.stats.calls.load(Relaxed),
             "max_render_microseconds":self.stats.max_ns.load(Relaxed) as f64 / 1000.0,
             "callbacks_over_buffer_budget":self.stats.over_budget.load(Relaxed),
@@ -536,6 +744,12 @@ impl Active {
             report["callback_source_digest"] =
                 json!(format!("{:016x}", self.stats.source_digest.load(Relaxed)));
         }
+        if let Some(worker) = &self.pd_worker {
+            report["pd_worker_underruns"] = json!(worker.underruns());
+            report["pd_transport_wait_buffers"] = json!(worker.transport_waits());
+            report["runtime"] = json!("puredata_instrument");
+        }
+        report["mixer_meters"] = self.stats.mixer_snapshot();
         report
     }
 }
@@ -550,7 +764,9 @@ impl Transport {
     fn request(&mut self, action: Action) -> Result<Value, String> {
         if self.sender.is_none() {
             if matches!(action, Action::Stop | Action::Status) {
-                return Ok(json!({"state":"stopped","level":0}));
+                return Ok(
+                    json!({"state":"stopped","level":0,"until_stopped":false,"metronome":false,"count_in_remaining_frames":0}),
+                );
             }
             let (sender, receiver) = std::sync::mpsc::sync_channel::<Envelope>(8);
             self.thread = Some(
@@ -581,6 +797,40 @@ impl Transport {
         crate::render::validate_duration(seconds)?;
         validate_volume(volume)?;
         self.request(Action::Play(session.clone(), seconds, volume))
+    }
+    pub fn start_until_stopped(&mut self, session: &Session, volume: f64) -> Result<Value, String> {
+        PlaybackBuffer::validate_until_stopped(session)?;
+        validate_volume(volume)?;
+        self.request(Action::PlayUntilStopped(session.clone(), volume))
+    }
+    pub fn start_with_metronome(
+        &mut self,
+        session: &Session,
+        seconds: Option<f64>,
+        volume: f64,
+        enabled: bool,
+        bars: u8,
+    ) -> Result<Value, String> {
+        session.validate()?;
+        validate_volume(volume)?;
+        if let Some(seconds) = seconds {
+            crate::render::validate_duration(seconds)?;
+        } else {
+            PlaybackBuffer::validate_until_stopped(session)?;
+        }
+        if bars > 2 {
+            return Err("count_in_bars must be between 0 and 2".into());
+        }
+        if !crate::metronome::supports_session(session) {
+            return Err("metronome and count-in require built-in prepared playback".into());
+        }
+        self.request(Action::PlayClick(
+            session.clone(),
+            seconds,
+            volume,
+            enabled,
+            bars,
+        ))
     }
     pub fn start_live(
         &mut self,
@@ -636,14 +886,14 @@ impl Transport {
 }
 fn stopped_error(live: bool, error: String) -> Value {
     if live {
-        json!({"state":"stopped","level":0,"source_mode":"live","resources_released":!error.contains("stop timed out"),"error":{"code":"runtime_error","message":error}})
+        json!({"state":"stopped","level":0,"until_stopped":false,"metronome":false,"count_in_remaining_frames":0,"source_mode":"live","resources_released":!error.contains("stop timed out"),"error":{"code":"runtime_error","message":error}})
     } else {
-        json!({"state":"error","level":0,"error":error})
+        json!({"state":"error","level":0,"until_stopped":false,"error":error})
     }
 }
 fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
     let mut active: Option<Active> = None;
-    let mut idle = json!({"state":"stopped","level":0});
+    let mut idle = json!({"state":"stopped","level":0,"until_stopped":false,"metronome":false,"count_in_remaining_frames":0});
     loop {
         if let Some(current) = active.as_mut() {
             let now = Instant::now();
@@ -660,9 +910,11 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                     .unwrap_or_else(|| "Audio device failed. Playback stopped.".into());
                 idle = stopped_error(live, error);
             } else {
-                if now >= current.deadline && current.sc_worker.is_some() {
+                if current.deadline.is_some_and(|deadline| now >= deadline)
+                    && current.sc_worker.is_some()
+                {
                     current.stats.error.store(true, Relaxed);
-                } else if now >= current.deadline {
+                } else if current.deadline.is_some_and(|deadline| now >= deadline) {
                     current.stats.done.store(true, Relaxed);
                 }
                 if current.stats.done.load(Relaxed) && current.drain.is_none() {
@@ -687,11 +939,25 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
         };
         let result: Result<(), String> = (|| {
             match envelope.action {
+                Action::PlayClick(session, seconds, volume, enabled, bars) => {
+                    if active.is_some() {
+                        return Err("stop native playback before starting again".into());
+                    }
+                    active = Some(Active::start_prepared(
+                        &session, seconds, volume, enabled, bars,
+                    )?);
+                }
                 Action::Play(session, seconds, volume) => {
                     if active.is_some() {
                         return Err("stop native playback before starting again".into());
                     }
                     active = Some(Active::start(&session, seconds, volume)?);
+                }
+                Action::PlayUntilStopped(session, volume) => {
+                    if active.is_some() {
+                        return Err("stop native playback before starting again".into());
+                    }
+                    active = Some(Active::start_until_stopped(&session, volume)?);
                 }
                 Action::PlayLive(session, seconds, volume) => {
                     if active.is_some() {
@@ -711,7 +977,7 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                         }
                     }
                     if idle["state"] != "stopped" {
-                        idle = json!({"state":"stopped","level":0});
+                        idle = json!({"state":"stopped","level":0,"until_stopped":false,"metronome":false,"count_in_remaining_frames":0});
                     }
                 }
                 #[cfg(all(feature = "vst3-live", target_os = "macos"))]
@@ -720,7 +986,9 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                     if current.stats.done.load(Relaxed)
                         || current.stats.error.load(Relaxed)
                         || current.drain.is_some()
-                        || Instant::now() >= current.deadline
+                        || current
+                            .deadline
+                            .is_some_and(|deadline| Instant::now() >= deadline)
                     {
                         return Err("native playback is finishing".into());
                     }
@@ -825,5 +1093,37 @@ impl Drop for Transport {
                 let _ = thread.join();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mixer_meter_tests {
+    use super::*;
+
+    #[test]
+    fn publication_and_silent_callback_reset_all_track_and_master_peaks() {
+        let session: Session = serde_json::from_value(json!({"schema_version":10,"sample_rate":8000,"tempo_milli_bpm":120000,"tracks":[{"id":"tone","mode":"continuous","clips":[],"effects":[],"device":{"kind":"sine","frequency_hz":1000,"gain":0.5}}]})).unwrap();
+        let stats = Stats::prepared(&session);
+        let mut peaks = crate::engine::MixerPeaks::default();
+        peaks.tracks[0] = [1.0, 0.5];
+        peaks.master = [2.0, 0.75];
+        stats.publish_mixer(Some(&peaks));
+        let snapshot = stats.mixer_snapshot();
+        assert_eq!(
+            snapshot["tracks"][0],
+            json!({"id":"tone","peak":[1.0,0.5],"clipped":true})
+        );
+        assert_eq!(
+            snapshot["master"],
+            json!({"peak":[2.0,0.75],"clipped":true})
+        );
+        stats.publish_mixer(Some(&crate::engine::MixerPeaks::default()));
+        let silent = stats.mixer_snapshot();
+        assert_eq!(
+            silent["tracks"][0],
+            json!({"id":"tone","peak":[0.0,0.0],"clipped":false})
+        );
+        assert_eq!(silent["master"], json!({"peak":[0.0,0.0],"clipped":false}));
+        assert!(Stats::default().mixer_snapshot().is_null());
     }
 }

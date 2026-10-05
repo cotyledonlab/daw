@@ -25,6 +25,7 @@ fn track(mode: TrackMode, clips: Vec<NoteClip>) -> Track {
         clips: Some(clips.into_iter().map(Clip::Notes).collect()),
         effects: None,
         automation: None,
+        mixer: None,
     }
 }
 
@@ -70,6 +71,7 @@ fn audio_track(mode: TrackMode, clips: Vec<daw::session::AudioClip>) -> Track {
         clips: Some(clips.into_iter().map(Clip::Audio).collect()),
         effects: None,
         automation: None,
+        mixer: None,
     }
 }
 
@@ -81,6 +83,8 @@ fn audio_clip() -> daw::session::AudioClip {
         length_frames: 100,
         source_path: "assets/voice.wav".into(),
         source_offset_frames: 0,
+        fade_in_frames: 0,
+        fade_out_frames: 0,
         gain: 1.0,
     }
 }

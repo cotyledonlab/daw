@@ -7,6 +7,11 @@ use std::{collections::HashSet, sync::Arc};
 
 pub fn prepare_session(session: &mut Session) -> Result<(), String> {
     session.validate()?;
+    for track in &session.tracks {
+        if let Device::PdInstrument(instrument) = &track.device {
+            instrument.preflight(session.sample_rate)?;
+        }
+    }
     if !session.tracks.iter().any(|track| {
         matches!(
             track.device,
@@ -84,6 +89,8 @@ pub fn prepare_clips(session: &Session) -> Result<Vec<PreparedAudioClip>, String
             start: 0,
             end: duration,
             source_offset: 0,
+            fade_in_frames: 0,
+            fade_out_frames: 0,
             gain,
             frames: audio,
         });

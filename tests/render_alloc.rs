@@ -23,6 +23,7 @@ fn device_buffer_adapter_does_not_allocate_or_free() {
             clips: None,
             effects: None,
             automation: None,
+            mixer: None,
             id: "tone".into(),
             device: Device::Sine {
                 frequency_hz: 440.0,
@@ -79,6 +80,7 @@ fn prepared_render_blocks_do_not_allocate_or_free() {
                 clips: None,
                 effects: None,
                 automation: None,
+                mixer: None,
                 id: i.to_string(),
                 device: Device::Sine {
                     frequency_hz: 100.0 + i as f64,
@@ -158,8 +160,8 @@ fn preloaded_audio_clip_callbacks_do_not_allocate_or_free() {
     let mut session:Session=serde_json::from_value(serde_json::json!({
         "schema_version":2,"sample_rate":8000,"tempo_milli_bpm":120000,
         "tracks":[{"id":"a","mode":"sequenced","device":{"kind":"audio","gain":1},"clips":[
-            {"kind":"audio","id":"first","start_frame":1,"length_frames":100,"source_offset_frames":0,"source_path":"source.wav","gain":0.5},
-            {"kind":"audio","id":"second","start_frame":101,"length_frames":200,"source_offset_frames":100,"source_path":"source.wav","gain":0.5}
+            {"kind":"audio","id":"first","start_frame":1,"length_frames":100,"fade_in_frames":10,"fade_out_frames":30,"source_offset_frames":0,"source_path":"source.wav","gain":0.5},
+            {"kind":"audio","id":"second","start_frame":101,"length_frames":200,"fade_in_frames":20,"fade_out_frames":40,"source_offset_frames":100,"source_path":"source.wav","gain":0.5}
         ]}]
     })).unwrap();
     session.asset_root = Some(dir.path().to_path_buf());
@@ -211,4 +213,89 @@ fn full_automated_chains_do_not_allocate_during_render_seek_or_loop() {
     WATCH.set(false);
     assert_eq!(OPERATIONS.get(), 0);
     assert!(output.iter().any(|frame| frame[0] != 0.0));
+}
+
+#[test]
+fn factory_drums_and_polyphonic_synth_do_not_allocate_in_callback() {
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "schema_version":9,"sample_rate":8000,"tempo_milli_bpm":120000,
+        "tracks":[
+            {"id":"drums","mode":"sequenced","effects":[],"device":{"kind":"drumkit","kit_id":"factory-v1","gain":0.2},"clips":[
+                {"kind":"notes","id":"c","start_frame":0,"length_frames":5000,"notes":[
+                    {"id":"kick","start_frame":0,"duration_frames":1,"frequency_hz":65.40639132514966,"velocity":0.8}]}]},
+            {"id":"synth","mode":"sequenced","effects":[],"device":{"kind":"synth","waveform":"saw","gain":0.2,"attack_ms":5,"release_ms":100,"cutoff_hz":2000},"clips":[
+                {"kind":"notes","id":"c","start_frame":0,"length_frames":5000,"notes":[
+                    {"id":"a","start_frame":0,"duration_frames":200,"frequency_hz":440,"velocity":0.5},
+                    {"id":"b","start_frame":0,"duration_frames":200,"frequency_hz":550,"velocity":0.5}]}]}
+        ]
+    })).unwrap();
+    let mut engine = Engine::prepare(&session).unwrap();
+    let mut output = [[0.0; 2]; 257];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    engine.set_loop(Some((0, 1100))).unwrap();
+    for _ in 0..50 {
+        engine.seek(0).unwrap();
+        for _ in 0..20 {
+            std::hint::black_box(engine.render_block(&mut output));
+        }
+    }
+    WATCH.set(false);
+    assert_eq!(
+        OPERATIONS.get(),
+        0,
+        "factory instrument callback performed heap operations"
+    );
+}
+
+#[test]
+fn mixer_callback_and_meter_aggregation_do_not_allocate() {
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "schema_version":10,"sample_rate":8000,"tempo_milli_bpm":120000,
+        "tracks":[{"id":"a","mode":"continuous","clips":[],"effects":[{"kind":"gain","id":"fx","gain":2.0,"bypass":false}],"device":{"kind":"sine","frequency_hz":1000,"gain":0.25},"mixer":{"gain":2.0,"pan":-0.5,"mute":false,"solo":true}}]
+    })).unwrap();
+    let mut playback = PlaybackBuffer::prepare_until_stopped(&session, 8000, 2, 0.5).unwrap();
+    let mut output = [0.0; 1200];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    for _ in 0..100 {
+        playback.fill(&mut output, |x| x).unwrap();
+        std::hint::black_box(playback.mixer_peaks().unwrap());
+    }
+    WATCH.set(false);
+    assert_eq!(
+        OPERATIONS.get(),
+        0,
+        "mixer callback performed heap operations"
+    );
+    assert!((playback.mixer_peaks().unwrap().master[0] - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn stateful_builtin_effects_do_not_allocate_during_callback_seek_or_loop() {
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "schema_version":11,"sample_rate":48000,"tempo_milli_bpm":120000,
+        "tracks":[{"id":"processed","mode":"continuous","clips":[],
+        "device":{"kind":"sine","frequency_hz":440,"gain":0.1},"effects":[
+            {"kind":"gain","id":"trim","gain":0.5,"bypass":false},
+            {"kind":"lowpass","id":"filter","cutoff_hz":800,"bypass":false},
+            {"kind":"delay","id":"echo","time_ms":2000,"feedback":0.95,"mix":0.5,"bypass":false}
+        ],"automation":[{"effect_id":"trim","parameter":"gain","interpolation":"step","points":[{"frame":5,"value":0.75}]}]}]
+    })).unwrap();
+    let mut playback = PlaybackBuffer::prepare_until_stopped(&session, 48000, 2, 1.0).unwrap();
+    let mut output = [0.0; 514];
+    OPERATIONS.set(0);
+    WATCH.set(true);
+    playback.set_loop(Some((5, 6))).unwrap();
+    for _ in 0..256 {
+        playback.seek(5).unwrap();
+        playback.fill(&mut output, |s| s).unwrap();
+    }
+    WATCH.set(false);
+    assert_eq!(
+        OPERATIONS.get(),
+        0,
+        "stateful processing/reset performed heap operations"
+    );
+    assert!(output.iter().all(|s| s.is_finite()));
 }

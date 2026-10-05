@@ -9,6 +9,10 @@ pub const SCHEMA_VERSION_5: u32 = 5;
 pub const SCHEMA_VERSION_6: u32 = 6;
 pub const SCHEMA_VERSION_7: u32 = 7;
 pub const SCHEMA_VERSION_8: u32 = 8;
+pub const SCHEMA_VERSION_9: u32 = 9;
+pub const SCHEMA_VERSION_10: u32 = 10;
+pub const SCHEMA_VERSION_11: u32 = 11;
+pub const SCHEMA_VERSION_12: u32 = 12;
 pub const MAX_TRACKS: usize = 64;
 pub const MIN_SAMPLE_RATE: u32 = 8_000;
 pub const MAX_SAMPLE_RATE: u32 = 192_000;
@@ -21,6 +25,7 @@ pub const MAX_CLIPS: usize = 1_024;
 pub const MAX_NOTES: usize = 16_384;
 pub const MAX_EFFECTS_PER_TRACK: usize = 16;
 pub const MAX_EFFECT_GAIN: f64 = 4.0;
+pub const MAX_DELAY_STATE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_AUTOMATION_LANES_PER_TRACK: usize = 16;
 pub const MAX_AUTOMATION_POINTS: usize = 16_384;
 pub const MAX_VST3_PLUGINS: usize = 8;
@@ -83,6 +88,60 @@ pub struct Track {
         deserialize_with = "deserialize_nonnull"
     )]
     pub automation: Option<Vec<AutomationLane>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nonnull"
+    )]
+    pub mixer: Option<Mixer>,
+}
+
+/// Saved post-effect stereo balance. All fields are required when present.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Mixer {
+    pub gain: f64,
+    pub pan: f64,
+    pub mute: bool,
+    pub solo: bool,
+}
+impl Default for Mixer {
+    fn default() -> Self {
+        Self {
+            gain: 1.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+        }
+    }
+}
+impl Mixer {
+    pub fn coefficients(self, any_solo: bool) -> [f64; 2] {
+        if self.mute || (any_solo && !self.solo) {
+            return [0.0; 2];
+        }
+        let attenuate = |pan: f64| {
+            if pan >= 1.0 {
+                0.0
+            } else {
+                (pan * std::f64::consts::FRAC_PI_2).cos()
+            }
+        };
+        [
+            self.gain
+                * if self.pan > 0.0 {
+                    attenuate(self.pan)
+                } else {
+                    1.0
+                },
+            self.gain
+                * if self.pan < 0.0 {
+                    attenuate(-self.pan)
+                } else {
+                    1.0
+                },
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -121,6 +180,18 @@ pub enum Effect {
         gain: f64,
         bypass: bool,
     },
+    Lowpass {
+        id: String,
+        cutoff_hz: f64,
+        bypass: bool,
+    },
+    Delay {
+        id: String,
+        time_ms: f64,
+        feedback: f64,
+        mix: f64,
+        bypass: bool,
+    },
     Au {
         id: String,
         bypass: bool,
@@ -157,9 +228,16 @@ pub struct Vst3Parameter {
 }
 
 impl Effect {
+    pub fn is_builtin(&self) -> bool {
+        matches!(
+            self,
+            Self::Gain { .. } | Self::Lowpass { .. } | Self::Delay { .. }
+        )
+    }
+
     pub fn id(&self) -> &str {
         match self {
-            Self::Gain { id, .. } => id,
+            Self::Gain { id, .. } | Self::Lowpass { id, .. } | Self::Delay { id, .. } => id,
             Self::Vst3 { id, .. } | Self::Au { id, .. } => id,
         }
     }
@@ -175,11 +253,28 @@ pub enum TrackMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Device {
-    Sine { frequency_hz: f64, gain: f64 },
-    Audio { gain: f64 },
+    Sine {
+        frequency_hz: f64,
+        gain: f64,
+    },
+    Audio {
+        gain: f64,
+    },
+    Drumkit {
+        kit_id: String,
+        gain: f64,
+    },
+    Synth {
+        waveform: crate::builtins::Waveform,
+        gain: f64,
+        attack_ms: f64,
+        release_ms: f64,
+        cutoff_hz: f64,
+    },
     Supercollider(crate::sc_source::Source),
     Csound(crate::csound_source::Source),
     Puredata(crate::puredata_source::Source),
+    PdInstrument(crate::pd_instrument::Instrument),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -226,6 +321,14 @@ pub struct AudioClip {
     pub source_path: String,
     pub source_offset_frames: u64,
     pub gain: f64,
+    #[serde(default, skip_serializing_if = "is_zero_frames")]
+    pub fade_in_frames: u64,
+    #[serde(default, skip_serializing_if = "is_zero_frames")]
+    pub fade_out_frames: u64,
+}
+
+fn is_zero_frames(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -329,9 +432,9 @@ fn checked_end(start: u64, length: u64, label: &str) -> Result<u64, String> {
 
 impl Session {
     pub fn validate(&self) -> Result<(), String> {
-        if !(SCHEMA_VERSION..=SCHEMA_VERSION_8).contains(&self.schema_version) {
+        if !(SCHEMA_VERSION..=SCHEMA_VERSION_12).contains(&self.schema_version) {
             return Err(format!(
-                "unsupported schema_version {}; expected 1, 2, 3, 4, 5, 6, 7, or 8",
+                "unsupported schema_version {}; expected 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 12",
                 self.schema_version
             ));
         }
@@ -365,6 +468,7 @@ impl Session {
         let mut total_clips = 0usize;
         let mut total_notes = 0usize;
         let mut total_automation_points = 0usize;
+        let mut delay_state_bytes = 0usize;
         let mut foreign_plugin_count = 0usize;
         let mut foreign_state_bytes = 0usize;
         let mut continuous_voices = 0usize;
@@ -373,6 +477,49 @@ impl Session {
         let mut sc_points = 0;
         let mut lifetimes: Vec<(u64, i32)> = Vec::new();
         for track in &self.tracks {
+            if track.mixer.is_some() && self.schema_version < SCHEMA_VERSION_10 {
+                return Err("track mixer requires schema_version 10".into());
+            }
+            if let Some(mixer) = track.mixer {
+                if !mixer.gain.is_finite()
+                    || !(0.0..=2.0).contains(&mixer.gain)
+                    || !mixer.pan.is_finite()
+                    || !(-1.0..=1.0).contains(&mixer.pan)
+                {
+                    return Err("mixer gain must be finite in 0..2 and pan finite in -1..1".into());
+                }
+            }
+            if self.schema_version == SCHEMA_VERSION_10
+                && (!matches!(
+                    track.device,
+                    Device::Sine { .. }
+                        | Device::Synth { .. }
+                        | Device::Drumkit { .. }
+                        | Device::Audio { .. }
+                ) || track
+                    .effects
+                    .iter()
+                    .flatten()
+                    .any(|effect| !matches!(effect, Effect::Gain { .. })))
+            {
+                return Err("schema_version 10 supports built-in sine, synth, drumkit and audio devices with gain effects only".into());
+            }
+            if self.schema_version >= SCHEMA_VERSION_11
+                && (!matches!(
+                    track.device,
+                    Device::Sine { .. }
+                        | Device::Synth { .. }
+                        | Device::Drumkit { .. }
+                        | Device::Audio { .. }
+                        | Device::PdInstrument(_)
+                ) || track
+                    .effects
+                    .iter()
+                    .flatten()
+                    .any(|effect| !effect.is_builtin()))
+            {
+                return Err("schema_version 11 supports built-in sine, synth, drumkit and audio devices with gain, lowpass and delay effects only".into());
+            }
             if !valid_id(&track.id) || !track_ids.insert(&track.id) {
                 return Err(
                     "track IDs must be unique, nonempty, and at most 128 UTF-8 bytes".into(),
@@ -398,7 +545,50 @@ impl Session {
                         return Err("schema_version 1 does not support audio devices".into());
                     }
                 }
+                Device::Drumkit { ref kit_id, gain } => {
+                    if kit_id != crate::builtins::FACTORY_KIT {
+                        return Err("unknown drumkit kit_id; expected factory-v1".into());
+                    }
+                    validate_builtin(self.schema_version, track.mode, gain)?;
+                }
+                Device::Synth {
+                    gain,
+                    attack_ms,
+                    release_ms,
+                    cutoff_hz,
+                    ..
+                } => {
+                    validate_builtin(self.schema_version, track.mode, gain)?;
+                    if !attack_ms.is_finite()
+                        || !(1.0..=2000.0).contains(&attack_ms)
+                        || !release_ms.is_finite()
+                        || !(0.0..=2000.0).contains(&release_ms)
+                    {
+                        return Err(
+                            "synth attack_ms must be finite between 1 and 2000; release_ms between 0 and 2000"
+                                .into(),
+                        );
+                    }
+                    if !cutoff_hz.is_finite()
+                        || !(20.0..=20000.0).contains(&cutoff_hz)
+                        || cutoff_hz >= f64::from(self.sample_rate) / 2.0
+                    {
+                        return Err(
+                            "synth cutoff_hz must be between 20 and 20000 and below Nyquist".into(),
+                        );
+                    }
+                }
                 Device::Csound(_) | Device::Puredata(_) => {}
+                Device::PdInstrument(ref instrument) => {
+                    if self.schema_version != SCHEMA_VERSION_12 {
+                        return Err("Pd instruments require schema_version 12".into());
+                    }
+                    if track.mode != Some(TrackMode::Sequenced) {
+                        return Err("Pd instruments require sequenced mode".into());
+                    }
+                    instrument.validate(self.sample_rate)?;
+                    crate::pd_instrument::validate_notes(track)?;
+                }
                 Device::Supercollider(ref source) => {
                     if self.schema_version < SCHEMA_VERSION_6 {
                         return Err(
@@ -467,7 +657,7 @@ impl Session {
                 }
                 (
                     SCHEMA_VERSION_3 | SCHEMA_VERSION_4 | SCHEMA_VERSION_5 | SCHEMA_VERSION_6
-                    | SCHEMA_VERSION_7 | SCHEMA_VERSION_8,
+                    | SCHEMA_VERSION_7 | SCHEMA_VERSION_8 | SCHEMA_VERSION_9 | SCHEMA_VERSION_11,
                     None,
                 ) => {
                     return Err(format!(
@@ -501,6 +691,46 @@ impl Session {
                             ));
                         }
                         Effect::Gain { .. } => {}
+                        Effect::Lowpass { .. } | Effect::Delay { .. }
+                            if self.schema_version < SCHEMA_VERSION_11 =>
+                        {
+                            return Err(
+                                "lowpass and delay effects require schema_version 11".into()
+                            );
+                        }
+                        Effect::Lowpass { cutoff_hz, .. } => {
+                            if !cutoff_hz.is_finite()
+                                || !(20.0..=20000.0).contains(cutoff_hz)
+                                || *cutoff_hz >= self.sample_rate as f64 / 2.0
+                            {
+                                return Err("effect cutoff_hz must be finite in 20..20000 and below Nyquist".into());
+                            }
+                        }
+                        Effect::Delay {
+                            time_ms,
+                            feedback,
+                            mix,
+                            ..
+                        } => {
+                            if !time_ms.is_finite()
+                                || !(1.0..=2000.0).contains(time_ms)
+                                || !feedback.is_finite()
+                                || !(0.0..=0.95).contains(feedback)
+                                || !mix.is_finite()
+                                || !(0.0..=1.0).contains(mix)
+                            {
+                                return Err("delay time_ms must be finite in 1..2000, feedback in 0..0.95 and mix in 0..1".into());
+                            }
+                            let frames = (time_ms * f64::from(self.sample_rate) / 1000.0)
+                                .round()
+                                .max(1.0) as usize;
+                            delay_state_bytes += frames * std::mem::size_of::<[f64; 2]>();
+                            if delay_state_bytes > MAX_DELAY_STATE_BYTES {
+                                return Err(format!(
+                                    "aggregate delay state exceeds {MAX_DELAY_STATE_BYTES} bytes"
+                                ));
+                            }
+                        }
                         Effect::Au { .. } if self.schema_version < SCHEMA_VERSION_5 => {
                             return Err("AU effects require schema_version 5 or later".into());
                         }
@@ -739,7 +969,7 @@ impl Session {
                 }
                 let clip_end = checked_end(clip.start_frame(), clip.length_frames(), "clip")?;
                 match (clip, &track.device) {
-                    (Clip::Notes(_), Device::Sine { .. }) => {}
+                    (Clip::Notes(_), Device::Sine { .. } | Device::Drumkit { .. } | Device::Synth { .. } | Device::PdInstrument(_)) => {}
                     (Clip::Audio(audio), Device::Audio { .. }) => {
                         if audio.source_path.is_empty()
                             || audio.source_path.len() > 4096
@@ -757,6 +987,12 @@ impl Session {
                         if !audio.gain.is_finite() || !(MIN_GAIN..=MAX_GAIN).contains(&audio.gain) {
                             return Err("audio clip gain must be finite and between 0 and 1".into());
                         }
+                        if audio.fade_in_frames > audio.length_frames
+                            || audio.fade_out_frames > audio.length_frames
+                            || audio.fade_in_frames > audio.length_frames - audio.fade_out_frames
+                        {
+                            return Err("audio clip fades must each fit the clip and their sum must not exceed length_frames".into());
+                        }
                         let source_end = audio
                             .source_offset_frames
                             .checked_add(audio.length_frames)
@@ -768,7 +1004,7 @@ impl Session {
                         lifetimes.push((clip_end, -1));
                     }
                     _ => return Err(
-                        "notes clips require sine devices and audio clips require audio devices"
+                        "notes clips require sine, drumkit or synth devices and audio clips require audio devices"
                             .into(),
                     ),
                 }
@@ -816,8 +1052,24 @@ impl Session {
                         .start_frame
                         .checked_add(note_end)
                         .ok_or_else(|| "note end overflows".to_string())?;
-                    let release_end = absolute_off
-                        .checked_add(envelope_frames(self.sample_rate))
+                    let (tail_start, tail_frames) = match track.device {
+                        Device::PdInstrument(_) => (absolute_off, 0),
+                        Device::Drumkit { .. } => {
+                            let index = crate::builtins::drum_index(note.frequency_hz)
+                                .ok_or("drumkit notes require MIDI 36, 38 or 42 pitch")?;
+                            (
+                                absolute_start,
+                                crate::builtins::drum_frames(index, self.sample_rate),
+                            )
+                        }
+                        Device::Synth { release_ms, .. } => (
+                            absolute_off,
+                            crate::builtins::envelope_frames(release_ms, self.sample_rate),
+                        ),
+                        _ => (absolute_off, envelope_frames(self.sample_rate)),
+                    };
+                    let release_end = tail_start
+                        .checked_add(tail_frames)
                         .ok_or_else(|| "note release end overflows".to_string())?;
                     if release_end > MAX_FRAME {
                         return Err("note release end exceeds MAX_FRAME".into());
@@ -859,4 +1111,17 @@ impl Session {
             .iter()
             .any(|track| matches!(&track.device, Device::Audio { .. }))
     }
+}
+
+fn validate_builtin(schema_version: u32, mode: Option<TrackMode>, gain: f64) -> Result<(), String> {
+    if schema_version < SCHEMA_VERSION_9 {
+        return Err("built-in instruments require schema_version 9 or later".into());
+    }
+    if mode != Some(TrackMode::Sequenced) {
+        return Err("built-in instruments require sequenced mode".into());
+    }
+    if !gain.is_finite() || !(MIN_GAIN..=MAX_GAIN).contains(&gain) {
+        return Err("gain must be finite and between 0 and 1".into());
+    }
+    Ok(())
 }
