@@ -327,7 +327,9 @@ impl PlaybackBuffer {
     pub fn set_loop(&mut self, region: Option<(u64, u64)>) -> Result<(), String> {
         #[cfg(all(feature = "native-audio", target_os = "macos"))]
         if let Some(pd) = &mut self.pd {
-            return pd.set_loop(region);
+            pd.set_loop(region)?;
+            self.loop_region = region;
+            return Ok(());
         }
         self.engine
             .as_mut()
@@ -693,6 +695,41 @@ mod live_tests {
         worker.finish().unwrap();
         worker.finish().unwrap();
     }
+    #[test]
+    fn worker_metronome_matches_direct_renderer_across_nonbeat_loop_wraps() {
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "schema_version":2,"sample_rate":48000,"tempo_milli_bpm":120000,"tracks":[]
+        }))
+        .unwrap();
+        let (mut playback, mut worker) =
+            PlaybackBuffer::prepare_pd(&session, 48000, 2, None, 1.0).unwrap();
+        let mut reference = PlaybackBuffer::prepare_until_stopped(&session, 48000, 2, 1.0).unwrap();
+        playback.configure_metronome(&session, true, 0).unwrap();
+        reference.configure_metronome(&session, true, 0).unwrap();
+        playback.set_loop(Some((0, 513))).unwrap();
+        reference.set_loop(Some((0, 513))).unwrap();
+        let mut output = [0.0; 74];
+        let mut expected = [0.0; 74];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while playback.output_position() < 4096 {
+            OPERATIONS.set(0);
+            WATCH.set(true);
+            let count = playback.fill(&mut output, |v| v).unwrap() as usize;
+            WATCH.set(false);
+            assert_eq!(OPERATIONS.get(), 0);
+            reference.fill(&mut expected[..count * 2], |v| v).unwrap();
+            assert_eq!(output[..count * 2], expected[..count * 2]);
+            assert_eq!(playback.frame_position(), reference.frame_position());
+            assert_eq!(playback.output_position(), reference.output_position());
+            assert!(std::time::Instant::now() < deadline);
+            if count == 0 {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+        }
+        drop(playback);
+        worker.finish().unwrap();
+    }
+
     #[test]
     fn live_arrangement_queue_keeps_held_notes_and_callback_heap_free() {
         let session: Session = serde_json::from_value(serde_json::json!({
