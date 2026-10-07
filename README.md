@@ -1,339 +1,76 @@
 # DAW
 
-A small, agent-controllable DAW project. A local browser GUI sits on a Rust core with versioned sessions, a JSON Lines command interface, a note arrangement/piano roll, and deterministic stereo WAV rendering. Built-ins include sine, a kick/snare/hat kit and a polyphonic saw/square synth with bass/lead presets.
+A small, agent-controllable, macOS-first arrangement DAW. A Rust engine owns validated sessions and audio rendering; a local browser editor and a versioned JSON Lines interface share that engine.
 
-Optional macOS builds support scripted schema-v4 VST3 sessions and schema-v5 Audio Unit sessions offline, plus experimental in-process live VST3 playback. AU support is limited to Apple's AULowpass; AU live playback and GUI editing remain unavailable. Schema-v6 SuperCollider and schema-v7 Csound programs can be saved as tracks and prepared through owned offline jobs for rendering and rate-matched native playback. Schema-v8 adds prepared Pure Data tracks through the JSONL session/render interface. Schema-v12 adds one note-scheduled Pd instrument to the browser arrangement, mixer, processing, portable ZIP and worker-backed native timeline transport. On macOS arm64, JSONL native transport also has an explicit live mode for SC, Csound, Pure Data, or mixed runtime tracks, alongside built-in tracks and gain effects. Live mode supports start/status/stop/volume and checked saved-control edits for SC arrays and eligible Csound scalar channels. Pause, seek, and loop remain unsupported in live runtime mode. Legacy continuous Pure Data tracks remain separate from the schema-v12 note instrument and its GUI. Keyboard/Web MIDI note overdub recording is implemented; audio recording remains a follow-up. Built-in sine/drum/synth note arrangements can be edited in the browser; PCM WAVs can be imported into audio lanes, trimmed and saved with the session in a portable ZIP. The [documentation index](docs/README.md) distinguishes current contracts from historical evidence. The [plan](docs/PLAN.md) defines remaining slices and the [integration notes](docs/archive/INTEGRATIONS.md) record hosting options.
-
-## Development direction
-
-The active [roadmap](docs/PLAN.md) is scoped to consistency in the existing arrangement workflow, then quantize/MIDI files. Broader Ableton-style parity, hosting expansion and studio features are deferred; existing integrations below document compatibility rather than authorize new work. The musical-loop, portable-song and sequenced-device implementation gates are delivered; remaining validation and follow-ups are tracked separately. The current working tree provides a 16-bar template, precise note edits, independent clip copies, undo/redo and native built-in playback until stopped. WAV import, mixer controls/meters, drag/draw/resize editing, lowpass/delay, step gain automation editing, audio clip fades, portable ZIP projects and the sequenced Pd preset are implemented. Computer-keyboard/Web MIDI note preview, stopped step entry, native metronome/count-in and held-gate overdub recording are implemented. Next is the focused UI consistency cleanup from the [Opus review](docs/OPUS-UI-CONSISTENCY-REVIEW.md), followed by quantize and MIDI-file import/export. Quiet listening and musical feedback still matter; automated and muted hardware checks do not establish acoustic quality. Audio recording, sampled instruments, clip launching/scenes, routing and tempo-aware audio remain explicit longer-term goals. Completed delivery records and archived plan snapshots are indexed in [plan history](docs/archive/PLAN-HISTORY.md); the [active UI checklist](docs/UI-PLAN.md) contains only outstanding consistency work. Earlier reviews remain historical design evidence.
+The musical MVP is implemented: drum/bass/lead arrangements, note and audio editing, native transport, mixer, filter/delay, gain automation, clip fades, portable projects, keyboard/Web MIDI note entry and overdub recording. One optional sequenced Pure Data instrument is also delivered. Remaining acceptance and blocking fixes are in [the plan](docs/PLAN.md).
 
 ## Run
 
-Install Rust 1.85 or newer and Python 3.10 or newer, then from this directory:
+Install Rust 1.85+ and Python 3.10+. On macOS:
 
 ```sh
 cargo build --locked --features native-audio
 python3 gui/server.py
 ```
 
-The macOS build above enables arrangement playback. The launcher opens a browser window: choose **Open musical demo** for a drum/bass/lead phrase, or **New arrangement**, choose an instrument and add a note track and clip. Select a clip to edit notes. **Play** starts native playback; the same button pauses/resumes, and **Stop** or Escape releases playback. Structural edits require stopped playback. **Save session** downloads JSON for asset-free sessions or a portable ZIP when audio is present; **Load session** accepts both. **Export WAV** applies pending edits and downloads a stereo WAV. Listening volume is separate from saved levels and exports.
+The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
 
-For portable headless use, build with `cargo build --locked`. Native playback is macOS-only; browser continuous sine audition and stopped engine-rendered note previews remain separate paths. Continuous sine sources are under **Continuous sources & runtime devices**, and can audition frequency/gain drafts before Apply. Applying edits changes the in-memory engine; a downloaded JSON/ZIP is required for durable saving.
+**Play** starts native playback and pauses/resumes it; **Stop** or Escape releases playback. Structural edits require stopped playback. Eligible arrangements play until stopped, with temporary seek/loop controls. Native note/audio playback requires the default device rate to match the session rate.
 
-The server binds only to `127.0.0.1`, chooses a free port, and starts one Rust engine. Use one editing window; multiple tabs share that engine, and checked writes reject stale revisions rather than merge drafts. Save your session before stopping the server with Ctrl+C. Refresh discards unapplied edits; stopping the server discards the in-memory session. For a specific port or manual browser opening, run `python3 gui/server.py --port 8765 --no-open`.
+Enable **Play keyboard / MIDI notes** to preview the selected instrument while stopped. **A W S E D F T G Y H U J K** play a chromatic octave; drum tracks use **A / S / D** for kick/snare/hat. **Connect MIDI** requests browser MIDI access. **Step entry** inserts notes at the clip-relative cursor. **Record notes** captures held keyboard/MIDI gates into the selected clip from timeline zero with optional metronome/count-in. Stop applies the take as one undo entry; rejected takes can be retried or discarded. Recording has no live input monitoring; physical MIDI and measured latency remain unverified.
 
-For the headless scripting demo:
+Import matching-rate mono/stereo integer PCM16/24/32 WAVs into audio lanes. The mixer saves level, pan, mute and solo. Lowpass/delay, step gain automation and audio clip fades are available. **Listening volume** affects monitoring only; exports use saved mix levels. Built-in/PCM/Pd-instrument projects with built-in effects can export up to 180 seconds; foreign-device limits are narrower.
 
-```sh
-python3 examples/demo.py
-```
+## Save your work
 
-The demo starts `target/debug/daw serve`, inspects capabilities, constructs a sine track from the discovered parameter defaults, adds it using a revision-checked batch, saves the session, and renders one second to a fresh directory under `output/`. It prints the resulting paths. On macOS, use `afplay <printed WAV path>` to listen at a comfortable volume.
+Some device/effect fields remain drafts until **Apply changes**; arrangement and mixer edits apply through checked updates. Applied engine state is still in memory. **Save session** downloads JSON for asset-free sessions or a portable ZIP containing audio assets. **Load session** accepts both. **Export WAV** applies pending edits and downloads a stereo WAV.
 
-Send commands from any language that can launch a child process and read/write JSON. No embedded scripting language or agent framework is required:
+Use one editing window: tabs share the engine, and stale writes are rejected. Refresh discards unapplied edits; stopping the server discards the in-memory project and temporary audio assets. Download your project before closing the server.
 
-```sh
-printf '%s\n' '{"protocol_version":1,"id":"1","method":"capabilities"}' | cargo run --quiet --locked -- serve
-```
-
-Read the [protocol](docs/PROTOCOL.md) for all commands and errors. The headless interface runs with the caller's filesystem permissions and has no network listener. The optional GUI adds the loopback bridge described below. IDs correlate responses; they do not provide deduplication. Rendering is synchronous and each invocation starts at frame zero.
-
-## Live playback
-
-Live sine playback uses Web Audio at the browser/device sample rate. It auditions local draft edits, including before Apply. Apply validates and updates the engine through Rust; Save also downloads the durable session/project file. Frequencies must be below both the session and live-device Nyquist limits. The monitor starts at 25% volume and normalizes summed track gain above one to provide headroom; these settings are not saved and do not change WAV exports. Live parameter smoothing and oscillator phase differ from offline rendering. Each browser tab has its own player.
-
-Browser output is built-in sine audition for schema-v1 sessions only. Native output below runs the Rust engine and is required to play v4 sessions, including v4 sessions without plugins; VST3 sessions additionally require the experimental `vst3-live` build. Native playback also supports scripted schema-v2 notes and audio clips at a matching device rate.
-
-The GUI edits continuous sine sessions in v1 and v4. It also imports schema-v6 continuous sine/SuperCollider sessions with gain effects, shows saved program identity/duration/control arrays, and preserves embedded programs and automation. It can add serial gain effects, explicitly upgrading a v1 session to v4, and edit validated VST3 effects already present in loaded or applied sessions. The format is otherwise unchanged by editing. VST3 effects can be selected from a 64-entry in-memory catalog of effects seen in those sessions; the GUI does not scan plugins, install them, or browse the filesystem over HTTP. On macOS builds with `vst3-offline`, it can inspect metadata for those active-session effects and show the plugin's parameter names and units for saved parameters. The saved normalized values remain the editable base values; metadata's default and restored values are informational, while automation points are preserved as read-only data. Unavailable inspection leaves generic parameter labels; failed inspection also shows a per-effect error. It does not add unsaved plugin parameters. Bypass and removal are available, and removing an effect also removes its targeted gain automation lanes. Built-in sine note arrangements in v2/v3 and equivalent gain-only v4 sessions have a timeline and piano roll. Built-in note/audio arrangements in v2/v3/v4/v9/v10/v11 and the constrained schema-v12 Pd arrangement are editable; sequenced plugins remain outside the arrangement editor.
-
-## Native playback (macOS)
+The bridge binds to `127.0.0.1` and chooses a free port. For a fixed port or manual browser opening:
 
 ```sh
-cargo build --locked --features native-audio
-target/debug/daw devices
-target/debug/daw play path/to/session.json 2 0.25
+python3 gui/server.py --port 8765 --no-open
 ```
 
-This CLI command plays a saved session through the default CoreAudio output for the requested number of seconds (maximum 60). Ctrl+C stops it. The optional final argument is monitor volume, defaulting to 0.25. Device configuration and callback timing are reported. After this build, restart `python3 gui/server.py`. Open a note arrangement to select native output automatically. Play applies the draft and starts the Rust engine; the same button pauses/resumes. **Stop** or Escape releases playback; **Stop & edit** returns focus to the selected note. Track editing is locked while native playback is playing or paused; listening volume remains adjustable. Built-in note/audio arrangements with gain, lowpass and delay run until stopped, including while paused; without a loop they continue silently after the last note. Other native sessions retain finite playback limits. Built-in/PCM/Pd-instrument projects with gain, lowpass and delay support exports up to 180 seconds; foreign-device export limits remain narrower. Switching output stops the previous player in that window. See [native audio notes](docs/archive/decisions/live-audio.md) for hardware limitations.
+## Scripting and optional devices
 
-## Scripted note sequencing
-
-Select a note clip and enable **Play keyboard / MIDI notes** to preview its saved instrument through browser audio while stopped. **A W S E D F T G Y H U J K** play one chromatic octave; choose C2–C5 as the base. Drum tracks use **A / S / D** for kick/snare/closed hat. **Preview** provides a click alternative. **Connect MIDI** requests note input explicitly where the browser supports Web MIDI; computer-keyboard input works without MIDI access. Listening volume controls previews too.
-
-Enable **Step entry** to add each successfully previewed note at **Step position in clip (beat)**, with **Gate (grid steps)**. The cursor advances only after a checked edit succeeds; each note has one undo entry. Wait for a note to apply before the next press. No snap uses ¼-beat steps, and the cursor stops at the clip boundary. Typing in fields does not play notes. Stop/Escape disables note input. This is stopped step entry; held-key recording is available separately below. MIDI sustain remains a follow-up.
-
-Previews render the actual sine/synth/drum/Pd device and built-in effects with a ¼-second gate and a half-second output limit. They keep saved mixer gain/pan and frame-zero automation, bypass mute/solo for audition, and leave the project, revision and exports untouched. Notes/releases/effect tails are cut at the half-second preview limit. Pd still requires libpd. `python3 examples/note_input_workflow_demo.py` verifies an eight-note phrase, previews, checked edits/undo, preserved PCM and fresh-engine portable reopen with byte-identical unclipped export.
-
-For native built-in prepared arrangements, enable **Metronome** and select a **0/1/2-bar count-in**. The accented click uses 4/4 and is listening-only: exports do not include it. Select a note clip and press **Record notes** to overdub computer-keyboard/Web MIDI held gates from timeline zero. Count-in presses are ignored; input is not monitored during recording. Loop, seek and pause are disabled until Stop. Stop applies the whole take as one undo entry through atomic checked `/api/note/take`; a rejected take remains available to apply again or discard. Newly recorded gates extending beyond the clip end are shortened with explicit feedback; existing notes remain exact. Timing estimates use sampled native status and the browser clock; physical MIDI and measured input latency remain unverified. `python3 examples/note_recording_workflow_demo.py` verifies capture, one-take undo/redo, stale rejection, preserved PCM/mixer/effects/off-grid notes and exact portable reopen/export.
-
-[The arpeggio example](examples/sessions/arpeggio.json) contains four notes at 48 kHz. Play it using the native build above:
-
-```sh
-target/debug/daw play examples/sessions/arpeggio.json 2 0.25
-```
-
-The default device must use the same sample rate as the note session. Notes have frame positions, independent voices, and fixed 5 ms attack/release envelopes. At most 64 simultaneous voices are allowed, including release tails. Export through `session.load` and `render` in the JSONL interface; native transport uses the same prepared note engine. Use revision-checked full replacement for clip edits; existing batch operations can add/remove whole tracks and change track gain.
-
-Build with `native-audio`, restart the GUI server, and click **Open musical demo** for a 16-bar drum/bass/lead project. Select a clip to edit its start/length or duplicate/delete it. The piano roll edits MIDI pitch, note start/duration and velocity with an optional grid; changing one field preserves untouched frames and Hz exactly. Drum tracks show three named rows. **New arrangement**, the **Instrument** chooser, **Add note track**, **Insert at (beat)** and **Add 4-beat clip** create music from scratch. Adding drums/synth explicitly upgrades the session to schema 9. Arrangement edits apply through checked Rust replacements while stopped; failed edits preserve the previous draft and show a persistent explanation. Undo/redo covers successful applied edits (32 entries, 8 MiB), resets on import/refresh, and is unavailable with unapplied drafts or during playback. Save session exports JSON; Export WAV defaults to the arrangement length (the demo is 32 seconds).
-
-Play/Pause and the explicit Stop button control native playback. Start Play, set Loop start/end (0–64 beats covers the full demo), then **Set loop**. Seek, ruler clicks, and temporary loop regions work while playing or paused; the playhead reflects engine status. Tempo changes the authoring grid without moving saved frames, and sample-rate editing is locked for arrangements. Drag clips to move them and use their right edge to resize. In the piano roll, click/draw new notes, drag notes to move pitch/start, and drag the right edge to change the gate. Escape cancels an active gesture; completed gestures create one checked edit and undo entry. Delete removes the selected note/clip and Ctrl/Cmd+D duplicates a selected clip while canvas focus is active; text fields keep normal typing. Audio clips can be imported and edited alongside notes, including exact fade frame counts. Gain effects expose a step automation editor. The [musical fixture](examples/sessions/musical-demo.json) also works through JSONL. `python3 examples/musical_workflow_demo.py` checks exact save/reload and two byte-identical unclipped 32-second exports. `python3 examples/musical_native_demo.py` performs a muted 65-second native loop/transport/cleanup check.
-
-The factory kit is generated from project-authored synthesis and seeded noise during preparation, with versioned `factory-v1` output. MIDI 36/38/42 trigger kick/snare/hat; other pitches reject before commit. One-shots ignore gate duration but stop at the clip end. The synth uses band-limited saw/square oscillators, a linear attack/release envelope and a simple one-pole low-pass. Voices are independent and bounded to 64, including release/sample tails. Seek and loop clear voices and filter state; tails do not cross clip ends. Bass/lead presets are starting points, with no resonance, ADSR, sample replacement or voice stealing yet. See [schema 9](docs/PROTOCOL.md#musical-built-ins-in-schema-v9) for saved fields and limits.
-
-To preserve an existing sine session while explicitly upgrading its format:
-
-```sh
-python3 examples/upgrade_session.py old-session.json new-session.json
-```
-
-This validates both versions, preserves continuous playback and track order, and refuses to overwrite the destination. Sessions are never silently upgraded on load.
-
-## Basic mixer and three-minute songs
-
-The mixer below the arrangement saves gain (0–2), stereo balance (-1 left through 1 right), mute and inclusive solo per track. Mixer edits explicitly upgrade legacy built-in/gain-only projects to schema 10 and retain schema 11 when processing is present; existing formats load unchanged. Mute wins over solo. Center preserves both stereo channels; hard left/right attenuates the opposite channel without summing it. The console provides vertical faders, pan sliders, M/S and stereo meters. Faders apply on release; exact numeric values apply on blur, Apply or Enter; toggles include typed numeric values. Edits use checked replacement and undo while stopped. Native track/master peak meters show pre-monitor/pre-clamp levels, so listening volume can be zero while meters still move. Live mixer updates, RMS/loudness and sends/routing are deferred.
-
-Built-in/PCM projects with gain, lowpass and delay export up to 180 seconds. The GUI shows the current project's capability-derived bound; plugin exports stay at ten seconds and prepared runtime exports retain their prior 60-second bound. Finite native playback still has a 60-second limit; built-in until-stopped transport is independent. Export streams bounded render blocks with buffered file output.
-
-`python3 examples/song_workflow_demo.py` constructs a four-track, 270-clip three-minute instrument/PCM song, saves its portable ZIP, reopens it in a fresh engine and checks matching unclipped exports plus an audible final second. The measured debug exports took about seven seconds each. `python3 examples/mixer_native_demo.py` checks muted native mixer meters, pan/solo/mute, pause/resume and stream/EOF cleanup; it does not establish acoustic quality.
-
-## Filter and delay
-
-Add lowpass or delay from a track’s Effects panel. Each has saved controls, bypass and three presets; adding one explicitly upgrades the project to schema 11. Lowpass cutoff is 20–20000 Hz below Nyquist. Delay time is 1–2000 ms, feedback 0–0.95 and wet mix 0–1. Effect controls, bypass and presets modify a draft; **Apply changes** commits it while stopped and creates an undo snapshot. Mixer settings and gain automation remain independent. Seek/loop clears effect history; pause preserves it. Export includes tails only within the requested duration.
-
-Gain effects expose **Add point**, **Update** and **Delete** with absolute song frames and linear gain 0–4. The base gain applies before the first point; each point holds its value until the next. Deleting the last point restores the base-only effect. Edits preserve other typed automation drafts, apply while stopped and use undo. Smooth ramps and other parameter lanes remain follow-ups.
-
-Select an audio clip to set **Fade in (frames)** and **Fade out (frames)**, then **Update audio clip**. Zero disables a fade; each linear fade reaches silence at its clip edge, and the two lengths must fit inside the clip. Shortening a clip with incompatible fades rejects without changing the project. Fades preserve source recordings and use the same engine for playback/export. `python3 examples/finishing_workflow_demo.py --song --native` checks the full mixed fixture, portable ZIP reopen, identical unclipped three-minute exports and muted native transport.
-
-`python3 examples/processing_workflow_demo.py --song` checks a three-minute instrument/PCM song with both effects and gain automation, portable ZIP reopen and matching unclipped exports. Add `--native` for a muted loop/seek/pause/stop check. See [schema 11](docs/PROTOCOL.md#built-in-processing-in-schema-v11) for processing and storage limits. GUI step gain automation and audio clip fades are implemented.
-
-## Native seeking and looping
-
-With the native build, run `python3 examples/transport_demo.py` for a silent hardware check of pause, seek, loop, resume, and stream release. An optional session path tests a PCM clip project instead.
-
-Scripts can issue `transport.seek` with `{"frame":1800}` and `transport.loop` with `{"region":{"start_frame":1200,"end_frame":2400}}` while native playback is active or paused. Send `{"region":null}` to disable looping. Poll `timeline_command_pending` until false before sending the next timeline command. Positions use the reported native sample rate. See the [protocol](docs/PROTOCOL.md) for limits and acknowledgments.
-
-Loops and seeks clear note voices without retriggering notes that began before the destination; audio clips resume at their corresponding source offset. Discontinuities can click. Live loop settings are temporary and do not change WAV exports or finite playback deadlines. The arrangement GUI uses until-stopped playback for built-in/PCM sessions with gain, lowpass and delay and exposes seek/loop controls during active native transport.
-
-## PCM WAV clips
-
-In the GUI, **Import WAV** creates a new audio lane at **Insert at (beat)** (beat 0 for an empty session). Select its clip to move, trim, duplicate, change clip gain or set an exact source offset in frames. Track gain and serial gain effects are also available. Imports require mono/stereo integer PCM16/24/32 WAVs at the session rate, up to 32 MiB; no resampling is performed. Invalid/stale imports or source ranges preserve the applied project.
-
-With audio present, **Save project ZIP** downloads `session.json` and its referenced assets together. **Load session** accepts that ZIP in a fresh server; JSON-only downloads remain for asset-free sessions. Imported files live in a private temporary project folder: save the ZIP before stopping the server. Old assets are retained for undo within bounded storage; reopening a saved ZIP resets history and reclaims unused assets. Imported JSON may reference only assets already registered in that server. The [GUI audio-project contract](docs/AUDIO-PROJECTS.md) describes the bounds and failure behavior.
-
-`python3 examples/audio_project_workflow_demo.py` imports stereo PCM alongside the musical template, trims/copies it, saves a ZIP and reopens it in a fresh engine with byte-identical unclipped export. Add `--native` for a muted audio/instrument loop, pause, source-offset seek and stream-release check. Until-stopped native playback now includes preloaded audio; foreign-device limits remain; built-in/PCM projects with gain, lowpass and delay export supports up to 180 seconds.
-
-The lower-level JSONL example remains available:
-
-```sh
-python3 examples/audio_clip_demo.py
-```
-
-This creates a project under ignored `output/`, with a stereo PCM WAV, two clips, a saved session, and a rendered mix. Play its printed session path with `daw play SESSION 1.5 0.25` using the native build.
-
-Assets use paths relative to the session file's folder. Only integer PCM16/24/32 mono/stereo WAVs at the session rate are supported. Files are preloaded, with 32 MiB per-file and 128 MiB decoded-session limits. Saving an audio session must stay in the same project folder; asset copying is not implemented. See [audio asset rules](docs/archive/decisions/audio-assets.md) for the exact contract.
-
-## Serial track effects
-
-Schema v3 adds per-track gain effects, applied in array order before the final mix. Gain ranges from 0 to 4; each effect has a saved ID and bypass setting. There is no intermediate clipping. V1/v2 sessions keep their existing behavior and are never silently upgraded.
-
-Play the [gain-chain example](examples/sessions/gain-chain.json) with the native build:
-
-```sh
-target/debug/daw play examples/sessions/gain-chain.json 2 0.25
-```
-
-Edit chains through revision-checked `session.replace`, then save or render using JSONL. Playback uses a prepared snapshot; changing a chain stops it. Saved gain automation is available through JSONL, and the GUI clears lanes targeting an effect when that effect is removed. See the [effect contract](docs/archive/decisions/track-effects.md).
-
-## Saved gain automation
-
-Schema-v3 tracks can add step/hold gain lanes targeting an effect ID. Values apply at exact frame positions and are restored on seek or loop wrap. Play the [automation example](examples/sessions/gain-automation.json) with `daw play examples/sessions/gain-automation.json 2 0.25`. Save/load and WAV rendering use the same lane data.
-
-Before a lane's first point, its effect uses the saved base gain. There is no implicit smoothing. Editing a lane uses session replacement and stops the active snapshot. See [the protocol](docs/PROTOCOL.md) for the strict shape and limits.
-
-## Scripted offline VST3 effects (macOS)
-
-```sh
-python3 native/vst3/build.py --fetch-sdk
-cargo build --locked --features native-audio,vst3-offline
-python3 examples/vst3_demo.py "$HOME/Library/Audio/Plug-Ins/VST3/ValhallaFreqEcho.vst3" 5653544671456876616C68616C6C6166 --parameter 48
-```
-
-This creates a fresh project under ignored `output/`, captures initial plugin state, saves/reloads a schema-v4 session, and renders two one-second WAVs with wet/dry automation. It does not play audio. Other effects require their exact class CID and parameter IDs; compatibility is not assumed. Configure an absolute worker executable with `DAW_VST3_HOST` when running outside this checkout.
-
-V4 preserves v3 track gain chains and adds serial `vst3` effects. Supported plugins have one stereo input/output, no event buses, float32 offline processing, and zero reported latency. Sessions containing plugins require 48 kHz, and plugin renders stop at ten seconds. Parameters are normalized and points use exact frame positions; plugin DSP may smooth changes. State has strict byte limits. Load/replace prepares plugins in owned child processes before committing; failures preserve the active session and revision. Rendering finishes all plugin work before creating the destination WAV. Bypass skips DSP but still validates the plugin on load. See [the protocol](docs/PROTOCOL.md) for the shape and [the adapter record](docs/archive/decisions/vst3-adapter.md) for limits.
-
-The GUI can edit supported v4 sessions and reuse validated VST3 effects already loaded or applied, but it does not scan or install plugins and provides no plugin editor window. Parameter metadata inspection uses the offline worker without activating or processing the plugin; it does not change the session or stop playback. Native VST3 playback is an experimental feature requiring both offline VST3 and native audio support. It runs third-party plugin code in-process; a plugin crash can terminate the engine.
-
-## Experimental live VST3 playback (macOS)
-
-Build the worker library and the feature-enabled engine, then play a saved schema-v4 session containing VST3 effects:
-
-```sh
-python3 native/vst3/build.py
-cargo build --locked --features vst3-live
-target/debug/daw play path/to/vst3-session.json 60 0.25
-```
-
-`vst3-live` implies `vst3-offline` and `native-audio`. The build script writes `libdaw-vst3.dylib` under `output/vst3-spike`; set `DAW_VST3_LIBRARY` to an absolute library path to select another build. Live sessions require a 48 kHz session and device, stereo float32 plugin processing, zero-latency effects, and no event buses. Playback is limited to 60 seconds. Play, pause, resume, volume, and stop are supported. Seek and loop are explicitly rejected for plugin sessions. While playing or paused, the GUI can change a saved normalized value for an active, non-bypassed VST3 effect when that parameter has no saved automation. Structural session edits remain locked during playback.
-
-The experimental worker creates, processes, and destroys plugins on one dedicated DSP thread. A fixed 1024-frame SPSC queue feeds the CoreAudio callback, which consumes prepared audio without foreign calls, allocation, or locks. The queue holds about 21.3 ms at 48 kHz, in addition to device latency. Parameter edits enter a bounded queue of eight commands; one command is applied at the start of a successfully processed 256-frame block. The worker also has one in-flight command, so queued audio plus that block adds at most about 26.7 ms before device latency. A paused edit can remain pending until playback resumes. Acceptance commits the normalized base value and advances the session revision immediately; `transport.status` reports the applied revision and block-start frame after DSP succeeds. Stop or worker failure cancels edits not yet delivered to DSP, while their accepted base values remain in the session and are saved. Applying an edit does not recapture plugin controller/component state. Underruns output silence without advancing the timeline; `plugin_worker_underruns` is reported in transport status and CLI output. Startup has a five-second timeout. Shutdown waits two seconds and then detaches a hung in-process worker, reporting an explicit stop failure; in-process plugin crashes can terminate the engine. Offline rendering retains its separate child-process isolation. A silent ValhallaFreqEcho check on MacBook Air Speakers at 48 kHz passed three play/pause/resume/stop cycles and session replacement, with zero underruns and zero callbacks over budget; acoustic delivery was not verified.
-
-## Scripted offline Audio Unit effects (macOS)
-
-Build the AUv2 worker and feature-enabled engine, then run the scripted example:
-
-```sh
-python3 native/au/build.py
-cargo build --locked --features au-offline
-python3 examples/au_demo.py
-```
-
-Schema v5 retains the v4 timeline and built-in/VST3 effects, and adds the exact Apple `aufx/lpas/appl` AULowpass effect. Renders require 48 kHz and are limited to ten seconds. `DAW_AU_HOST` may select an absolute worker path; the fallback is `output/au-spike/au-host`. The worker is owned and bounded. AU live playback and GUI imports/edits remain unavailable; see the GUI's supported session shapes above and the Csound section below. See the [AU adapter contract](docs/archive/decisions/audio-units.md) and [protocol](docs/PROTOCOL.md).
-
-## SuperCollider score jobs
+For portable headless use:
 
 ```sh
 cargo build --locked
-export DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth
-python3 examples/supercollider_demo.py
-python3 -m unittest native.supercollider.test_daw
+python3 examples/demo.py
 ```
 
-On Unix, `supercollider.render` runs a prepared binary OSC score through an explicitly configured `scsynth` executable. It writes a fresh stereo PCM16 WAV, supports 8–192 kHz and scores up to ten seconds, and captures child errors without changing your session or transport. The portable `supercollider.inspect` command reads program names, native control defaults and graph structure without launching a runtime. The example inspects its own SynthDef and creates a score without starting a language interpreter or audio device. The configured executable and UGens must already be installed; this project bundles neither. The [job contract](docs/archive/decisions/supercollider.md) describes bounds and restrictions.
+Launch `target/debug/daw serve` from any language and exchange one JSON request/response per line. Inspect `capabilities` for build-dependent support. See [the protocol](docs/PROTOCOL.md) for commands, schemas, timing, transport and limits; [audio projects](docs/AUDIO-PROJECTS.md) for WAV/ZIP ownership and validation.
 
-These are synchronous offline jobs. A script can use the exported WAV in an audio-clip project. Saved programmable SuperCollider tracks are available as described below; live OSC playback is a separate native transport mode.
+Optional integrations are existing compatibility paths; they are not MVP prerequisites:
+
+| Integration | Current scope |
+| --- | --- |
+| Sequenced Pd instrument | One 48 kHz monophonic **Filtered Sine** preset in the arrangement. Requires a configured multi-instance libpd library via `DAW_LIBPD_LIBRARY`; missing runtime rejects without changing the project. |
+| SuperCollider / Csound / continuous Pd | Prepared scripted sources and constrained macOS arm64 live transport. Live runtime pause/seek/loop are unsupported; legacy continuous Pd live-control acceptance is unfinished. |
+| VST3 | Constrained macOS offline effects and experimental live effects; saved-effect metadata/parameter editing. No plugin editor, instrument hosting or GUI discovery. [Build notes](native/vst3/README.md). |
+| Audio Units | Apple's AULowpass offline only; no GUI or live playback. [Build notes](native/au/README.md). |
+
+Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, quantize/MIDI files, sampled instruments and broader studio features are outside the MVP.
 
 ## Develop
+
+Read [AGENTS.md](AGENTS.md) for implementation and PR review/merge instructions. [docs/PLAN.md](docs/PLAN.md) is the only task checklist. Historical plans and reviews are available in Git history.
+
+`src/session.rs` owns the model/validation; `src/control.rs` owns commands/persistence; `src/engine.rs` owns prepared DSP; `src/render.rs` owns WAV output; `src/audio.rs` owns native playback. `gui/server.py` is the Python standard-library loopback bridge; `gui/` contains the plain JavaScript/CSS editor. There is no frontend build step.
+
+Core checks (Node 22+ for browser tests):
 
 ```sh
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-python3 -m unittest gui.test_server gui.test_musical_workflow gui.test_audio_projects
-DAW_TEST_NATIVE_AUDIO=1 python3 -m unittest native.vst3.test_parameters
-DAW_VST3_FIXTURE_NO_EVENTS=1 DAW_VST3_FIXTURE_REALTIME=1 cargo test --locked --features vst3-live actual_live_worker -- --ignored
-node --test gui/test_live.cjs gui/test_editor.cjs gui/test_history.cjs gui/test_instruments.cjs gui/test_timeline.cjs gui/test_audio_editor.cjs
+cargo build --locked
+python3 examples/check_timeline_contract.py
+python3 -m unittest discover -s gui -p 'test_*.py'
+node --test gui/test_*.cjs
 ```
 
-`src/session.rs` owns the serializable model and validation. `src/control.rs` owns commands and persistence. `src/engine.rs` owns prepared block DSP and persistent oscillator phase; `src/render.rs` owns WAV encoding. `src/main.rs` owns bounded input framing and stdout responses. The offline renderer is a reference implementation, not a real-time audio callback.
-
-`gui/server.py` is a standard-library Python bridge; `gui/index.html`, `gui/style.css`, and `gui/app.js` are the browser interface. It exposes capabilities, native transport, session inspection/checked replacement, saved SC control inspection/edits, and temporary WAV downloads, rather than arbitrary engine filesystem commands. Requests require a per-launch token and exact loopback host/origin checks. The bridge is for trusted local use, not deployment on a public server. Its tests start a loopback HTTP server and need local socket permissions.
-
-T09a/b provide a [standalone macOS VST3 lifecycle spike](native/vst3/README.md) with a project-owned fixture, child-process scanning, and real ValhallaFreqEcho offline automation/state checks. T09c connects VST3 effects to scripted session save/load and WAV rendering. T09d adds experimental native live playback; short silent hardware checks verify callbacks and transport, while acoustic output remains unverified. T09f adds bounded read-only metadata inspection and actual saved-parameter labels in the GUI. The [roadmap](docs/PLAN.md) gives the current priorities and working rules.
-
-## Saved SuperCollider tracks
-
-```sh
-cargo build --locked --features native-audio
-DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_tracks_demo.py
-```
-
-This creates a schema-v6 project with two embedded SynthDefs, saved named control values/events and serial gain effects; it saves, reloads and exports the arrangement. Add `--native` for a bounded silent hardware smoke test. Preparation captures floating-point source audio outside callbacks, then the DAW routes it through its effects. A source has a finite duration; at most four sources and ten seconds of summed source duration are allowed. Reload regenerates audio, while playback/rendering reuse the prepared snapshot. Native playback requires a matching sample rate. Runtime/control failures preserve the active session. The browser imports gain-only continuous sine/SuperCollider v6 sessions and edits inspected saved control bases; prepared playback does not provide interactive SuperCollider DSP. See the [schema-v6 contract](docs/PROTOCOL.md#schema-v6-prepared-supercollider-sources).
-
-Saved v6 sources can run in live mode through JSONL native transport as well as through the standalone CLI below. Prepared playback remains the default. Select live mode explicitly:
-
-```jsonl
-{"protocol_version":1,"id":"play","method":"transport.play","params":{"seconds":1,"volume":0,"source_mode":"live"}}
-{"protocol_version":1,"id":"status","method":"transport.status"}
-```
-
-The JSONL live mode requires a macOS `native-audio` build and a 48 kHz device. SC sources additionally require the project capture plugin and absolute `DAW_SCSYNTH`; Csound sources require the Csound 7 double-sample library, the queue bridge, and the owned stream worker. Build the bridge with `python3 native/csound/build_queue.py`; `DAW_CSOUND_QUEUE_LIBRARY`, `DAW_CSOUND_STREAM_WORKER`, and `DAW_CSOUND_PYTHON` optionally select absolute paths. `source_mode:"live"` accepts schema v6 SC, schema v7 Csound, and sessions mixing both, for at most ten seconds and gain-only effect chains. It starts owned workers and routes their fixed queues through the Rust worker into the native callback. Loading/replacing still validates and prepares the session before commit. `source.set_control` edits eligible saved SC arrays or one saved Csound scalar input with no automation; Csound requires an existing declared channel. Acceptance commits the saved base and revision, while status separates native readback/publication from callback observation. Pause/resume, seek, and loop remain unavailable. The browser imports gain-only continuous schema-v6 sine/SuperCollider and schema-v7 sine/SuperCollider/Csound sessions; browser Web Audio does not host these sources. Callback frame/digest evidence is separate from acoustic verification.
-
-Run the bounded two-track example with:
-
-```sh
-cargo build --locked --features native-audio
-python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollider-3.14.1
-DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth python3 examples/supercollider_live_demo.py
-```
-
-The example uses a muted monitor and checks one second of source audio, ordering digests, underruns, and server/queue release. The `serve` process cleans up owned servers when its JSONL input closes; it does not install CLI SIGINT/SIGTERM handlers.
-
-The standalone finite macOS CLI remains available for direct saved-session playback:
-
-```sh
-cargo build --locked --features native-audio
-python3 native/supercollider/build_stream.py --sdk /absolute/path/to/supercollider-3.14.1
-DAW_SCSYNTH=/Applications/SuperCollider.app/Contents/Resources/scsynth target/debug/daw sc-session-play path/to/session.json 1 0
-```
-
-The last argument is monitor volume (0 for a muted callback check; default 0.25). This CLI requires a 48 kHz default output device, schema v6/v7 and at most ten seconds. It starts an owned producer per SC/Csound track, preserving same-name SC programs, captures and mutes SC stereo buses 0/1, and feeds their queues plus saved controls/events, source duration/gain, serial gain effects (including automation/bypass), built-in sine/notes and rate-matched PCM clips into the DAW's fixed native callback queue. Csound live mode requires the Csound 7 library and queue bridge. AU/VST3 effects are rejected in this mode. Final JSON reports frame counts, source/callback sample-order fingerprints, quarter RMS, output-bus peaks and released worker PIDs; readiness uses stderr. Ctrl+C or SIGTERM performs owned cleanup. Abrupt process termination (SIGKILL) cannot run that cleanup. JSONL transport is the preferred interface. Clock-drift/latency characterization and long playback remain pending. Callback checks use a muted monitor; acoustic delivery and arbitrary SC UGens are unverified.
-
-The separate macOS [interactive SC probe](native/supercollider/live_probe.py) verifies owned OSC lifecycle and a control change reaching finite private-bus audio capture. It keeps output buses silent and is distinct from the DAW live transport. The [streaming gates](docs/archive/decisions/supercollider.md#streaming-decision-and-remaining-gates-t11c2) record the remaining SC limits.
-
-A custom SuperCollider UGen/shared-memory streaming diagnostic is also available under `native/supercollider/`; it verifies finite stereo streaming and live control changes into a separate reader process. It is not connected to DAW transport or GUI controls. See [build, evidence and remaining routing gates](docs/archive/decisions/supercollider.md#fixed-queue-prototype-t11c2a).
-
-The [native streaming diagnostic](native/supercollider/native_probe.py) routes a live SC source through the Rust gain effect and native callback. It requires the built queue bridge and a `native-audio` binary, defaults to a muted monitor, and reports exact frame counts, sample-order fingerprints and underruns. It is separate from session transport; explicit live transport is described above. See [native routing evidence](docs/archive/decisions/supercollider.md#source-to-native-diagnostic-t11c2b1).
-
-## Prepared Csound tracks (schema v7)
-
-Set `DAW_CSOUND_LIBRARY` to an absolute Csound 7 double-sample library path and run `python3 examples/csound_tracks_demo.py`. The example saves and reloads two embedded CSD programs, applies saved control events, renders through gain effects, and can use `--native` for a muted callback smoke test. Session load/replacement prepares each Csound source before commit; prepared PCM is reused for render and native playback at the session's sample rate. A source lasts 1 ms–10 seconds, and all SuperCollider/Csound sources together are limited to four sources, ten seconds total, 512 control points, and the shared 128 MiB decoded-audio budget.
-
-Prepared Csound source playback uses the Csound 7 double-sample ABI in an owned Python worker. It requires 64-frame `ksmps`, stereo output, `0dbfs=1`, and the session sample rate. Saved named scalar controls and 64-frame-aligned step events are applied after `csoundStart`; frame-zero points override the saved base before the first perform call. This does not guarantee initialization-rate controls. In ordinary prepared playback, only the DAW's source/track gain and effects run; explicit live transport instead runs Csound on its owned producer worker. Set `DAW_CSOUND_PYTHON` to an absolute executable to select Python (default `python3`), or `DAW_CSOUND_WORKER` to an absolute preparation worker path (default the checkout worker). Csound 6 and other platforms are not verified.
-
-The GUI can load and edit supported schema-v7 sessions and add multiple Csound sources. **Add Csound** uploads embedded UTF-8 CSD text up to 60 KiB, asks for a duration from 1 ms to ten seconds and creates a source at gain 0.5 with no controls. It explicitly upgrades a supported v1, v4 or v6 session to v7; on v7 it appends another Csound source. New scalar control fields can be added by name and value. Apply asks Rust to validate and prepare every source before committing; CSD compilation, channel validation or preparation failures leave the applied session unchanged. The GUI does not parse CSD to discover channels. V7 editing is limited to continuous sine/SuperCollider/Csound tracks, empty clips and gain-only effects; notes, audio clips and other effects stay locked. Saved scalar controls without automation can be edited while stopped and eligible Csound scalars can also be changed during live playback with revision/readback/callback status. See the [schema-v7 protocol contract](docs/PROTOCOL.md#schema-v7-prepared-csound-sources).
-
-The [schema-v7 protocol section](docs/PROTOCOL.md#schema-v7-prepared-csound-sources) documents the saved shape, bounds, preparation and capabilities. These prepared tracks are separate from the standalone `csound.render` WAV job below.
-
-## Csound offline jobs
-
-Set `DAW_CSOUND` to an absolute Csound executable and run `python3 examples/csound_demo.py`. The demo renders two saved CSD fixtures, checks their frequency/gain changes, and verifies the active session/revision are preserved. `csound.render` is a synchronous Unix JSONL command; it validates a stereo PCM16 WAV before publishing to a fresh destination. Rates are 8000–192000 Hz, duration is at most ten seconds, and the caller supplies the exact expected frame count. CSD options are ignored; sample rate and a one-frame control block are imposed by the job runner.
-
-`csound.render` remains a standalone WAV job: it uses `DAW_CSOUND`, writes validated PCM16 to a fresh destination, and does not load or change a session. It is distinct from schema-v7 source preparation, which uses `DAW_CSOUND_LIBRARY` and caches float64 PCM for prepared playback. Programs run with the caller's permissions. Relative assets/includes are not prepared; arbitrary opcodes and third-party plugins remain unverified. The [Csound contract](docs/archive/decisions/csound.md) records the tested runtime and dependency notices.
-
-A separate [Csound block diagnostic](native/csound/block_probe.py) accepts absolute `DAW_CSOUND_LIBRARY` for the tested Csound 7 double-sample API. It verifies host input/output buffers, frequency/gain channel readback and audio changes, finite score completion, and reset/recompile/destruction in an owned child process. It opens no audio hardware. Saved prepared Csound tracks use that library ABI in an owned worker; the explicit live mode owns a separate Csound producer and routes its fixed queue to the native callback. See [measured results and remaining gates](docs/archive/decisions/csound.md#csound-7-blockcontrol-proof-t12a2).
-
-The [Csound queue diagnostic](native/csound/stream_probe.py) adds a Csound-owned producer for the existing macOS arm64 fixed-queue ABI and compares a paced, finite consumer stream with the producer digest. Build it with `python3 native/csound/build_queue.py`, then run `DAW_CSOUND_LIBRARY=/absolute/CsoundLib64 python3 native/csound/stream_probe.py`. It uses 48 kHz, stereo 64-frame float32 queue blocks and bounded prefill/backpressure, but opens no hardware and is not connected to DAW transport or its native callback; the separate live transport now connects an owned producer through the Rust worker and callback.
-
-## Sequenced Pd instrument (schema v12)
-
-Choose **Pd · Filtered Sine** and **Add note track** in the browser, then sequence notes in the existing piano roll. The track card edits saved gain and cutoff while stopped; undo, mixer, processing, PCM import and portable ZIP all share the arrangement workflow. **Load Pd preset** accepts [the portable preset package](examples/devices/pd-sine.json); **Save Pd preset** saves its program/control state. This MVP supports one embedded vanilla Pd program at 48 kHz, with nonoverlapping monophonic notes lasting at least 64 frames. It requires a multi-instance libpd library; the ZIP embeds the program, and the reopening machine still needs that runtime.
-
-```sh
-export DAW_LIBPD_LIBRARY="$PWD/output/libpd-runtime/source/libs/libpd.dylib"
-cargo build --locked --features native-audio
-python3 examples/pd_instrument_workflow_demo.py --song --native
-```
-
-The default four-second demo checks real scheduled note pitch/gate input, note/control edits and undo, a mixed built-in/Pd/PCM arrangement, fresh-engine ZIP reopen and byte-identical unclipped WAVs. `--song` checks the full three-minute mixed arrangement through its audible final second. `--native` adds muted until-stopped loop/seek/pause/resume/Stop checks, Pd lane signal meters and worker underruns. Native DSP runs on an owned rendering worker feeding a fixed callback ring. Export runs the same note-scheduled runtime and supports up to 180 seconds. Seek/loop reset Pd/effect state without chasing notes that began before the destination. Arbitrary patches/externals, polyphony, live control edits and smooth envelopes remain follow-ups; abrupt gates can click. See the [schema-12 contract](docs/PROTOCOL.md#sequenced-pure-data-instrument-in-schema-v12).
-
-## Prepared Pure Data tracks (schema v8)
-
-Set `DAW_LIBPD_LIBRARY` to an existing absolute libpd 0.16.1 library built with multi-instance support, then run:
-
-```sh
-python3 examples/puredata_tracks_demo.py
-```
-
-The example embeds the checked-in 64-frame Pure Data patch and its `daw-offset` abstraction in two schema-v8 tracks, saves/reloads the session, and renders a fresh one-second stereo WAV. One source changes from 440 to 660 Hz at frame 24,576; the second source has zero gain but still exercises a separate patch instance. Source gain 0.5 and serial track gain 0.5 produce an expected PCM16 peak near 819. Add `--native` with a native-audio build for a bounded callback check using monitor volume zero. The C API uses the public libpd float API; input channels are zero-filled, output is stereo, and partial 64-frame blocks are trimmed to the exact saved duration.
-
-The worker compiles and prepares each source in an owned process before session commit, with a 15-second deadline. Programs and explicit abstractions are embedded; patch plus abstractions are limited to 60 KiB, with at most 16 abstractions and 64 controls per source. Names beginning `$0-` are resolved using the patch's own dollar-zero ID; other names are sent unchanged. After patch initialization, saved bases and frame-zero values are sent before DSP starts; later events are applied at 64-frame boundaries. The worker checks that each named receiver exists and accepts the message, but does not promise arbitrary native parameter readback or initialization-rate behavior. Up to four SC/Csound/Pd sources share ten seconds total duration, 512 saved points, and the existing 128 MiB decoded-audio budget. Native prepared playback requires the device to match the session rate. Set optional `DAW_LIBPD_PYTHON` and `DAW_LIBPD_WORKER` to absolute paths to select Python and the source worker. The GUI rejects schema v8. Explicit native `source_mode:"live"` supports saved Pd tracks as described below. The separate paced queue diagnostic below proves live libpd block production; native live transport uses the owned producer as described below. See the [schema-v8 protocol contract](docs/PROTOCOL.md#schema-v8-prepared-pure-data-sources) and [adapter decision record](docs/archive/decisions/pure-data.md).
-
-### Pure Data block diagnostic
-
-The separate [libpd diagnostic](native/puredata/block_probe.py) processes a checked-in patch through the public float block/message API in an owned worker. It checks 64-frame stereo input/output, a frequency/amplitude change, named message echoes and fresh-instance cleanup. It opens no hardware and remains distinct from the saved track device and any live transport. See the [pinned build and measured proof](docs/archive/decisions/pure-data.md).
-
-### Pure Data live queue diagnostic
-
-```sh
-python3 native/csound/build_queue.py
-export DAW_LIBPD_LIBRARY="$PWD/output/libpd-runtime/source/libs/libpd.dylib"
-python3 native/puredata/stream_probe.py
-DAW_TEST_LIBPD_STREAM=1 python3 -m unittest native.puredata.test_stream
-```
-
-This macOS arm64 diagnostic runs the saved patch directly through owned libpd DSP into the existing fixed queue, consumed at 48 kHz by a paced reader. It reuses the tested Csound producer bridge; its historical symbol names do not select the DSP runtime. The queue holds at most 64 stereo blocks of 64 frames, with bounded backpressure instead of overwriting unread samples. The report checks source/consumer digests, saved control events and producer lease release. A final partial block has silent padding in the queue and is trimmed in returned audio. The diagnostic leaves source gain unapplied; the integrated live transport applies it in Rust. This opens no hardware, changes no session or capabilities, and does not enable Pd GUI playback. The live transport below separately connects it to native callbacks.
-
-### Pure Data live native transport
-
-```sh
-cargo build --locked --features native-audio
-python3 native/csound/build_queue.py
-export DAW_LIBPD_LIBRARY="$PWD/output/libpd-runtime/source/libs/libpd.dylib"
-python3 examples/puredata_live_demo.py
-```
-
-The muted example saves/reloads a two-Pd-source schema-v8 project and starts `transport.play` with `source_mode:"live"`. Each source owns a separate libpd process and fixed queue; initialization and messages stay on that worker, while the Rust mixer applies saved source gain, serial gain effects and automation. The native callback consumes only the final fixed ring. Startup waits for initialization and prefill, and Stop/EOF release callback resources before reaping source workers. Finished snapshots report source/callback frame digests, owned PIDs, per-track runtime identities and cleanup. Worker failure stops the whole live session with a structured error.
-
-Live Pd requires macOS arm64, a 48 kHz default output device and the tested libpd/queue libraries. Sessions may mix Pd, SC, Csound and built-in tracks, with gain effects only. Playback is bounded to ten seconds. Ordinary playback still uses prepared PCM; live mode starts fresh DSP from the saved programs. Optional `DAW_LIBPD_QUEUE_LIBRARY` and `DAW_LIBPD_STREAM_WORKER` choose absolute bridge/worker files; `DAW_LIBPD_PYTHON` chooses an absolute executable. Pause, seek, loop and GUI-v8 imports remain unavailable for continuous live Pd. The separate `878f711` WIP checkpoint implements eligible Pd receiver edits, but native acceptance and final contract reconciliation remain unfinished; it is not the accepted schema-v12 instrument workflow. Muted callback checks do not establish acoustic delivery or sustained latency/clock drift.
+On macOS, also run native-audio Clippy/tests when changing audio or transport. Installed-runtime, FFI and hardware tests are opt-in and relevant only when those paths change. The [CI workflow](.github/workflows/ci.yml) defines the portable/macOS checks. Muted playback, meters and deterministic exports establish data/callback behavior; quiet listening is still needed for acoustic acceptance.
