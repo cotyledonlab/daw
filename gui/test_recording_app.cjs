@@ -106,3 +106,18 @@ test('actual rejected validation and stale HTTP preserve pending take for retry 
     assert.equal(s.history.undo.length,1);
   }
 });
+
+test('project input reset clears obsolete messages but preserves a rejected take and its retry message',async()=>{
+  const s=setup();
+  vm.runInContext(functions('function resetNoteProject()', 'function noteInputError('),s.ctx);
+  let cleared=false;s.$('#note-input-status').classList={remove(name){assert.equal(name,'error');cleared=true;}};
+  s.$('#note-input-status').textContent='Note entered in old-clip.';
+  s.$('#record-notes-status').textContent='2 recorded notes applied.';
+  s.ctx.resetNoteProject();
+  assert.equal(s.$('#note-input-status').textContent,'');assert.equal(cleared,true);
+  assert.match(s.$('#record-notes-status').textContent,/Select a clip/);
+  await captured(s);s.ctx.validateSession=()=> 'invalid gate';await s.ctx.toggleNative();
+  const pending=s.ctx.noteRecording.pending,message=s.$('#record-notes-status').textContent;
+  s.ctx.resetNoteProject();
+  assert.equal(s.ctx.noteRecording.pending,pending);assert.equal(s.$('#record-notes-status').textContent,message);
+});

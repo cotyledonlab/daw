@@ -613,6 +613,9 @@
     stopNoteInput();
     noteInput?.reset();
     $('#step-entry-enabled').checked = false;
+    $('#note-input-status').textContent = '';
+    $('#note-input-status').classList.remove('error');
+    if (!noteRecording?.take) $('#record-notes-status').textContent = 'Select a clip to record notes. Stop applies one undoable take.';
   }
 
   function noteInputError(error) {
