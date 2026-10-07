@@ -350,10 +350,10 @@ impl PlaybackBuffer {
             return Err("partial device frame");
         }
         let available = output.len() / self.channels;
-        if self.metronome.is_some() {
+        if let Some(metronome) = &mut self.metronome {
             let mut rendered = 0;
             for destination in output.chunks_exact_mut(self.channels) {
-                let count_sample = self.metronome.as_mut().unwrap().next_count_in();
+                let count_sample = metronome.next_count_in();
                 let frame = if let Some(click) = count_sample {
                     [click, click]
                 } else {
@@ -366,7 +366,7 @@ impl PlaybackBuffer {
                             position = start;
                         }
                     }
-                    let click = self.metronome.as_ref().unwrap().sample(position);
+                    let click = metronome.sample(position);
                     let mut frame = [[0.0; 2]; 1];
                     self.engine.as_mut().unwrap().render_block(&mut frame);
                     self.mixer_peaks
