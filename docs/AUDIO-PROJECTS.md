@@ -1,6 +1,6 @@
 # GUI audio import and portable projects
 
-Implemented 2026-10-03. The browser can import an integer PCM WAV into a new audio lane, edit its timeline placement, and save/reopen a ZIP project containing the session and its audio. Rust remains authoritative for session, clip-range and asset validation. This extends the [PCM clip contract](archive/decisions/audio-assets.md) without adding arbitrary filesystem routes.
+The browser can import an integer PCM WAV into a new audio lane, edit its timeline placement, and save/reopen a ZIP project containing the session and its audio. Rust remains authoritative for session, clip-range and asset validation. The headless asset contract below and [protocol](PROTOCOL.md#pcm-audio-clips-in-schema-v2) define PCM preparation and clip behavior.
 
 ## HTTP contract
 
@@ -37,8 +37,20 @@ Session/project operations share a project lock; export observes one consistent 
 
 If an engine connection loss/timeout leaves the commit outcome unknown, staged files are retained until Server teardown. They might belong to the committed session; automatic rollback would risk deleting active audio. The error directs the user to restart the server. Cleanup after a known successful replacement never rolls back its active assets.
 
-Missing registered files fail authoritative preparation/replacement before commit; a prepared stream already owns its decoded snapshot. ZIP saving/reopening requires the files themselves. Native until-stopped playback supports built-in instruments, the sequenced Pd preset and preloaded PCM with gain/lowpass/delay: seek/loop use memory and callbacks perform no file loading. Until-stopped controls live playback duration; WAV export retains its separate duration limit. See [seek and loop](archive/decisions/seek-loop.md) for transport reset behavior.
+Missing registered files fail authoritative preparation/replacement before commit; a prepared stream already owns its decoded snapshot. ZIP saving/reopening requires the files themselves. Native until-stopped playback supports built-in instruments, the sequenced Pd preset and preloaded PCM with gain/lowpass/delay: seek/loop use memory and callbacks perform no file loading. Until-stopped controls live playback duration; WAV export retains its separate duration limit. See [native transport](PROTOCOL.md#native-transport) for reset behavior.
 
-## Validation
+## Headless asset contract
 
-The 13 new HTTP tests cover PCM variants, v1 upgrade/version preservation, framing/authentication, stale/invalid imports, registered-path confinement, decoded budgets, transactional near-limit staging/reclamation, failed replacement preservation, concurrent revisions, unsafe ZIPs, cleanup, and reopening in a second private root with byte-identical WAV rendering. The preceding combined bridge run passed 51 tests; root's final HTTP run passed 52. These checks establish protocol/data behavior, not acoustic quality.
+A successfully loaded session's canonical parent is its project root. Initial replacement uses the process working directory; later replacements/edit batches inherit the active root. `daw play` uses the saved session's directory. Failed loads preserve the old root, session, revision and playback. The root is runtime context, never saved JSON.
+
+`source_path` is project-relative, at most 4096 UTF-8 bytes, with no absolute paths, parent traversal, backslashes or colons. Canonical asset paths must remain inside the canonical project root, including symlinks. Headless audio-session save requires a fresh destination in that same root; it leaves references unchanged and never copies assets. To relocate a headless project, copy the directory and assets together. The GUI instead owns temporary assets and portable ZIPs as described above.
+
+Only regular matching-rate mono/stereo integer PCM16/24/32 WAVs are accepted. Signed samples normalize by `2^(bits-1)`; mono duplicates into stereo and stereo channels stay separate. Source ranges must fit decoded audio; no padding, implicit looping or resampling occurs. Clip gain multiplies source/device gain before track effects and mixer. Explicit fades use the [protocol formulas](PROTOCOL.md#pcm-audio-clips-in-schema-v2). Clamp at the master; `clipped_frames` counts a frame once when either channel exceeds [-1,1].
+
+Encoded files are bounded to 32 MiB each; at most 128 unique canonical paths share immutable decoded buffers within the 128 MiB stereo-f64 budget. Declared frame counts and remaining budget are checked before allocation. A transient encoded read adds at most 32 MiB plus one byte, excluding parser overhead and any active snapshot.
+
+Mutations validate the model and final candidate assets before stopping playback and committing. Each render/play prepares a new snapshot, so changed/missing files can fail the next preparation; an already prepared stream owns its audio in memory. Rendering prepares assets before creating output. Callback clip boundaries perform no filesystem access, decoding, allocation, reference-count changes or buffer destruction.
+
+## Verification
+
+`tests/audio_clips.rs` covers PCM decoding, exact offsets/gain, path confinement, save/load and preparation failures. `gui/test_audio_projects.py` covers HTTP framing/authentication, asset ownership, budgets, transactional imports and ZIP validation. `examples/audio_project_workflow_demo.py` checks mixed PCM/instrument edits, fresh-server ZIP reopen and byte-identical WAV export. These checks establish data behavior; acoustic acceptance is tracked in [PLAN.md](PLAN.md).

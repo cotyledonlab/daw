@@ -1,7 +1,7 @@
 {
   "fixture_version": 1,
   "status": "design_only_not_loadable",
-  "description": "Reference examples for the proposed T05 timeline contract. These are not session files.",
+  "description": "Reference arithmetic and event examples for the frame-based timeline contract. These are not session files.",
   "cases": [
     {
       "id": "tempo-round-half-up",

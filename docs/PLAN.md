@@ -1,60 +1,36 @@
-# DAW roadmap
+# MVP checklist
 
-Updated 2026-10-07 after the Opus UI consistency review and plan cleanup. This file contains outstanding work and its execution order. [UI-PLAN.md](UI-PLAN.md) defines the immediate UI passes; [PROTOCOL.md](PROTOCOL.md) defines existing contracts. Completed records live in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md). The previous [roadmap](archive/PLAN-2026-10-04.md) and [UI checklist](archive/UI-PLAN-2026-10-04.md) are archived intact.
+Updated 2026-10-07. This is the only plan. Ship a small macOS arrangement DAW in which someone can make a phrase, record notes, mix a song, save/reopen it and export WAV. The implementation is delivered; close the remaining usability and listening checks before expanding features.
 
-## Destination and baseline
+## Completed
 
-Build a macOS-first arrangement DAW with dependable instruments/effects and drop-in programmable devices. Active scope is improving the existing arrangement workflow and then quantize/MIDI-file handling. Existing runtime/plugin paths are retained for compatibility; their presence does not authorize expansion. Ableton-style parity and broader studio workflows are historical direction, not current acceptance requirements.
+- [x] Rust session model, JSONL discovery and revision-checked transactional edits; deterministic stereo WAV rendering.
+- [x] Local browser editor and macOS native Play/Pause/Stop, seek/loop and until-stopped arrangement playback.
+- [x] Musical loop: 16-bar drum/bass/lead demo, new arrangements, note tracks/clips and precise piano-roll edits.
+- [x] Independent clip copies, drag/draw/move/resize, keyboard delete/duplicate and checked Undo/Redo.
+- [x] PCM WAV import, audio placement/trim/copy and portable ZIP save/load with owned assets.
+- [x] Saved mixer level/pan/mute/solo and native track/master peak meters.
+- [x] Three-minute built-in/PCM exports; fresh-engine reopen with byte-identical unclipped WAVs.
+- [x] Lowpass/delay, bypass and presets; step gain automation and exact audio clip fades.
+- [x] One sequenced Pd Filtered Sine preset with note/control editing, mixer/effects, portable reopen/export and muted native transport acceptance.
+- [x] Computer-keyboard/Web MIDI preview and stopped step entry.
+- [x] Native metronome/count-in and held-gate note overdub; atomic take application, retry/discard and whole-take Undo/Redo.
+- [x] Browser recording acceptance, including Stop/application and whole-take Undo/Redo (2026-10-04).
+- [x] UI consistency review and CSS/control geometry pass, including narrow layouts and ruler labels (2026-10-07, `afbd2b7`).
 
-The three implementation gates are delivered: a musical drum/bass/lead loop; a portable three-minute built-in/PCM song with mixer, processing, automation and fades; and one sequenced Pd instrument. Keyboard/Web MIDI preview, stopped step entry, native metronome/count-in and held-gate overdub are also delivered. These are the baseline, not active tickets. Quiet listening, physical MIDI and sustained latency validation remain open; automated and muted native evidence does not establish acoustic quality.
+These checks record delivered work and prior acceptance, not new verification performed during this documentation cleanup. Reproducible evidence lives in `tests/`, `gui/test_*` and the workflow demos in `examples/`.
 
-## Active delivery order
+## Remaining before calling the MVP accepted
 
-### 1. Restore UI consistency
+1. [ ] Clarify editing/persistence in the existing UI: distinguish applied edits from device/effect drafts and downloaded files; explain Undo disabled by drafts; make mixer Apply wording match its all-strip numeric-draft scope. Keep this a small fix and preserve typed drafts/exact values.
+2. [ ] Quietly use the app end to end: create a phrase, preview/record notes, Undo/Redo a take, import WAV, balance/process/fade the mix, save ZIP, reopen in a fresh server and listen to the exported WAV. Audition Pd gates/seek/loop when libpd is configured. Check clicks, silence and confusing or failed edits; fix observed blockers with focused regressions.
 
-Address the [Opus consistency review and source qualifications](OPUS-UI-CONSISTENCY-REVIEW.md) through the focused passes in [UI-PLAN.md](UI-PLAN.md). Pass A is implemented: CSS/control consistency and ruler-edge fixes are complete. Continue with labels/units in pass B, then passes C–D.
+Existing automated export/reopen and muted native checks are complete. Listening/composition feedback remains open; physical MIDI, measured input latency and sustained runtime clock/latency tests remain unverified and are follow-ups, not new MVP implementation gates.
 
-1. Consolidate CSS and control typography/geometry; fix undefined tokens and inconsistent statuses without changing behavior.
-2. Clarify gain stages, musical units, device names and selection/state colors while preserving exact stored values.
-3. Regroup transport, step-entry, history and mixer actions; verify stopped and playback/recording layouts.
-4. Explain draft versus applied edits and file persistence. Reconcile mixer Apply scope and track-deletion behavior in a separate checked handler pass.
+## After MVP
 
-Acceptance: coherent desktop/narrow layouts, keyboard focus and visible disabled reasons; unchanged frames/Hz and untouched gain/pan values; retained drafts and rejected takes; checked undo and portable save/reopen/export where behavior changes. Preserve readable canvas geometry and validate pointer mapping before changing SVG sizing. No full inspector or framework migration is required.
+Quantize/MIDI-file import/export can be the next feature slice when requested. Broader UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
-### 2. Quantize and MIDI-file import/export
+Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-Continue the small composition/recording slice after the consistency pass. Define supported MIDI events, tempo-map handling, note pairing and clip placement before implementation. Make unsupported data and intentional timing conversion explicit; do not silently retime existing frame-based projects.
-
-Acceptance: quantize one selected phrase with checked undo; import/export a supported MIDI phrase with explicit pitch/gate/velocity/timing behavior; preserve unrelated notes, PCM, mixer and effects; reject malformed/unsupported inputs without partial changes. Retain exact persistence and fresh-engine portable reopen/export checks. Sustain, input-device selection and physical MIDI timing remain separate follow-ups unless needed by this fixture.
-
-## Deferred possibilities — outside active scope
-
-| Order | Outstanding workflow | Initial scope |
-| --- | --- | --- |
-| 3 | Sampled instruments | Single-sample pitched instrument and user-sample drum pads using prepared PCM; basic envelopes/filter/presets. |
-| 4 | Audio recording | Input selection, arm/monitor/record, measured latency and portable takes; comping later. |
-| 5 | Clip/scenes performance | Quantized launch/stop/scenes and arrangement capture, reusing the clip scheduler and session model. |
-| 6 | Tempo-aware audio | Import resampling first; then beat-based audio, tempo following/stretch/warp, groove and reverse. Sample-rate conversion and stretching are separate slices. |
-| 7 | Studio expansion | Sends/returns/routing, freeze/resample, broader parameter automation, reliable VST3 discovery/state/editor/instruments and latency compensation. Broaden AU for a concrete musical need. |
-
-This table preserves possible later directions, not a delivery commitment or permission to implement them. Reopen a deferred slice only for a concrete user request or a demonstrated dependency of the active work.
-
-## Open validation and follow-ups
-
-- **Listening/composition:** quietly build a phrase from scratch, balance the mixed song and audition Pd gates/seek/loop boundaries. Turn observed clicks, silence or editing friction into small fixes.
-- **Input/transport:** physical Web MIDI, measured input latency, sustain/input-device selection and long-run runtime clock/latency behavior remain unverified or unimplemented. The final keyboard-recording browser check is completed in history; do not reopen it as unfinished delivery.
-- **Editing/audio polish:** multiselect/zoom, velocity lanes, waveforms, unsaved-work recovery, smooth automation ramps, other parameter lanes, live mixer edits/smoothing and peak hold. Prioritize demonstrated workflow or data-loss problems.
-- **Programmable devices:** Pd polyphony/envelopes, arbitrary patches/externals, live controls, programmable effects and a second sequenced runtime. Preserve the current 48 kHz monophonic preset limits until explicitly expanded.
-- **Separate WIP:** legacy continuous Pd receiver controls are checkpointed in `878f711`; native acceptance and contract reconciliation remain unfinished. They are separate from the delivered schema-12 note instrument.
-
-## Working rules
-
-- Measure progress by music someone can make, reopen and export. Commit completed slices at their acceptance boundary. Preserve unrelated working-tree changes.
-- Reuse Rust, JSONL, the browser bridge, checked replacement, polling and bounded snapshot undo. Keep one session model and existing capability helpers; no speculative abstraction or format migration.
-- Preserve untouched frames, Hz, gain/pan and drafts. Tempo currently changes the authoring grid without moving saved frames. Distinguish applied engine state from downloaded project files.
-- Keep structural edits stopped, failures transactional and publication exclusive. No allocation, blocking locks, I/O, process startup or foreign initialization in audio callbacks.
-- Verify relevant formatting/lint/tests and save/reopen/export at behavioral slice boundaries. Use installed-runtime/FFI/native checks when those paths change; do not rerun unrelated adapter matrices for documentation or CSS-only edits.
-- Freeze new host formats, standalone probes, AU breadth, subscriptions/MCP and broad refactors unless they fix a regression or block the active musical slice.
-- When parallel work is explicitly requested, use distinct file owners and one integration owner, particularly for `gui/app.js`. Close work through one shared musical fixture.
-
-**Next action:** UI pass B from [UI-PLAN.md](UI-PLAN.md), collecting quiet listening/composition feedback alongside it. Complete the remaining consistency passes before quantize/MIDI-file work.
+**Next action:** the small editing/persistence clarity fix, then the listening workflow. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
