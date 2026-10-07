@@ -34,7 +34,8 @@ Existing automated export/reopen and muted native checks are complete. Listening
 
 - [x] Add producer, engineer and musician prompt control through OpenCode Zen using server-side `OPENCODE_API_KEY`, relative edits and selected-track/clip scope. Producer delegates bounded specialist calls; edits reuse editor validation, checked replacement and one bounded Undo entry. Regression checks cover role/scope, stale requests, typing/playback/pending takes, rejected batches and responsive controls. A real producer created a four-note phrase in the browser; whole-batch Undo/Redo was verified.
 - [x] Add optional ElevenLabs push-to-talk transcription and spoken replies through server-side `ELEVEN_API_KEY`; review transcripts before sending. Text control works independently. Provider/bridge failure tests pass.
-- [ ] Verify live voice with a valid credential: the configured key returns HTTP 401 on `POST /v1/text-to-speech`; no successful speech/transcription or physical microphone acceptance is claimed.
+- [x] Prefer the current vetted Zen stealth candidate: refresh model availability per prompt; prefer Space Bunny, then Big Pickle, with GLM fallback when neither is listed and an explicit model override. Keep one model across producer/specialists; catalog failures retain the last selection. Focused catalog/override/delegation regressions passed; a live Space Bunny response passed the Studio operation contract.
+- [ ] Complete live voice acceptance: the studio-tour credential now passes live ElevenLabs speech/transcription roundtrip and the integrated Studio speech endpoint. Physical browser microphone acceptance remains open.
 
 The finishing and note-recording workflow demos passed ZIP/fresh-server reopen and byte-identical unclipped export; the finishing demo also passed muted native callbacks. This does not close acoustic listening acceptance. Agents currently inspect session data, not audio; runtime program/plugin-hosting expansion remains outside this slice.
 
@@ -48,4 +49,4 @@ Quantize/MIDI-file import/export can be the next feature slice when requested. B
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; retry voice after a valid ElevenLabs credential is configured. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; verify browser push-to-talk with a physical microphone using the working ElevenLabs credential. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
