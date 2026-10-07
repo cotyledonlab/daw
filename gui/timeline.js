@@ -407,11 +407,21 @@
       }
       session.tracks.forEach((track, trackIndex) => {
         const y = 36 + trackIndex * 64;
+        const clips = track.clips || [];
+        const overlaps = clips.map(c => clips.filter(other => other !== c && c.start_frame < other.start_frame + other.length_frames && other.start_frame < c.start_frame + c.length_frames).length);
+        const overlapCount = overlaps.filter(count => count > 0).length;
         node(svg, 'rect', {x:0,y,width:1000,height:64,class:'track-lane'});
         node(svg, 'text', {x:12,y:y+25,class:'lane-name'}, track.id);
         node(svg, 'text', {x:12,y:y+43,class:'ruler-text'}, track.device?.kind === 'audio' ? 'AUDIO' : track.mode === 'sequenced' ? `${track.device?.kind === 'pd_instrument' ? 'Pd instrument' : track.device?.kind || 'Instrument'} notes` : 'Continuous');
-        (track.clips || []).forEach(c => {
+        if (overlapCount) node(svg,'text',{x:12,y:y+59,class:'overlap-label'},`${overlapCount} overlapping clips`);
+        clips.forEach((c, clipIndex) => {
           const group = node(svg, 'g', {class:`timeline-clip ${selection?.trackIndex === trackIndex && selection?.clipId === c.id ? 'selected' : ''}`, 'data-focus-key':`clip:${trackIndex}:${c.id}`, 'aria-pressed':String(selection?.trackIndex === trackIndex && selection?.clipId === c.id), 'aria-label':`${track.id}, clip ${c.id}, beat ${fmt(c.start_frame)}, length ${fmt(c.length_frames)}`});
+          if (overlaps[clipIndex]) {
+            group.setAttribute('class', `${group.getAttribute('class')} overlapping`);
+            const description = `Overlaps ${overlaps[clipIndex]} other clip${overlaps[clipIndex] === 1 ? '' : 's'}. Use Selected clip to reach each clip.`;
+            group.setAttribute('aria-description', description);
+            node(group,'title',{},description);
+          }
           const x = 150+c.start_frame/spanFrames*840, width = Math.max(5,c.length_frames/spanFrames*840);
           const clipRect = node(group,'rect',{x,y:y+8,width,height:48,rx:5});
           const clipLabel = c.id;

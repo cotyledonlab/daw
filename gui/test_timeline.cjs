@@ -370,3 +370,14 @@ test('explicit clip picker selects overlapping copies without changing saved tim
   assert.equal(s.field('selectedClip').options.length,3);s.field('selectedClip').value='0:copy:overlap';s.field('selectedClip').dispatch('change');
   assert.equal(s.view.getSelection().clipId,'copy:overlap');assert.equal(JSON.stringify(s.session),before);assert.equal(s.edits.length,0);
 });
+
+test('overlapping clips are visibly marked and described; touching clips are not overlaps',()=>{
+  const s=setup(), clips=s.session.tracks[0].clips;
+  clips.push({...structuredClone(clips[0]),id:'copy'}, {...structuredClone(clips[0]),id:'next',start_frame:96000});
+  const before=JSON.stringify(s.session);s.view.render(s.session);
+  assert.match(s.clip().getAttribute('class'),/overlapping/);
+  assert.match(s.clip().getAttribute('aria-description'),/Overlaps 1 other clip/);
+  assert.equal(s.container.querySelector('.overlap-label').textContent,'2 overlapping clips');
+  assert.doesNotMatch(s.container.querySelector('[data-focus-key="clip:0:next"]').getAttribute('class'),/overlapping/);
+  assert.equal(JSON.stringify(s.session),before);assert.equal(s.edits.length,0);
+});

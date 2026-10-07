@@ -39,15 +39,18 @@
           <span id="play-state" role="status" aria-live="polite">Stopped</span>
         </div>
         <span class="transport-hint">Escape to stop</span>
-        <div class="arrangement-controls" id="beat-controls">
-          <label class="note-input-toggle"><input id="metronome-enabled" type="checkbox"> Metronome</label>
-          <label>Count-in<select id="count-in-bars"><option value="0">None</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select></label>
-          <span class="output-hint" id="beat-controls-help">4/4 click for native playback; listening only.</span>
-        </div>
+        <details class="beat-options" id="beat-controls">
+          <summary>Metronome &amp; count-in</summary>
+          <div class="arrangement-controls">
+            <label class="note-input-toggle"><input id="metronome-enabled" type="checkbox"> Metronome</label>
+            <label>Count-in<select id="count-in-bars"><option value="0">None</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select></label>
+            <span class="output-hint" id="beat-controls-help">4/4 click for native playback; listening only.</span>
+          </div>
+        </details>
       </section>
 
-      <section class="studio-panel" aria-labelledby="studio-heading">
-        <h2 id="studio-heading">Studio agents</h2>
+      <details class="studio-panel" aria-labelledby="studio-heading">
+        <summary><h2 id="studio-heading">Studio agents</h2></summary>
         <p class="output-hint">Direct the producer, sound engineer or studio musician. Prompts and session data go to OpenCode Zen; microphone recordings and spoken replies use ElevenLabs. Edits apply while stopped as one Undo entry.</p>
         <div class="arrangement-controls">
           <label>Talk to<select id="studio-role"><option value="producer">Producer · coordinate the studio</option><option value="engineer">Sound engineer · mix and processing</option><option value="musician">Studio musician · parts and takes</option></select></label>
@@ -65,7 +68,7 @@
         </div>
         <div id="studio-conversation" class="studio-conversation" role="log" aria-label="Studio conversation" aria-live="polite"></div>
         <audio id="studio-audio" controls hidden aria-label="Spoken studio reply"></audio>
-      </section>
+      </details>
 
       <section class="toolbar" aria-label="Session actions">
         <div class="toolbar-left">

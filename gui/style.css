@@ -204,6 +204,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .timeline-clip rect { fill: #225347; stroke: #4c957e; stroke-width: 1; }
 .timeline-clip { cursor: pointer; }
 .timeline-clip.selected rect { fill: #2d725e; stroke: var(--teal); stroke-width: 2; }
+.timeline-clip.overlapping > rect:first-of-type { stroke: #e3bb71; stroke-dasharray: 4 2; }
+.overlap-label { fill: #e3bb71; font: 10px var(--sans); pointer-events: none; }
 .clip-label { fill: #e0f9ed; font: 11px var(--sans); pointer-events: none; }
 .clip-note-preview { stroke: #8ac8af; stroke-width: 3; pointer-events: none; }
 .playhead { stroke: #f1d68e; stroke-width: 2; pointer-events: none; }
@@ -371,8 +373,12 @@ button:disabled, input:disabled, select:disabled { cursor: default; opacity: .52
 }
 
 /* Integrated studio prompt controls follow the existing workspace geometry. */
-.studio-panel { margin: 0 0 24px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; }
+.studio-panel { margin: 10px 0; padding: 0 16px; border: 1px solid var(--line); border-radius: 12px; }
 .studio-panel h2 { margin: 0 0 8px; font-size: 18px; }
+.studio-panel > summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
+.studio-panel > summary h2 { display: inline; margin: 0; font-size: 14px; }
+.beat-options > summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-size: 12px; color: #bbc5c0; }
+.beat-options .arrangement-controls { margin-bottom: 0; }
 .studio-panel .arrangement-controls { flex-wrap: wrap; margin: 12px 0; }
 .studio-prompt-label { display: block; margin-bottom: 6px; }
 .studio-panel textarea { box-sizing: border-box; width: 100%; padding: 10px; font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--surface, #fff); resize: vertical; }
