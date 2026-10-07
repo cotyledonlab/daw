@@ -2088,7 +2088,7 @@
 
   async function sendStudioPrompt() {
     if (studioPending || !studioConfig?.available) return;
-    const prompt = $('#studio-prompt').value.trim();
+    const submittedText = $('#studio-prompt').value, prompt = submittedText.trim();
     if (!prompt) return;
     studioPending = true; $('#studio-send').disabled = true; $('#studio-clear').disabled = true;
     $('#studio-status').textContent = 'Studio agents are working…';
@@ -2119,7 +2119,7 @@
       const reply = plan.parts.map(part=>`${part.role}: ${part.reply}`).join('\n');
       studioHistory.push({role:'user',content:prompt},{role:'assistant',content:`${reply}\nOutcome: ${resultText}`.slice(0,4000)});
       studioHistory = studioHistory.slice(-6);
-      $('#studio-prompt').value = '';
+      if ($('#studio-prompt').value === submittedText) $('#studio-prompt').value = '';
       studioMessage('Studio',resultText);
       $('#studio-status').textContent = resultText;
       if ($('#studio-spoken').checked && studioConfig.voice_available) {
@@ -2132,6 +2132,7 @@
   async function toggleStudioMic() {
     if (studioRecorder) { studioRecorder.stop(); return; }
     if (studioMicStarting || studioPending || studioTranscribing) return;
+    const originalPrompt = $('#studio-prompt').value;
     studioMicStarting = true;
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw Error('Microphone capture is unavailable in this browser. Type your prompt instead.');
@@ -2152,8 +2153,12 @@
           $('#studio-status').textContent = 'Transcribing your voice prompt…';
           const blob = new Blob(chunks,{type:mimeType});
           const response = await request('/api/studio/transcribe',{method:'POST',headers:{'Content-Type':mimeType},body:blob});
-          const result = await response.json(); $('#studio-prompt').value = result.text;
-          $('#studio-status').textContent = 'Transcript ready. Review it, then Send to studio.';
+          const result = await response.json();
+          if ($('#studio-prompt').value === originalPrompt) {
+            $('#studio-prompt').value = result.text; $('#studio-status').textContent = 'Transcript ready. Review it, then Send to studio.';
+          } else {
+            studioMessage('Voice transcript',result.text); $('#studio-status').textContent = 'Transcript ready in the conversation. Your typed prompt was preserved.';
+          }
         } catch(error) { $('#studio-status').textContent = error.message; }
         finally { studioTranscribing = false; $('#studio-mic').disabled = !studioConfig?.voice_available; $('#studio-send').disabled = !studioConfig?.available; }
       });

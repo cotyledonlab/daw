@@ -45,3 +45,25 @@ test('actual prompt handler rejects a stale response and never applies scoped co
     await s.ctx.sendStudioPrompt();assert.deepEqual(s.ctx.applied,s.song);assert.equal(s.history.undo.length,0);
   }
 });
+
+test('actual prompt handler preserves the next direction typed during inference',async()=>{
+  const s=setup();s.ctx.request=async()=>{s.$('#studio-prompt').value='Now add a counter melody';return {json:async()=>s.plan};};
+  await s.ctx.sendStudioPrompt();assert.equal(s.$('#studio-prompt').value,'Now add a counter melody');assert.equal(s.history.undo.length,1);
+});
+test('actual microphone transcription preserves newer typing and releases microphone tracks',async()=>{
+  const s=setup();let stopped=false;
+  class Recorder {
+    static isTypeSupported(){return true;}
+    constructor(){this.handlers={};this.state='inactive';}
+    addEventListener(name,callback){this.handlers[name]=callback;}
+    start(){this.state='recording';this.handlers.dataavailable({data:new Blob(['audio'])});}
+    stop(){this.state='inactive';return this.handlers.stop();}
+  }
+  Object.assign(s.ctx,{navigator:{mediaDevices:{getUserMedia:async()=>({getTracks:()=>[{stop(){stopped=true;}}]})}},MediaRecorder:Recorder,Blob,clearTimeout(){},setTimeout:()=>1,
+    studioMicStream:null,studioMicTimer:null,studioAudioUrl:null});
+  s.ctx.studioConfig.voice_available=true;s.$('#studio-audio').pause=()=>{};
+  s.ctx.request=async()=>{s.$('#studio-prompt').value='A new typed direction';return {json:async()=>({text:'Lower the melody by 3 dB'})};};
+  vm.runInContext(extract('async function toggleStudioMic()', "$('#studio-file-action').addEventListener"),s.ctx);
+  await s.ctx.toggleStudioMic();await s.ctx.studioRecorder.stop();
+  assert.equal(stopped,true);assert.equal(s.ctx.studioTranscribing,false);assert.equal(s.ctx.studioRecorder,null);assert.equal(s.$('#studio-prompt').value,'A new typed direction');assert.deepEqual(s.messages.at(-1),['Voice transcript','Lower the melody by 3 dB']);
+});

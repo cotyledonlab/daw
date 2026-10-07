@@ -64,7 +64,8 @@ def validate_plan(plan, role, scope):
     if not isinstance(operations, list) or len(operations) > MAX_OPERATIONS:
         raise StudioError('Too many studio operations.')
     for op in operations:
-        spec = CONTRACT.get(op.get('op')) if isinstance(op, dict) else None
+        name = op.get('op') if isinstance(op, dict) else None
+        spec = CONTRACT.get(name) if isinstance(name, str) else None
         if not spec or role not in spec['roles'] or set(op) != {'op', *spec['fields']}:
             raise StudioError('Agent exceeded its role or returned an unknown operation/field.')
         if scope:

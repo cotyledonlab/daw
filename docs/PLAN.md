@@ -26,6 +26,8 @@ These checks record delivered work and prior acceptance, not new verification pe
 1. [x] Clarify editing/persistence in the existing UI: distinguish applied edits from device/effect drafts and downloaded files; explain Undo disabled by drafts; make mixer Apply wording match its all-strip numeric-draft scope. Labels now distinguish in-memory edits from downloads, explain draft-blocked Undo and all-strip mixer Apply. Narrow browser layout and existing exact-value regressions checked.
 2. [ ] Quietly use the app end to end: create a phrase, preview/record notes, Undo/Redo a take, import WAV, balance/process/fade the mix, save ZIP, reopen in a fresh server and listen to the exported WAV. Audition Pd gates/seek/loop when libpd is configured. Check clicks, silence and confusing or failed edits; fix observed blockers with focused regressions.
 
+Browser validation feedback now appears beside the note/audio fields (reproduce with a note ending beyond its clip), and the explicit clip picker reaches overlapping copies without moving saved frames. Focused timeline regressions verify both. The earlier Studio HTTP 403 was corrected by the provider HTTP client; real producer composition and producer-to-engineer relative mixing passed.
+
 Existing automated export/reopen and muted native checks are complete. Listening/composition feedback remains open; physical MIDI, measured input latency and sustained runtime clock/latency tests remain unverified and are follow-ups, not new MVP implementation gates.
 
 ## Requested integrated studio

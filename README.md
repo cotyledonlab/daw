@@ -13,7 +13,7 @@ cargo build --locked --features native-audio
 python3 gui/server.py
 ```
 
-The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
+The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip on the timeline or in **Selected clip** (including overlapping copies) to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
 
 **Play** starts native playback and pauses/resumes it; **Stop** or Escape releases playback. Structural edits require stopped playback. Eligible arrangements play until stopped, with temporary seek/loop controls. Native note/audio playback requires the default device rate to match the session rate.
 

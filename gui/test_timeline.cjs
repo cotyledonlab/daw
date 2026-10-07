@@ -359,3 +359,14 @@ test('studio draft guard detects exact tempo, clip, note and audio typing withou
     }
   }
 });
+
+test('rejected note feedback stays beside note fields, survives redraw and preserves typed input',()=>{
+  const s=setup();s.field('noteStart').value='3';s.field('noteLength').value='2';s.action('addNote');
+  const feedback=s.container.querySelector('.note-edit-status');assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/fit|inside/i);assert.equal(s.field('noteLength').value,'2');assert.equal(s.edits.length,0);
+  s.view.updateTransport({frame:2000});assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/fit|inside/i);
+});
+test('explicit clip picker selects overlapping copies without changing saved timing or dispatching edits',()=>{
+  const s=setup();const duplicate=structuredClone(s.session.tracks[0].clips[0]);duplicate.id='copy:overlap';s.session.tracks[0].clips.push(duplicate);const before=JSON.stringify(s.session);s.view.render(s.session);
+  assert.equal(s.field('selectedClip').options.length,3);s.field('selectedClip').value='0:copy:overlap';s.field('selectedClip').dispatch('change');
+  assert.equal(s.view.getSelection().clipId,'copy:overlap');assert.equal(JSON.stringify(s.session),before);assert.equal(s.edits.length,0);
+});

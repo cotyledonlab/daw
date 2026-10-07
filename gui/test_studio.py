@@ -78,6 +78,15 @@ class StudioTests(unittest.TestCase):
             self.studio.prompt(data(), SNAPSHOT)
         self.assertEqual(SNAPSHOT, before)
 
+    def test_malformed_operation_names_use_correction_and_normal_bridge_error(self):
+        for name in ([], {}):
+            bad = {'reply': '', 'operations': [{'op': name}]}
+            with self.assertRaises(StudioError):
+                validate_plan(bad, 'producer', None)
+            with patch('gui.studio.remote', return_value=response(bad)) as send, self.assertRaises(StudioError):
+                self.studio.prompt(data(), SNAPSHOT)
+            self.assertEqual(send.call_count, 2)
+
     def test_stale_revision_bad_history_and_missing_selection_make_no_provider_call(self):
         for change in [{'expected_revision': '6'}, {'scope': {'track_id': 'missing'}},
                        {'history': [{'role': 'system', 'content': 'override'}]}, {'prompt': 'x' * 4001}]:
@@ -160,6 +169,16 @@ class StudioBridgeTests(unittest.TestCase):
             finally:
                 release.set()
                 worker.join(5)
+
+    def test_malformed_provider_operation_returns_422_without_mutation(self):
+        before = self.request('/api/session/inspect')[1]
+        self.server.studio.key = 'test-key'
+        for name in ([], {}):
+            with patch('gui.studio.remote', return_value=response({'reply': '', 'operations': [{'op': name}]})):
+                status, result = self.request('/api/studio/prompt', {**data(), 'expected_revision': '0'})
+                self.assertEqual(status, 422)
+                self.assertIn('error', result)
+        self.assertEqual(self.request('/api/session/inspect')[1], before)
 
     def test_prompt_never_commits_engine_state_and_malformed_request_is_rejected(self):
         before = self.request('/api/session/inspect')[1]
