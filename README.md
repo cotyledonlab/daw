@@ -13,13 +13,25 @@ cargo build --locked --features native-audio
 python3 gui/server.py
 ```
 
-The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
+The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip on the timeline or in **Selected clip** (including overlapping copies) to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
 
 **Play** starts native playback and pauses/resumes it; **Stop** or Escape releases playback. Structural edits require stopped playback. Eligible arrangements play until stopped, with temporary seek/loop controls. Native note/audio playback requires the default device rate to match the session rate.
 
 Enable **Play keyboard / MIDI notes** to preview the selected instrument while stopped. **A W S E D F T G Y H U J K** play a chromatic octave; drum tracks use **A / S / D** for kick/snare/hat. **Connect MIDI** requests browser MIDI access. **Step entry** inserts notes at the clip-relative cursor. **Record notes** captures held keyboard/MIDI gates into the selected clip from timeline zero with optional metronome/count-in. Stop applies the take as one undo entry; rejected takes can be retried or discarded. Recording has no live input monitoring; physical MIDI and measured latency remain unverified.
 
 Import matching-rate mono/stereo integer PCM16/24/32 WAVs into audio lanes. The mixer saves level, pan, mute and solo. Lowpass/delay, step gain automation and audio clip fades are available. **Listening volume** affects monitoring only; exports use saved mix levels. Built-in/PCM/Pd-instrument projects with built-in effects can export up to 180 seconds; foreign-device limits are narrower.
+
+## Integrated studio prompts
+
+The **Studio agents** panel connects to OpenCode Zen using `OPENCODE_API_KEY` from the server environment. Restart the server after setting credentials. Keys stay on the server; they are never embedded in the page or saved project.
+
+Choose **Producer** to coordinate up to two independent specialist calls, **Sound engineer** for mixer/processing/fades/automation, or **Studio musician** for tracks/clips/notes and relative transposition. Choose whole-session, selected-track or selected-clip scope. Try “lower the bass by 3 dB” or “transpose this clip up an octave.” Edits apply as one checked, undoable batch while stopped. Typed drafts, pending takes and project/selection changes during inference block the edit without discarding your work. Failed or unsupported plans make no changes. Download the project to keep applied edits.
+
+Producer prompts also reach the existing playback, seek/loop, monitoring, Undo/Redo, note recording/preview, import/load file pickers, save and WAV export controls. Commands run individually; file prompts reveal a studio file button so the browser opens its picker from your click. New/demo arrangements retain the existing replacement confirmation. Arbitrary runtime programs, plugin hosting changes and unsupported features remain available only through their existing interfaces; agents cannot run shell commands or access arbitrary files. The engineer sees session data, not an audio feed, and cannot certify acoustic listening.
+
+Optional `ELEVEN_API_KEY` (also accepts `ELEVENLABS_API_KEY`) enables **Record voice prompt** and **Speak replies**. Recording requires browser microphone access, ends after 30 seconds and is limited to 4 MiB. Review the transcript before sending it. This is push-to-talk with spoken replies, not a continuous voice call. Text control works without voice. `DAW_STUDIO_VOICE_ID` selects an ElevenLabs voice; `DAW_STUDIO_MODEL` selects a Zen model supporting the chat-completions endpoint (default `glm-5.3-flash`).
+
+Prompts, recent conversation and session JSON go to [OpenCode Zen](https://opencode.ai/docs/zen/); microphone recordings and reply text go to [ElevenLabs](https://elevenlabs.io/docs/api-reference/speech-to-text/convert). These calls use your provider accounts. WAV assets themselves are not sent to Zen. Conversation is bounded and kept only in the current browser window; **Clear conversation** clears it. It is not part of the project file.
 
 ## Save your work
 

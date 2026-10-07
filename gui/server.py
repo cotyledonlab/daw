@@ -14,8 +14,10 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import webbrowser
 try:
+    from .studio import Studio
     from .audio_projects import AudioProjects, LIMITS, MAX_AUDIO_BODY, MAX_PROJECT_BODY, metadata, strict_json
 except ImportError:
+    from studio import Studio
     from audio_projects import AudioProjects, LIMITS, MAX_AUDIO_BODY, MAX_PROJECT_BODY, metadata, strict_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +142,7 @@ class Server(ThreadingHTTPServer):
     daemon_threads = False
 
     def __init__(self, binary, port=0):
+        self.studio = Studio()
         self.token = secrets.token_urlsafe(32)
         self.project_lock = threading.RLock()
         self.asset_directory = tempfile.TemporaryDirectory(prefix="daw-project-")
@@ -176,7 +179,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-" + self.server.token + "'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-" + self.server.token + "'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
         for key, value in (extra or {}).items():
             self.send_header(key, str(value))
         self.end_headers()
@@ -201,6 +204,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.authorized(api=self.path.startswith("/api/")):
             return
+        if self.path == "/api/studio":
+            self.send_json(200, self.server.studio.status())
+            return
         if self.path == "/api/project":
             try:
                 with self.server.project_lock:
@@ -224,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/live.js": ("live.js", "text/javascript; charset=utf-8"),
+                  "/studio.js": ("studio.js", "text/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
                   "/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
@@ -247,8 +254,39 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorized(api=True):
             return
+        if self.path in ("/api/studio/prompt", "/api/studio/speak", "/api/studio/transcribe"):
+            self._post_studio()
+            return
         with self.server.project_lock:
             self._post_locked()
+
+    def _post_studio(self):
+        try:
+            mime = self.headers.get("Content-Type", "").split(";")[0].strip()
+            if self.path == "/api/studio/transcribe":
+                body = self.read_body(4 * 1024 * 1024)
+                if body is not None:
+                    self.send_json(200, self.server.studio.transcribe(body, mime))
+                return
+            if mime != "application/json":
+                raise ValueError("Expected application/json.")
+            body = self.read_body(MAX_BODY)
+            if body is None:
+                return
+            data = strict_json(body)
+            if not isinstance(data, dict):
+                raise ValueError("Expected a JSON object.")
+            if self.path == "/api/studio/speak":
+                self.send_bytes(200, self.server.studio.speak(data), "audio/mpeg")
+                return
+            validate_revision(data.get("expected_revision"))
+            # Snapshot under the project lock, then release it during network I/O.
+            # A slow provider must never block Stop, saves or engine polling.
+            with self.server.project_lock:
+                snapshot = self.server.engine.call("session.inspect")
+            self.send_json(200, self.server.studio.prompt(data, snapshot))
+        except (ValueError, EngineError) as error:
+            self.send_json(422, {"error": str(error)})
 
     def read_body(self, limit):
         lengths = self.headers.get_all("Content-Length", [])

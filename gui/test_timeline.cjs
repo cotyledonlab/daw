@@ -350,3 +350,23 @@ test('Pd piano roll uses normal precise note editing and displays monophonic con
   assert.deepEqual(JSON.parse(JSON.stringify(env.edits[0].patch)),{velocity:0.723456789});
   env.view.setState({locked:true}); assert.equal(env.button('addNote').disabled,true);
 });
+
+test('studio draft guard detects exact tempo, clip, note and audio typing without consuming it',()=>{
+  for(const kind of ['sine','audio']){
+    const s=setup(kind);assert.equal(s.view.hasDrafts(),false);
+    for(const key of ['tempo','clipStart','clipLength',kind==='audio'?'audioGain':'velocity']){
+      const value=s.field(key).value;s.field(key).value='';assert.equal(s.view.hasDrafts(),true);assert.equal(s.field(key).value,'');s.field(key).value=value;assert.equal(s.view.hasDrafts(),false);
+    }
+  }
+});
+
+test('rejected note feedback stays beside note fields, survives redraw and preserves typed input',()=>{
+  const s=setup();s.field('noteStart').value='3';s.field('noteLength').value='2';s.action('addNote');
+  const feedback=s.container.querySelector('.note-edit-status');assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/fit|inside/i);assert.equal(s.field('noteLength').value,'2');assert.equal(s.edits.length,0);
+  s.view.updateTransport({frame:2000});assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/fit|inside/i);
+});
+test('explicit clip picker selects overlapping copies without changing saved timing or dispatching edits',()=>{
+  const s=setup();const duplicate=structuredClone(s.session.tracks[0].clips[0]);duplicate.id='copy:overlap';s.session.tracks[0].clips.push(duplicate);const before=JSON.stringify(s.session);s.view.render(s.session);
+  assert.equal(s.field('selectedClip').options.length,3);s.field('selectedClip').value='0:copy:overlap';s.field('selectedClip').dispatch('change');
+  assert.equal(s.view.getSelection().clipId,'copy:overlap');assert.equal(JSON.stringify(s.session),before);assert.equal(s.edits.length,0);
+});

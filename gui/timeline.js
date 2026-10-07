@@ -23,13 +23,16 @@
       <p class="arrangement-status" role="status" aria-live="polite"></p>
       <p class="loop-status" role="status" aria-live="polite">Loop off</p>
       <div class="timeline-scroll"><svg class="arrangement-svg" role="group" aria-label="Track lanes and beat ruler"></svg></div>
+      <div class="arrangement-controls"><label>Selected clip<select data-field="selectedClip" aria-label="Select any clip, including overlapping copies"></select></label></div>
       <div class="arrangement-controls clip-creator"><label>Note track<select data-field="track"></select></label><label>Insert at (beat)<input data-field="insertBeat" type="number" min="0" step="0.25" value="0"></label><button data-action="addClip" class="button button-quiet">Add 4-beat clip</button></div>
       <section class="clip-editor" hidden><h3 class="clip-heading"></h3>
         <div class="arrangement-controls"><label>Clip start (beat)<input data-field="clipStart" type="number" min="0" step="0.25"></label><button data-action="moveClip" class="button button-quiet">Move clip</button><label>Clip length (beats)<input data-field="clipLength" type="number" min="0.001" step="0.25"></label><button data-action="resizeClip" class="button button-quiet">Resize clip</button><button data-action="duplicateClip" class="button button-quiet">Duplicate clip</button><button data-action="deleteClip" class="button button-quiet">Delete clip</button></div>
         <div class="timeline-scroll note-roll"><svg class="piano-roll-svg" role="group" aria-label="Piano roll; select a note to edit"></svg></div>
         <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button></div>
+        <p class="clip-edit-status note-edit-status" role="status" aria-live="polite" hidden></p>
         <div class="arrangement-controls step-controls"><label>Step position in clip (beat)<input data-field="stepBeat" type="number" min="0" step="0.25" value="0"></label><label>Gate (grid steps)<input data-field="stepGate" type="number" min="1" max="64" step="1" value="1"></label><output class="step-readout" aria-live="polite"></output></div>
         <div class="arrangement-controls audio-controls" hidden><label class="audio-source-info">Source<output class="audio-source-path"></output></label><label>Source offset (frames)<input data-field="audioOffset" type="number" min="0" step="1"></label><label>Clip gain<input data-field="audioGain" type="number" min="0" max="1" step="0.05"></label><label>Fade in (frames)<input data-field="audioFadeIn" type="number" min="0" step="1"></label><label>Fade out (frames)<input data-field="audioFadeOut" type="number" min="0" step="1"></label><button data-action="editAudioClip" class="button button-quiet">Update audio clip</button></div>
+        <p class="clip-edit-status audio-edit-status" role="status" aria-live="polite" hidden></p>
         <p class="audio-fade-help arrangement-help" hidden>Linear fades reach silence at the clip edges. 0 turns a fade off; the two fades together must fit inside the clip.</p>
         <p class="note-device-help arrangement-help"></p>
         <p class="note-pitch-detail arrangement-help" aria-live="polite"></p>
@@ -117,6 +120,9 @@
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
     }
     function showStatus() {
+      for (const [selector, audio] of [['.note-edit-status',false],['.audio-edit-status',true]]) {
+        const feedback = find(selector); feedback.textContent = localMessage; feedback.hidden = !localMessage || (clip()?.kind === 'audio') !== audio;
+      }
       status.textContent = localMessage || (options.locked ? 'Editing is locked during playback or a session operation.' : 'Edits are checked and applied to the session before they appear here.');
       if (!localMessage && options.transportAvailable === false) status.textContent += ' Start native playback or pause it to enable seek and loop controls.';
     }
@@ -255,7 +261,7 @@
       const focusKey = rememberFocus();
       roll.replaceChildren();
       rollLayout = null;
-      const selected = clip(); find('.clip-editor').hidden = !selected;
+      const selected = clip(); field('selectedClip').value = selection ? `${selection.trackIndex}:${selection.clipId}` : ''; find('.clip-editor').hidden = !selected;
       const audio = selected?.kind === 'audio';
       for (const selector of ['.note-roll', '.note-controls', '.step-controls', '.note-device-help', '.note-pitch-detail', '.note-help']) find(selector).hidden = audio;
       find('.audio-controls').hidden = !audio;
@@ -433,6 +439,11 @@
       loopOverlay = node(svg,'rect',{y:30,height:timelineHeight-30,class:'loop-region',visibility:'hidden'});
       updateLoop(options.loop || null, options.pending === true, true);
       playhead = node(svg,'line',{y1:0,y2:height,class:'playhead','aria-hidden':'true'});
+      field('selectedClip').replaceChildren();
+      const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Select a clip'; field('selectedClip').append(placeholder);
+      session.tracks.forEach((track,index) => (track.clips || []).forEach(clip => {
+        const option = document.createElement('option'); option.value = `${index}:${clip.id}`; option.textContent = `${track.id} / ${clip.id} · beat ${fmt(clip.start_frame)}`; field('selectedClip').append(option);
+      }));
       const oldTrack = field('track').value; field('track').replaceChildren();
       session.tracks.forEach((track,index) => {
         if (track.mode !== 'sequenced' || !noteDevices.includes(track.device?.kind)) return;
@@ -442,6 +453,12 @@
       drawRoll(); syncDisabled(); updateTransport({frame:options.frame}); restoreFocus(focusKey);
     }
     container.addEventListener('change', event => {
+      if (event.target.dataset?.field === 'selectedClip') {
+        const key = event.target.value, separator = key.indexOf(':');
+        const index = Number(key.slice(0,separator)), id = key.slice(separator+1);
+        if (separator >= 0 && session?.tracks[index]?.clips?.some(clip=>clip.id === id)) selectClip(index,id);
+        return;
+      }
       if (['stepBeat','stepGate','grid'].includes(event.target.dataset?.field)) drawRoll();
     });
     container.addEventListener('click', event => {
@@ -519,7 +536,10 @@
         const pitch = value('pitch');
         if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) throw new Error('MIDI pitch must be an integer from 0 to 127.');
         const note = {start_frame,duration_frames:end_frame-start_frame,frequency_hz:440*Math.pow(2,(pitch-69)/12),velocity:value('velocity')};
-        if (action === 'addNote') return edit(action,{note});
+        if (action === 'addNote') {
+          if (note.duration_frames <= 0 || start_frame < 0 || end_frame > selected.length_frames) throw new Error('Note gates must have positive duration and end inside the clip.');
+          return edit(action,{note});
+        }
       } catch (error) { reportError(error); }
     });
     container.addEventListener('keydown', event => {
@@ -531,7 +551,14 @@
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd' && clip()) { event.preventDefault(); edit('duplicateClip',{start_frame:clip().start_frame+clip().length_frames}); }
     });
-    return {render,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
+    function hasDrafts() {
+      if (session && Number(field('tempo').value) !== (session.tempo_milli_bpm || 120000) / 1000) return true;
+      const selected = clip();
+      if (selected && ['clipStart','clipLength'].some((key, i) => String(field(key).value) !== String(fmt(i ? selected.length_frames : selected.start_frame)))) return true;
+      const baseline = selected?.kind === 'audio' ? audioBaseline : noteBaseline;
+      return Boolean(baseline && Object.entries(baseline).some(([key, text]) => String(field(key).value) !== text));
+    }
+    return {hasDrafts,render,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
   }
   window.ArrangementView = {create};
 })();
