@@ -1,6 +1,14 @@
-# Historical implementation tickets
+# Historical implementation tickets and delivery records
 
-Archived on 2026-10-03 when the roadmap changed to prioritize a usable sequencer. This preserves the original completion records and adapter acceptance contracts. Historical “next”, pending statuses, model assignments and prerequisites are not the current execution order; use [PLAN.md](PLAN.md). Evidence here describes earlier checks, not verification repeated during the roadmap review.
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../PLAN.md) and [current contracts](../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+Archived on 2026-10-03 when the roadmap changed to prioritize a usable sequencer. This preserves the original completion records and adapter acceptance contracts. Historical “next”, pending statuses, model assignments and prerequisites are not the current execution order; use [PLAN.md](../PLAN.md). Evidence here describes earlier checks, not verification repeated during the roadmap review.
+
+Archive index, updated 2026-10-07:
+
+- [2026-10-04 roadmap snapshot](PLAN-2026-10-04.md): delivered gates 1–3, mixer/processing/finishing, portable songs and the original follow-up order.
+- [2026-10-04 UI checklist snapshot](UI-PLAN-2026-10-04.md): completed editing/workspace/device/input UI and its acceptance records. Its final recording-check “pending” line is superseded by the completed 2026-10-04 recording entry below.
+- [2026-10-07 Opus consistency review](../OPUS-UI-CONSISTENCY-REVIEW.md): completed review and source qualifications; proposed fixes remain open in [UI-PLAN.md](../UI-PLAN.md).
 
 # DAW plan and implementation tickets
 
@@ -40,7 +48,7 @@ Scripts run outside the engine initially, using JSONL from any language. Later a
 - Offline stereo PCM16 rendering, 0.001–60 seconds, clipping report, fresh output files only.
 - Python client, tests, CI definition, protocol documentation.
 
-See [PROTOCOL.md](PROTOCOL.md) for the exact contract. No live audio, plugins, transport, clips, or external runtimes are implemented yet.
+See [PROTOCOL.md](../PROTOCOL.md) for the exact contract. No live audio, plugins, transport, clips, or external runtimes are implemented yet.
 
 ## S1: minimal GUI brought forward
 
@@ -60,7 +68,7 @@ Verified in the browser: audio context running at 48 kHz, nonzero measured outpu
 
 ## Working method
 
-Use GPT-6 Luna for bounded tickets. Supply the ticket ID, prerequisites, named files, current protocol, and verification command. Complete one logical ticket per commit and update its status here. Do not implement adjacent tickets speculatively. Run the checks in [AGENTS.md](../AGENTS.md).
+Use GPT-6 Luna for bounded tickets. Supply the ticket ID, prerequisites, named files, current protocol, and verification command. Complete one logical ticket per commit and update its status here. Do not implement adjacent tickets speculatively. Run the checks in the then-current `AGENTS.md` (subsequently removed in the 2026-10-05 checkpoint).
 
 Parallelize tests/examples/docs only with stable interfaces and separate file ownership. One owner integrates code. A stronger model reviews schema changes, real-time concurrency, FFI, and plugin lifecycle. These are technical review checkpoints, not extra user-approval requirements. Ask the user only when a product decision or blocked action requires it.
 
@@ -172,7 +180,7 @@ The C++ effect probe handles separate controllers/connections, bounded opaque st
 
 Turn the tested C++ child into an offline processor for prepared track audio, bounded normalized automation, and opaque component/controller state. Validate exact bundle-path/CID identity, supported stereo layout, 48 kHz rate, and state limits before output creation. Add strict session/protocol shapes with the working adapter, preserve revision rollback and no-overwrite outputs, and keep portable builds independent of native SDK tooling. Reject unsupported events, restart/reconfiguration requests, and unavailable hosts with structured errors. Acceptance: a scripted DAW session renders a track through the known effect, automation changes samples, save/load restores state, failures preserve session/revision and clean partial outputs, and owned worker timeout/crash does not kill the controller. No live plugin capability or editor claim.
 
-Implemented schema-v4 serial track VST3 effects through the owned C++ child, with exact class identity, normalized saved parameter points, captured component/controller state, and transactional foreign preparation. Offline stems preserve headroom and plugin work precedes WAV creation. Portable builds reject foreign preparation explicitly; native playback stays disabled for plugin sessions. First limits are 48 kHz, zero latency, no events, ten-second render, 8 effects, 64 parameters/effect, and 64 KiB/state. See [protocol](PROTOCOL.md) and [adapter record](decisions/vst3-adapter.md). GUI remains v1-only.
+Implemented schema-v4 serial track VST3 effects through the owned C++ child, with exact class identity, normalized saved parameter points, captured component/controller state, and transactional foreign preparation. Offline stems preserve headroom and plugin work precedes WAV creation. Portable builds reject foreign preparation explicitly; native playback stays disabled for plugin sessions. First limits are 48 kHz, zero latency, no events, ten-second render, 8 effects, 64 parameters/effect, and 64 KiB/state. See [protocol](../PROTOCOL.md) and [adapter record](decisions/vst3-adapter.md). GUI remains v1-only.
 
 ### T09d: native effect ownership and callback integration — complete (experimental)
 
@@ -318,7 +326,7 @@ Verification: all nine block-diagnostic tests pass, including real-library signa
 
 Schema v7 adds embedded CSD sources, named scalar control bases and 64-frame-aligned saved step events. Session load/replacement prepares finite stereo float64 PCM through an owned Python/ctypes worker before commit; Rust then routes the cached PCM through source/track gain and the existing render/native prepared-playback paths. Preparation requires an explicit absolute `DAW_CSOUND_LIBRARY` using the tested Csound 7 double-sample ABI. Saved controls are set after `csoundStart`, before the first perform call, so initialization-rate semantics are not guaranteed. Final partial 64-frame blocks are trimmed to the exact duration. Explicit live DSP and live scalar edits are described by T12a3b2a/b; T12a3b3 adds the constrained GUI schema-v7 workflow below. Standalone `csound.render` remains a separate PCM16 job.
 
-Verification: six Rust schema/transaction tests and all nine Python source-worker tests pass, including three real Csound 7 cases, mixed SC/Csound preparation, shared source limits, worker deadline/descendant cleanup and state preservation. The two-source demo produces 440/660 Hz audio at a peak of 819; muted native playback submitted 2048 callback frames and released resources. This is prepared-audio and callback evidence, not acoustic proof. GUI bridge tests pass (27), as do the SuperCollider source tests (10; one optional hardware test skipped). Portable and all-feature Rust fmt/clippy/tests passed. See [the schema-v7 contract](PROTOCOL.md#schema-v7-prepared-csound-sources) and [Csound decision record](decisions/csound.md#schema-v7-saved-csound-sources-t12a3a).
+Verification: six Rust schema/transaction tests and all nine Python source-worker tests pass, including three real Csound 7 cases, mixed SC/Csound preparation, shared source limits, worker deadline/descendant cleanup and state preservation. The two-source demo produces 440/660 Hz audio at a peak of 819; muted native playback submitted 2048 callback frames and released resources. This is prepared-audio and callback evidence, not acoustic proof. GUI bridge tests pass (27), as do the SuperCollider source tests (10; one optional hardware test skipped). Portable and all-feature Rust fmt/clippy/tests passed. See [the schema-v7 contract](../PROTOCOL.md#schema-v7-prepared-csound-sources) and [Csound decision record](decisions/csound.md#schema-v7-saved-csound-sources-t12a3a).
 
 **T12a3b1 — Csound queue diagnostic — implemented.** The macOS arm64 producer uses the existing SC queue ABI without changing its layout. An owned Csound worker copies 64-frame stereo double blocks, checks and converts them to float32 at 48 kHz, then publishes with exclusive leases and bounded full-queue retry. A separate paced diagnostic consumer waits for up to four published blocks and verifies exact frame count and matching producer/consumer digests. The 15-second probe has bounded logs/reports and no hardware audio or DAW transport. One installed-runtime run consumed 750 blocks/48,000 frames with matching SHA-256 `553babc97e5c75361f148f6e166086d7ffde91fa2d60f230baa033b7664634cb`; frequency/gain changed from 440/0.1 to 660/0.05. Backpressure wait count is machine-dependent. See [the queue diagnostic record](decisions/csound.md#csound-producer-queue-diagnostic-t12a3b1).
 
@@ -430,7 +438,7 @@ Likely files: `gui/editor.js`, `gui/app.js`, `gui/index.html`, `gui/style.css`, 
 
 Close the short list of editor/transport correctness and usability gaps before increasing device scope:
 
-- **Make the workspace read as a sequencer.** Follow [UI-PLAN.md](UI-PLAN.md): prioritize the arrangement and persistent transport, consolidate track creation, make clip placement explicit, keep selection/keyboard focus stable, and put validation beside the selected editor. Move settings and device detail out of the main composition flow. Verify readable desktop and narrow-window layouts. This is a focused pass over existing controls; drag editing, waveforms and a panel framework can follow.
+- **Make the workspace read as a sequencer.** Follow [UI-PLAN.md](../UI-PLAN.md): prioritize the arrangement and persistent transport, consolidate track creation, make clip placement explicit, keep selection/keyboard focus stable, and put validation beside the selected editor. Move settings and device detail out of the main composition flow. Verify readable desktop and narrow-window layouts. This is a focused pass over existing controls; drag editing, waveforms and a panel framework can follow.
 
 - **Preserve untouched data.** Frames remain authoritative. Round absolute tick positions once, snap in tick space, and do not re-quantize untouched notes after changing tempo or editing another field. Display off-grid timing honestly. Use A4=440 Hz/12-TET only for explicit pitch edits; non-12-TET saved Hz must remain unchanged when editing velocity/timing or saving. Add off-grid timing and microtonal load/edit/save cases to the workflow regression.
 - **Keep clip operations non-destructive.** Notes remain clip-relative, duplicates are independent deep copies, and same-pitch overlaps are allowed. The current schema cannot represent notes beyond a clip end, so keep rejecting a resize that would cut a note gate; do not silently hide, trim or delete it. Make that reason visible. Existing half-open clip and voice rules remain authoritative.
@@ -492,24 +500,24 @@ Three GPT-6.1 Sol agents at medium reasoning implemented the editor model/histor
 
 Verified: 33 Node player/editor/history tests; 38 HTTP bridge tests; a 481-pixel browser layout with no page overflow; Rust format/native Clippy/native tests; real-browser clip duplication, note-pitch changes, undo/redo, track/clip/note creation and fixture import; muted native play/pause/seek/loop/stop with frame-48000 paused seek acknowledgment. All-feature engine build restored after native checks. No acoustic quality claim or installed-runtime regression claim is made by these checks. Editing uses fields/buttons rather than drag gestures; visual polish, recording and richer instruments remain later work. The 32-second demo saves/reloads through the engine and renders byte-identical stereo PCM16 WAVs with zero clipping. Browser save/export were exercised, but the in-app browser did not provide a download-event artifact for independent file inspection.
 
-The requested Opus 5.5 review completed through pi's OpenCode provider after the user selected OpenCode. The full response is preserved in [OPUS-REVIEW.md](OPUS-REVIEW.md). The earlier OpenRouter transfer was rejected and was not performed.
+The requested Opus 5.5 review completed through pi's OpenCode provider after the user selected OpenCode. The full response is preserved in [OPUS-REVIEW.md](reviews/OPUS-REVIEW.md). The earlier OpenRouter transfer was rejected and was not performed.
 
 Accepted feedback: move drums/simple synth ahead of user-asset packaging; bring practical built-in looping forward; explicitly preserve untouched frame/Hz data; keep snapshot undo; use one musical workflow gate; defer waveforms, velocity lanes, automatic restart and infrastructure. The review also supports the existing separate playhead updates and field-based velocity editing. Keep the current shared session helpers rather than introduce another canonical model or broad schema migration. Clip-end hiding conflicts with the engine schema, so retain non-destructive resize rejection instead. Stop & edit is an explicit next-patch affordance, not a claim that current playback editing is already supported.
 
-The user clarified that the desired external critique was UI/UX/usability. A second Opus 5.5 review completed through OpenCode after explicit approval for the demo screenshots and layout source; the full response is in [OPUS-UI-REVIEW.md](OPUS-UI-REVIEW.md). Its focused recommendations are reconciled in [UI-PLAN.md](UI-PLAN.md): sticky transport, arrangement-first hierarchy, contextual inspectors, readable canvas geometry, stable focus, local persistent feedback and explicit clip placement. Existing mute/solo scope and the stored velocity representation are unchanged. Review evidence is a narrow screenshot plus source; a desktop visual pass remains part of implementation verification.
+The user clarified that the desired external critique was UI/UX/usability. A second Opus 5.5 review completed through OpenCode after explicit approval for the demo screenshots and layout source; the full response is in [OPUS-UI-REVIEW.md](reviews/OPUS-UI-REVIEW.md). Its focused recommendations are reconciled in [UI-PLAN.md](../UI-PLAN.md): sticky transport, arrangement-first hierarchy, contextual inspectors, readable canvas geometry, stable focus, local persistent feedback and explicit clip placement. Existing mute/solo scope and the stored velocity representation are unchanged. Review evidence is a narrow screenshot plus source; a desktop visual pass remains part of implementation verification.
 
 ## Immediate next task
 
-Start **M1d** with the unchanged-field pitch/timing regression and focused [UI plan](UI-PLAN.md): editing trust, then arrangement-first hierarchy. Built-in until-stopped transport work can proceed independently once the Stop & edit behavior is agreed in the UI. Then implement **M2a** drums and **M2b** synth as separate device slices. Independent fixture/preset/UI work can run in parallel once the concrete saved-device contracts are settled. Full user-audio import/project packaging is M3. Avoid new runtime adapters, render subscriptions and wholesale schema changes as prerequisites.
+Start **M1d** with the unchanged-field pitch/timing regression and focused [UI plan](../UI-PLAN.md): editing trust, then arrangement-first hierarchy. Built-in until-stopped transport work can proceed independently once the Stop & edit behavior is agreed in the UI. Then implement **M2a** drums and **M2b** synth as separate device slices. Independent fixture/preset/UI work can run in parallel once the concrete saved-device contracts are settled. Full user-audio import/project packaging is M3. Avoid new runtime adapters, render subscriptions and wholesale schema changes as prerequisites.
 
 
 # Sequencer UI plan
 
-Updated 2026-10-03. This is the UI workstream for [M1d in PLAN.md](PLAN.md#m1d--make-the-current-sequencer-practical-next-patch). It narrows the next interface pass; it does not add an engine rewrite or another product milestone.
+Updated 2026-10-03. This is the UI workstream for [M1d in PLAN.md](../PLAN.md#m1d--make-the-current-sequencer-practical-next-patch). It narrows the next interface pass; it does not add an engine rewrite or another product milestone.
 
 ## Evidence and assessment
 
-This review combines the shipped demo screenshots, a local source audit of `gui/index.html`, `gui/style.css`, `gui/timeline.js` and the app interaction handlers, and the completed [Opus 5.5 UI review through OpenCode](OPUS-UI-REVIEW.md). The user explicitly approved sending the two screenshots and layout/timeline files. The screenshots are from a 481-pixel viewport. The first viewport shows the header, large title, sample-rate setting, playback card and competing track actions; the musical canvas starts farther down. Desktop layout recommendations are source-based inferences and must be checked in a desktop viewport. A new live capture timed out; the external reviewer did not inspect the running app.
+This review combines the shipped demo screenshots, a local source audit of `gui/index.html`, `gui/style.css`, `gui/timeline.js` and the app interaction handlers, and the completed [Opus 5.5 UI review through OpenCode](reviews/OPUS-UI-REVIEW.md). The user explicitly approved sending the two screenshots and layout/timeline files. The screenshots are from a 481-pixel viewport. The first viewport shows the header, large title, sample-rate setting, playback card and competing track actions; the musical canvas starts farther down. Desktop layout recommendations are source-based inferences and must be checked in a desktop viewport. A new live capture timed out; the external reviewer did not inspect the running app.
 
 The dark palette, clear button styling and existing arrangement/piano-roll foundation are useful. The largest problem is hierarchy: settings, host explanations and session actions consume the space needed to compose. The interface still presents separate track-control cards and an arrangement editor as equally important surfaces. A sequencer should make selection, musical position and the next edit obvious.
 
@@ -566,7 +574,7 @@ Superseded by the current PLAN.md. Preserves gate-1/M3 implementation evidence a
 
 # DAW roadmap
 
-Updated 2026-10-03 after a fresh repository assessment. This is the execution order. [PLAN-HISTORY.md](PLAN-HISTORY.md) preserves completed tickets, the superseded detailed roadmap and review records; [PROTOCOL.md](PROTOCOL.md) defines implemented behavior.
+Updated 2026-10-03 after a fresh repository assessment. This is the execution order. [PLAN-HISTORY.md](PLAN-HISTORY.md) preserves completed tickets, the superseded detailed roadmap and review records; [PROTOCOL.md](../PROTOCOL.md) defines implemented behavior.
 
 ## Direction and assessment
 
@@ -602,7 +610,7 @@ Keep one gate active. Finish each slice through model, sound, GUI, save/reload a
 
 **Done when:** create a 16-bar drum/bass/lead arrangement without JSON or installed runtimes, edit and duplicate phrases, loop until stopped, undo an edit, save/reload and export the arrangement. Demonstrate through the real GUI/engine and listen quietly. A restart must release the previous transport/resources.
 
-Three Sol 6.1 medium-thinking agents delivered independent engine, timeline and workspace/transport slices; the root owned integration. An authorized pi/OpenCode [Opus 5.5 review](OPUS-MVP-REVIEW.md) informed the generated bank, named drum rows, template, pitch feedback and regression coverage.
+Three Sol 6.1 medium-thinking agents delivered independent engine, timeline and workspace/transport slices; the root owned integration. An authorized pi/OpenCode [Opus 5.5 review](reviews/OPUS-MVP-REVIEW.md) informed the generated bank, named drum rows, template, pitch feedback and regression coverage.
 
 | Slice | Delivered behavior |
 | --- | --- |
@@ -624,7 +632,7 @@ Use the same drum/bass/lead project as the acceptance fixture. Verify frames, pi
 
 Deliver in small end-to-end slices:
 
-- **Audio clips and project portability (M3 — implemented).** Owned PCM WAV upload; audio lanes with move/trim/duplicate/gain/source offset; bounded ZIP save/reopen in a fresh engine. PCM16/24/32 mono/stereo and matching-rate restrictions are visible at import. Failed/stale/invalid imports preserve the project; HTTP only accepts registered owned assets. JSON-only save remains for asset-free sessions. Prepared PCM now participates in until-stopped playback without callback file I/O/allocation. See [GUI audio projects](decisions/gui-audio-projects.md).
+- **Audio clips and project portability (M3 — implemented).** Owned PCM WAV upload; audio lanes with move/trim/duplicate/gain/source offset; bounded ZIP save/reopen in a fresh engine. PCM16/24/32 mono/stereo and matching-rate restrictions are visible at import. Failed/stale/invalid imports preserve the project; HTTP only accepts registered owned assets. JSON-only save remains for asset-free sessions. Prepared PCM now participates in until-stopped playback without callback file I/O/allocation. See [GUI audio projects](../AUDIO-PROJECTS.md).
 - **Mixing and tools (M4).** Track mute/solo/pan, level meters and master headroom; edit the existing gain automation; basic clip fades and recovery of unsaved work. Start with the mixer functions actually needed by the fixture.
 - **Small effect set.** Add a track filter or simple EQ, delay, then saturation, one usable device at a time with bypass, saved settings and presets. Preallocate state, define reset/tail behavior and compare offline/native output. These built-ins provide the first dependable collection; broad third-party plugin compatibility is not a prerequisite.
 - **Longer projects.** Raise built-in/PCM arrangement playback/export to a measured, bounded three-minute policy. Until-stopped transport does not extend the render limit. Stream export from existing blocks rather than prerendering the entire song; add progress/cancellation when measured blocking requires it. Keep foreign runtime/plugin limits explicit instead of globally deleting timeouts.
@@ -700,11 +708,11 @@ Verification at the integrated boundary:
 - `examples/mixer_native_demo.py`: muted hardware checks passed for solo/hard pan, meters, pause/resume, mute, stop and EOF stream cleanup. This does not establish acoustic quality or listening latency.
 - Real-browser checks passed for mixer edits, muted native meters, clip dragging, note drawing/moving/resizing, Delete/Undo and the 180-second export control. Independent review prompted fixes for unsaved mixer numeric drafts and click suppression/focus after tiny gestures. Screenshot: `output/mvp-sequencer-mixer.jpg`.
 
-The requested external Opus 5.5 review is pending approval of the prepared payload/destination. Automatic approval review rejected transmission of the scoped roadmap/UI/mixer prompt to the external service; no external response was received or incorporated. See [review provenance](OPUS-MIXER-REVIEW.md). Independent local review and its fixes were completed. No installed-runtime matrix or acoustic listening pass is claimed. Preexisting dirty changes were preserved; this delivery remains uncommitted.
+The requested external Opus 5.5 review is pending approval of the prepared payload/destination. Automatic approval review rejected transmission of the scoped roadmap/UI/mixer prompt to the external service; no external response was received or incorporated. See [review provenance](reviews/OPUS-MIXER-REVIEW.md). Independent local review and its fixes were completed. No installed-runtime matrix or acoustic listening pass is claimed. Preexisting dirty changes were preserved; this delivery remains uncommitted.
 
 ## Authorized Opus mixer review reconciliation — 2026-10-03
 
-The user explicitly approved sending `output/opus-mixer-prompt.txt` to Opus 5.5 through pi/OpenCode. The scoped, tools-disabled, medium-thinking invocation of `opencode/claude-opus-5-5` succeeded. Its complete response and disposition are saved in [OPUS-MIXER-REVIEW.md](OPUS-MIXER-REVIEW.md), with the prompt hash. This resolves the earlier pending authorization; it does not revise the historical rejection record.
+The user explicitly approved sending `output/opus-mixer-prompt.txt` to Opus 5.5 through pi/OpenCode. The scoped, tools-disabled, medium-thinking invocation of `opencode/claude-opus-5-5` succeeded. Its complete response and disposition are saved in [OPUS-MIXER-REVIEW.md](reviews/OPUS-MIXER-REVIEW.md), with the prompt hash. This resolves the earlier pending authorization; it does not revise the historical rejection record.
 
 The prompt describes the pre-implementation mixer plan, so recommendations were checked against the already completed slices. Existing code already supplies transactional foreign/schema validation, shared prepared mixing, exact hard-pan silence, callback-safe meters and export clipped-frame feedback. Added focused checks for unrelated note/clip edits preserving mixer state through undo/redo/serialization and the real HTTP/portable ZIP path, plus step automation multiplying independent mixer gain. All 6 Rust mixer tests, 9 Node mixer tests and 3 HTTP mixer tests passed; formatting and diff whitespace checks passed. No production DSP/GUI code changed, and full suites were not repeated.
 
@@ -778,3 +786,26 @@ Verification at this update: native Rust suite 215 passed; Node suite 127 passed
 The user requested a Git checkpoint and push. Isolated legacy live Pd receiver-control changes in a WIP commit, including their worker handoff, Rust acknowledgments, opt-in tests and example. That preserves T12b5 progress without claiming completed native acceptance or GUI parity. The arrangement MVP and its documentation, regression tests and expanded CI are committed separately. The existing deletion of `AGENTS.md` is included; generated output, local runtimes, audio, screenshots and build artifacts remain ignored.
 
 Before publication, formatting, default/native Clippy with warnings denied, default/native Rust suites, 127 Node tests and four timeline-contract fixtures passed. The 69-test HTTP/workflow run passed with seven optional runtime/native skips while the portable binary was selected. Legacy Pd receiver-control opt-in native tests remain unverified for this checkpoint. Previously recorded muted playback and portable save/reopen/export evidence remains in the slice histories above.
+
+
+## 2026-10-07 — UI review checkpoint and active-plan cleanup
+
+The user-authorized Pi/OpenCode Opus 5.5 consistency review is completed and preserved with source qualifications in [OPUS-UI-CONSISTENCY-REVIEW.md](../OPUS-UI-CONSISTENCY-REVIEW.md). Commit `95e0c7d` published the review and Codex environment setup; no UI fixes were included.
+
+The user requested updating all plans and archiving completed work. The previous roadmap and UI checklist are retained in `docs/archive/` with repaired relative links. Active plans now contain four pending UI consistency passes followed by quantize/MIDI-file work and the remaining musical workflow backlog. Completed gates, processing, portable projects, Pd instrument, note preview/entry and count-in/overdub are baseline rather than repeated active tickets. The stale pending final recording browser check is closed by the existing 2026-10-04 browser acceptance record. Listening, physical MIDI, latency/clock checks and legacy Pd receiver-control native acceptance remain open. Obsolete working-tree/AGENTS-deletion instructions were removed from the active plan.
+
+This is a documentation reconciliation; no implementation, acoustic/hardware verification or previously recorded tests were rerun.
+
+
+## 2026-10-07 — Documentation status audit
+
+Reconciled README usage with the arrangement-first native workflow and clarified applied edits versus durable downloads. Updated stale browser-only, seek/loop, effect/automation, WAV/ZIP schema and completed-adapter status claims in the protocol/decision records. Kept legacy continuous Pd receiver controls explicitly WIP and the schema-12 note instrument separate. Added [the documentation index](../README.md) to distinguish current contracts from archived plans, cumulative decisions and dated review/test evidence. Historical snapshots and old acceptance counts remain preserved; no new runtime, acoustic or hardware acceptance is claimed.
+
+
+## 2026-10-07 — Archive superseded direction and repair CI
+
+Moved older decisions/reviews, integration research and this ledger under `docs/archive/`, repaired links and explicitly superseded historical instructions. Promoted the current WAV/ZIP contract to `docs/AUDIO-PROJECTS.md`. Active plans retain UI consistency and quantize/MIDI files; broader expansion is explicitly deferred rather than a delivery commitment.
+
+GitHub CI run `37574125114` failed in stable Rust Clippy on two `unnecessary_unwrap` diagnostics in metronome callback processing. Replaced the checked Option unwraps with one mutable `if let` binding, preserving count-in and rendering behavior. Final checks and remote results are reported with the branch update.
+
+Local branch-update verification: formatting and default/native Clippy passed; 203 default and 216 native Rust tests passed; four timeline fixtures and all 127 browser-unit tests passed. The HTTP/workflow suite ran 69 tests successfully with seven optional runtime/native skips after granting localhost test-server access. Local Rust is 1.92; fresh GitHub Linux/macOS CI checks cover the current stable toolchain that originally reported the lint.

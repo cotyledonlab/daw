@@ -1,5 +1,7 @@
 # Opus 5.5 musical MVP design review
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 Received 2026-10-03 through pi/OpenCode, model `claude-opus-5-5`, medium thinking, tools/context discovery disabled. The user authorized this review. The prompt contained the active roadmap, UI checklist and scoped device implementation summary; no credentials, unrelated files or runtime state were supplied. This is design feedback, not code/hardware verification.
 
 Adopted: generated/versioned factory sample bank, seeded noise and PCM16 golden hashes at 44.1/48k; one musical template; three named drum rows; selected microtonal Hz/cents feedback; single-field note-edit regressions; one-click Stop & edit; bounded synth envelope and modest presets. Synth attack now starts at 1ms. The until-stopped gate retains foreign-device limits.

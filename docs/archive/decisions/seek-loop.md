@@ -1,5 +1,7 @@
 # Native seek and loop transport
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 T07b adds temporary controls to an active prepared native snapshot. JSONL uses `transport.seek` and `transport.loop`; the session schema is unchanged. Native frame positions use the reported device rate. Schema-v2 playback requires that rate to equal the session rate. Offline exports still prepare a fresh linear engine at frame zero.
 
 ## Callback handoff
@@ -14,9 +16,9 @@ Accepted commands can still be pending. Clients poll `timeline_command_pending` 
 
 Seek and wrap reset continuous oscillator phase, clear note gates/release tails, and binary-search the prepared note onset schedule. Notes before the destination are not chased. Audio clips spanning the destination use their corresponding source offset. Audio reset scans at most 1,024 prepared descriptors into fixed storage in identity order. Each emitted frame checks for wrap before processing onsets, so the loop end is excluded and no silence frame is inserted.
 
-Timeline position may jump; engine output position and native submitted frames remain monotonic within one playback. A paused seek changes timeline position without producing frames. At/after loop end, the requested position wraps before the next sample, including after resuming. Disabling a loop preserves current phase and position. Repeated seeks and loops do not replenish the playback frame budget or change the wall-time deadline.
+Timeline position may jump; engine output position and native submitted frames remain monotonic within one playback. A paused seek changes timeline position without producing frames. At/after loop end, the requested position wraps before the next sample, including after resuming. Disabling a loop preserves current phase and position. In finite mode, repeated seeks and loops do not replenish the playback frame budget or change the wall-time deadline. Eligible built-in/Pd-instrument prepared arrangements also support until-stopped mode without a frame/wall-time expiry.
 
-Very short loops can repeatedly scan the descriptor set. The scan is bounded but worst-case 1-frame loops with a full 1,024-clip session have not been accepted against a hardware deadline. There are no crossfades, note chase, live edits, persisted loop settings, or browser seek/loop controls.
+Very short loops can repeatedly scan the descriptor set. The scan is bounded but worst-case 1-frame loops with a full 1,024-clip session have not been accepted against a hardware deadline. Crossfades, note chase, live structural edits and persisted loop settings remain absent. The browser now exposes native seek/loop controls while playing or paused; live foreign-runtime and VST3 modes retain their separate seek/loop restrictions.
 
 ## Verification on 2026-09-28
 

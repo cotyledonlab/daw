@@ -1,84 +1,60 @@
 # DAW roadmap
 
-Updated 2026-10-04 after parallel delivery of native metronome/count-in and keyboard/Web MIDI overdub recording. This is the execution order; [UI-PLAN.md](UI-PLAN.md) supports it. Previous tickets, reviews and evidence remain in [PLAN-HISTORY.md](PLAN-HISTORY.md). [PROTOCOL.md](PROTOCOL.md) describes implemented behavior.
+Updated 2026-10-07 after the Opus UI consistency review and plan cleanup. This file contains outstanding work and its execution order. [UI-PLAN.md](UI-PLAN.md) defines the immediate UI passes; [PROTOCOL.md](PROTOCOL.md) defines existing contracts. Completed records live in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md). The previous [roadmap](archive/PLAN-2026-10-04.md) and [UI checklist](archive/UI-PLAN-2026-10-04.md) are archived intact.
 
-## Destination
+## Destination and baseline
 
-Build a macOS-first DAW with a usable arrangement sequencer, a small dependable collection of instruments/effects/tools, and drop-in programmable Pd/SuperCollider devices, with Csound supported through the existing work. Aim for **Ableton Live 4-style workflow parity over time**, plus the programmable-device workflow the user wants. Arrangement composition comes first; recording, Session-style clip launching, routing and tempo-aware audio remain explicit goals.
+Build a macOS-first arrangement DAW with dependable instruments/effects and drop-in programmable devices. Active scope is improving the existing arrangement workflow and then quantize/MIDI-file handling. Existing runtime/plugin paths are retained for compatibility; their presence does not authorize expansion. Ableton-style parity and broader studio workflows are historical direction, not current acceptance requirements.
 
-Live 4 is a concrete reference for MIDI sequencing/recording, sampled instruments, plugin instruments, routing and clip performance. See Ableton's [Live 4 release announcement](https://www.ableton.com/en/pages/press/releases/2004_07_26/) and [4.x reference manual](https://downloads.ableton.com/manuals/40/ableton_live_4_manual_en.pdf). Identify workflow gaps rather than copy every historical device, limit or host format. The Max for Live analogy means devices participating in notes, track audio, controls, transport and saved state. Loading Max for Live binaries or every arbitrary Pd patch/external is not currently promised.
+The three implementation gates are delivered: a musical drum/bass/lead loop; a portable three-minute built-in/PCM song with mixer, processing, automation and fades; and one sequenced Pd instrument. Keyboard/Web MIDI preview, stopped step entry, native metronome/count-in and held-gate overdub are also delivered. These are the baseline, not active tickets. Quiet listening, physical MIDI and sustained latency validation remain open; automated and muted native evidence does not establish acoustic quality.
 
-## Assessment
+## Active delivery order
 
-**The foundation is useful; earlier delivery was too integration-heavy.** Keep the Rust session/engine, checked transactional edits, deterministic rendering, prepared native playback and bounded runtime ownership. Of the last 35 committed changes, 31 concern runtime/plugin integration or its documentation; one adds the note GUI and three revise plans/reviews. The schema-12 Pd preset now turns one runtime into a sequenced musical device with the existing arrangement, controls, transport and portable-project workflow. Broaden runtime support when a musical use requires it.
+### 1. Restore UI consistency
 
-**MVP progress is checkpointed in Git.** Drums/synth, editing fixes, continuous playback, mixer/processing/finishing, portable audio projects, the sequenced Pd preset, note entry and count-in/overdub are committed together with their regression checks. Legacy Pd receiver-control work is preserved in a separate WIP commit; its native acceptance and contract reconciliation remain unfinished.
+Address the [Opus consistency review and source qualifications](OPUS-UI-CONSISTENCY-REVIEW.md) through the focused passes in [UI-PLAN.md](UI-PLAN.md). The review is complete; its recommended fixes are not implemented.
 
-| Workflow | Current working-tree status | Main gap |
+1. Consolidate CSS and control typography/geometry; fix undefined tokens and inconsistent statuses without changing behavior.
+2. Clarify gain stages, musical units, device names and selection/state colors while preserving exact stored values.
+3. Regroup transport, step-entry, history and mixer actions; verify stopped and playback/recording layouts.
+4. Explain draft versus applied edits and file persistence. Reconcile mixer Apply scope and track-deletion behavior in a separate checked handler pass.
+
+Acceptance: coherent desktop/narrow layouts, keyboard focus and visible disabled reasons; unchanged frames/Hz and untouched gain/pan values; retained drafts and rejected takes; checked undo and portable save/reopen/export where behavior changes. Preserve readable canvas geometry and validate pointer mapping before changing SVG sizing. No full inspector or framework migration is required.
+
+### 2. Quantize and MIDI-file import/export
+
+Continue the small composition/recording slice after the consistency pass. Define supported MIDI events, tempo-map handling, note pairing and clip placement before implementation. Make unsupported data and intentional timing conversion explicit; do not silently retime existing frame-based projects.
+
+Acceptance: quantize one selected phrase with checked undo; import/export a supported MIDI phrase with explicit pitch/gate/velocity/timing behavior; preserve unrelated notes, PCM, mixer and effects; reject malformed/unsupported inputs without partial changes. Retain exact persistence and fresh-engine portable reopen/export checks. Sustain, input-device selection and physical MIDI timing remain separate follow-ups unless needed by this fixture.
+
+## Deferred possibilities — outside active scope
+
+| Order | Outstanding workflow | Initial scope |
 | --- | --- | --- |
-| Compose a loop | 16-bar drum/bass/lead template; kick/snare/hat; polyphonic saw/square synth; drag/draw/resize, exact numeric fallback, keyboard editing, undo/redo | Multiselect/zoom and musical listening feedback |
-| Arrange user audio | WAV import, move/trim/copy/gain/source offset, linear clip fades; ZIP save/reopen | Waveforms, resampling; matching-rate imports only |
-| Play/export | Native play/pause/stop/seek/loop; built-in/Pd/PCM playback with gain/lowpass/delay until stopped; deterministic 180-second WAV and fresh ZIP reopen | Rate matching; reset clicks and no held-note chase; narrower foreign-device limits |
-| Mix/process | Saved mixer gain/stereo balance/mute/inclusive solo; native pre-monitor track/master peaks; console faders/pan/M/S; lowpass/delay with controls/bypass/presets; GUI step gain automation | Smooth ramps, other parameter lanes; live mixer updates deferred |
-| Programmable devices | Schema-12 Pd Filtered Sine: sequenced notes, typed saved cutoff/gain, preset package import/export, GUI undo, native timeline and portable ZIP; existing SC/Csound/continuous Pd paths retained | Polyphony, envelopes, arbitrary patches/externals, programmable effects and a second sequenced runtime |
-| Play/capture/perform | Actual-engine keyboard/Web MIDI preview, stopped step entry, native listening metronome/count-in and selected-clip held-gate overdub with one-take undo | Quantize, MIDI-file import/export, audio recording, clips/scenes launcher, tempo-aware audio, routing |
+| 3 | Sampled instruments | Single-sample pitched instrument and user-sample drum pads using prepared PCM; basic envelopes/filter/presets. |
+| 4 | Audio recording | Input selection, arm/monitor/record, measured latency and portable takes; comping later. |
+| 5 | Clip/scenes performance | Quantized launch/stop/scenes and arrangement capture, reusing the clip scheduler and session model. |
+| 6 | Tempo-aware audio | Import resampling first; then beat-based audio, tempo following/stretch/warp, groove and reverse. Sample-rate conversion and stretching are separate slices. |
+| 7 | Studio expansion | Sends/returns/routing, freeze/resample, broader parameter automation, reliable VST3 discovery/state/editor/instruments and latency compensation. Broaden AU for a concrete musical need. |
 
-The existing three-gate direction is sound. The broad gate-2 bundle was split; mixer, basic gestures and song-length export are now delivered. The first programmable preset is delivered; continue with the next small composition/recording slice. Versioned schemas and duplicated capability checks add friction; centralize checks in existing helpers as touched, without a format migration. Tempo currently changes the grid while saved notes remain at their frame positions; preserve that contract until an explicit musical-retiming slice.
+This table preserves possible later directions, not a delivery commitment or permission to implement them. Reopen a deferred slice only for a concrete user request or a demonstrated dependency of the active work.
 
-Export reuses the existing 256-frame blocks, with bounded buffered WAV writes. The measured four-track/270-clip three-minute project exports in about seven seconds in a debug build, reopens its ZIP in a fresh engine and exports identically. The five-track built-in/Pd/PCM 180-second fixture also reopens and exports byte-identical unclipped audio through the final second. No whole-song DSP buffer or export job framework was needed.
+## Open validation and follow-ups
 
-## Delivery order
-
-When explicitly delegated, implement independent slices in parallel with distinct file owners and one integration owner. Close them through the same playable/saveable fixture before expanding scope. Gates describe outcomes, not giant subsystem patches.
-
-### Gate 1 — Make a musical loop: implemented; listening feedback pending
-
-Create/edit/copy a 16-bar drum/bass/lead arrangement, loop until stopped, undo, save/reload and export without writing JSON or installing a runtime. That path exists. History contains implementation, browser and muted native evidence.
-
-Listen quietly and make a phrase from scratch. Turn concrete sound/editing problems into small fixes alongside the next slice. Another general architecture or UI review is not required.
-
-### Gate 2 — Finish and reopen a three-minute song: implemented; listening feedback pending
-
-WAV import/editing and portable ZIP projects are implemented (M3). Slices 2a–2e are implemented:
-
-| Order | Deliverable | Acceptance / scope |
-| --- | --- | --- |
-| **2a — Basic mixer (implemented)** | Saved track level/pan/mute/solo; track/master peak meters and clipping feedback | Balance/isolate the mixed drum/bass/lead/WAV fixture; undo/reopen settings; exports follow saved mixer state. Listening volume stays separate. Start with existing stopped edits; bounded live mixer updates can follow. No routing, sends, automation UI or automatic limiter in this slice. |
-| **2b — Fast editing (implemented)** | Drag clips to move/resize; draw/move/resize notes with snap and numeric fallback; keyboard delete/duplicate | Build an eight-bar phrase without repeatedly entering positions in forms. Preserve untouched frames/Hz, independent copies, undo, focus and transactional rejection. Keep structural edits stopped; defer multiselect/full panel redesign. |
-| **2c — Song-length export (implemented)** | Bounded 180-second built-in/PCM export; consistent GUI/protocol limits | Arrange three minutes, save ZIP, reopen in a fresh engine and export matching unclipped audio with measured time/memory. Reuse block rendering; retain narrower foreign-device limits. Add jobs/progress/cancel only if measured blocking requires them. |
-| **2d — Useful processing (implemented)** | One-pole lowpass and stereo feedback delay; bypass, saved controls and three presets each | Shared GUI/native/export processing, portable ZIP persistence, preallocated state and constant-time delay reset on seek/loop; export tails stay within requested duration. Saturation, compressor and reverb can follow; they are not gate requirements. |
-| **2e — Finish the mix (implemented)** | GUI for existing step gain automation; linear audio clip fades | Make a level change and clean clip boundary in the same song; checked undo, portable fresh-engine reopen and matching export verified. Keep step semantics explicit; smooth ramps can follow separately. |
-
-**Gate acceptance:** the portable three-minute arrangement with built-in instruments, imported audio, mixer, filter/delay, edited gain automation and clip fades reopens in a fresh engine and exports byte-identical unclipped audio. Quiet listening and composition feedback remain pending; automated/native checks do not establish acoustic quality. Continue gate 3 while collecting that feedback. This is a practical arrangement DAW, not full Live 4 parity. Waveforms and unsaved-work recovery are useful follow-ups. Fix demonstrated data-loss bugs immediately.
-
-### Gate 3 — Drop in one programmable musical device (implemented)
-
-Delivered one schema-12 **Pd · Filtered Sine** instrument/preset in the existing arrangement: load/save the embedded package, sequence monophonic notes, edit gain/cutoff, mix with built-ins and PCM, loop/seek/pause/resume/Stop, save ZIP and reopen/export in a fresh engine. The installed multi-instance libpd path supports this concrete vanilla patch. Csound and a second programmable runtime remain follow-ups.
-
-The device package stores the program, typed cutoff metadata/default/value and gain. Notes drive frequency/velocity/gate receivers during actual DSP; it has no frozen PCM fallback. Native DSP runs on an owned worker with a fixed callback ring. Missing runtime, alternate programs, invalid controls/overlap and stale edits preserve the project. The first preset is 48 kHz, monophonic, with gates of at least 64 frames and events rounded up to a 64-frame tick. Seek/loop reset state without chasing held notes and can briefly emit silence while the worker primes its new generation. Arbitrary patches/externals, polyphony, live control editing and an embedded patch editor can follow individually.
-
-**Gate acceptance:** real libpd receiver tests verify pitch, gate-off silence, velocity, cutoff and exact reset replay. The mixed five-track 180-second workflow verifies note/control edits, checked undo, fresh-engine ZIP reopen and byte-identical unclipped WAVs with audio through the final second. Muted native acceptance verifies the Pd runtime and lane signal, until-stopped loop/seek/pause/resume/Stop, zero steady worker underruns and callback budget overruns; transport wait buffers are reported separately. [Workflow and evidence generator](../examples/pd_instrument_workflow_demo.py), [HTTP regressions](../gui/test_pd_instrument_workflow.py). Listening/composition feedback and long-run clock/latency behavior remain unverified.
-
-## After the first working DAW
-
-Revisit this order only when a musical example exposes a dependency:
-
-1. **Play/capture notes:** computer-keyboard/Web MIDI audition, stopped step entry, native metronome/count-in and held-gate record/overdub delivered; next quantize and MIDI-file import/export. Define beat timing/tempo retiming explicitly while preserving frame-based projects.
-2. **Complete the small instrument set:** single-sample pitched instrument and user-sample drum pads, reusing prepared PCM; basic envelopes/filter/presets. Existing synth/drums are sufficient for gate 2; no large factory library is required.
-3. **Record audio:** input selection, arm/monitor/record, measured latency and portable takes. Reuse project assets; comping is later.
-4. **Perform clips/scenes:** quantized launching, stop/scenes and capture into the arrangement. Reuse clips/scheduler, not a second session model.
-5. **Use loops musically:** import resampling first, then beat-based audio/tempo following and stretching/warp, groove and reverse. Sample-rate conversion and time stretching are separate features.
-6. **Expand the studio:** sends/returns/routing, freeze/resample, parameter automation, reliable VST3 discovery/state/editor/instruments and latency compensation. Broaden AU for a concrete need; exact historical VST2/ReWire compatibility is not a milestone.
+- **Listening/composition:** quietly build a phrase from scratch, balance the mixed song and audition Pd gates/seek/loop boundaries. Turn observed clicks, silence or editing friction into small fixes.
+- **Input/transport:** physical Web MIDI, measured input latency, sustain/input-device selection and long-run runtime clock/latency behavior remain unverified or unimplemented. The final keyboard-recording browser check is completed in history; do not reopen it as unfinished delivery.
+- **Editing/audio polish:** multiselect/zoom, velocity lanes, waveforms, unsaved-work recovery, smooth automation ramps, other parameter lanes, live mixer edits/smoothing and peak hold. Prioritize demonstrated workflow or data-loss problems.
+- **Programmable devices:** Pd polyphony/envelopes, arbitrary patches/externals, live controls, programmable effects and a second sequenced runtime. Preserve the current 48 kHz monophonic preset limits until explicitly expanded.
+- **Separate WIP:** legacy continuous Pd receiver controls are checkpointed in `878f711`; native acceptance and contract reconciliation remain unfinished. They are separate from the delivered schema-12 note instrument.
 
 ## Working rules
 
-- Measure progress by music someone can make, reopen and export. Tests/adapter demos support that result; they are not a parity percentage.
-- Commit completed slices at their acceptance boundary; keep unfinished Pd controls separate. Preserve existing changes and the current `AGENTS.md` deletion.
-- Reuse Rust, JSONL, the browser bridge, checked replacement, polling and bounded snapshot undo. No framework migration, second session model or speculative processor abstraction.
-- Freeze new host formats, standalone runtime probes, AU expansion, subscriptions/MCP and broad refactors unless they fix a regression or block the active slice. Extend programmable devices through concrete musical workflows.
-- Run focused checks during iteration; relevant format/lint/tests and save/reopen/export at each slice boundary. Add installed-runtime/FFI/native hardware checks when those paths change. Keep callback allocation/failure checks; avoid unrelated adapter matrices for documentation/UI edits.
-- Preserve transactional failures, exclusive publication and bounded ownership. No allocation, blocking locks, I/O, process startup or foreign initialization in callbacks. Fix reset clicks from listening evidence without redesigning all transport first.
-- For new devices/effects, retain mixer state through unrelated edits, undo/reopen and export; verify effect automation and mixer gain remain independent. Export already reports clipped frames. Latest-buffer meters can miss brief transients; peak hold and live mixer updates/smoothing follow demonstrated balancing problems rather than delaying useful processing.
-- Update status/order after demonstrations; put detailed evidence in history. Do not insert another planning/review cycle between routine slices.
+- Measure progress by music someone can make, reopen and export. Commit completed slices at their acceptance boundary. Preserve unrelated working-tree changes.
+- Reuse Rust, JSONL, the browser bridge, checked replacement, polling and bounded snapshot undo. Keep one session model and existing capability helpers; no speculative abstraction or format migration.
+- Preserve untouched frames, Hz, gain/pan and drafts. Tempo currently changes the authoring grid without moving saved frames. Distinguish applied engine state from downloaded project files.
+- Keep structural edits stopped, failures transactional and publication exclusive. No allocation, blocking locks, I/O, process startup or foreign initialization in audio callbacks.
+- Verify relevant formatting/lint/tests and save/reopen/export at behavioral slice boundaries. Use installed-runtime/FFI/native checks when those paths change; do not rerun unrelated adapter matrices for documentation or CSS-only edits.
+- Freeze new host formats, standalone probes, AU breadth, subscriptions/MCP and broad refactors unless they fix a regression or block the active musical slice.
+- When parallel work is explicitly requested, use distinct file owners and one integration owner, particularly for `gui/app.js`. Close work through one shared musical fixture.
 
-**Next action:** add a focused quantize/MIDI-file import/export slice while collecting quiet listening/composition feedback. Native built-in prepared playback now has a 4/4 accented listening-only click and 0/1/2-bar count-in. Keyboard/Web MIDI held gates overdub the selected clip from timeline zero, ignore count-in notes, apply through atomic checked `/api/note/take` and undo as one take; rejected takes remain available for retry/discard. Loop/seek/pause are disabled during recording. Only new gates extending beyond the clip are shortened, with explicit feedback. Input is not monitored live; timing estimates combine sampled native status and the browser clock. Physical MIDI, sustain, input-device selection and measured input latency remain follow-ups. Stopped preview and step entry remain available. Gates 2e and 3 are implemented and demonstrated; keep live mixer edits, waveform displays, smooth automation ramps and broader polish as follow-ups. Continue committing completed slices at their acceptance boundary; the legacy Pd receiver-control checkpoint remains separate work in progress. The authorized pi/OpenCode Opus 5.5 review is complete; [review and disposition](OPUS-MIXER-REVIEW.md) records its feedback, targeted preservation/automation checks and deferred suggestions. Existing contracts take precedence over alternative design suggestions.
+**Next action:** UI pass A from [UI-PLAN.md](UI-PLAN.md), collecting quiet listening/composition feedback alongside it. Complete the remaining consistency passes before quantize/MIDI-file work.

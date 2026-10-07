@@ -1,5 +1,9 @@
 # Effect gain automation
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+Current scope, reconciled 2026-10-07: saved step gain lanes and their stopped GUI editor are implemented. The dated verification below is historical evidence; the active work order is in [PLAN.md](../../PLAN.md).
+
 T08b adds optional, saved automation lanes to schema-v3 tracks. Existing v3 tracks may omit the field and retain their saved shape. Explicit null is rejected. Schema v1/v2 reject automation even when the array is empty.
 
 Each lane has exactly `effect_id`, `parameter: "gain"`, `interpolation: "step"`, and `points`. An effect ID refers to an existing effect in the containing track, independent of array position. A track may have at most 16 lanes and at most one lane per effect. Points must be nonempty and strictly increasing by integer `frame`, within 0–9007199254740991. Values are finite linear gains within 0–4. The entire session permits at most 16,384 points. Bypassed effects still validate their lanes.
@@ -14,9 +18,9 @@ The prepared chain owns gains and their point arrays. Session validation resolve
 
 The shared processing seam is a stereo track frame, its absolute timeline frame, and an explicit discontinuity reset. Sine/note and PCM sources both use the same prepared chain in offline and native engines. Source events remain in source scheduling; gain automation belongs to effect parameter state. The chain has zero latency and no tail. No generic foreign-processor trait is introduced before a working plugin adapter establishes its event/bus/state requirements.
 
-Lanes are edited with revision-checked session replacement. Successful replacement stops playback and commits one revision; invalid lanes preserve the old session and active playback. Live parameter editing is not implemented. Saved lanes do not mutate the effect's base gain or transient session revision.
+Lanes are edited with revision-checked session replacement. Successful replacement stops playback and commits one revision; invalid lanes preserve the old session and active playback. Live editing of these step gain lanes is not implemented; eligible VST3/source base controls use separate live handoffs. Saved lanes do not mutate the effect's base gain or transient session revision.
 
-The browser editor remains schema-v1 only. Agents can inspect, replace, save, load, and render automation through JSONL; native playback requires equal device/session rates.
+The browser now edits step gain lanes in supported built-in/Pd arrangements while stopped, with checked undo. Deleting the final point removes the lane and restores the base-only gain. Agents can inspect, replace, save, load, and render automation through JSONL; native playback requires equal device/session rates.
 
 ## Verification on 2026-09-30
 

@@ -1,6 +1,8 @@
 # PCM audio clips
 
-T07a adds working audio clips to schema v2. Seek and loop transport are T07b; recording, resampling, compressed files, streaming from disk, and plugin processing remain unsupported.
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+T07a adds working audio clips to schema v2. T07b delivered seek and loop transport; recording, resampling, compressed files and streaming from disk remain unsupported. Later schemas add serial built-in and constrained foreign effect processing; see [the protocol](../../PROTOCOL.md).
 
 ## Shape and mixing
 
@@ -34,7 +36,7 @@ The containing directory of a successfully loaded session is its project root. `
 
 `session.save` with an audio track requires the destination's parent to be the active project root. It writes a fresh JSON file and leaves relative asset references unchanged. Saving elsewhere returns `invalid_params` before creating output. There is no implicit asset copying or relocation. To move a project, copy its directory with its assets, then load the copied session. Sessions without audio tracks retain existing save behavior.
 
-The original T07a slice was script-controlled. The browser now imports owned WAV assets and represents note/audio arrangements; it cannot read arbitrary WAV paths from JSON. Portable ZIP save/reopen and private temporary roots are defined in the [GUI audio-project contract](gui-audio-projects.md). The headless root/save restrictions above are unchanged.
+The original T07a slice was script-controlled. The browser now imports owned WAV assets and represents note/audio arrangements; it cannot read arbitrary WAV paths from JSON. Portable ZIP save/reopen and private temporary roots are defined in the [GUI audio-project contract](../../AUDIO-PROJECTS.md). The headless root/save restrictions above are unchanged.
 
 ## Bounded preparation
 
@@ -52,4 +54,4 @@ Each render/play prepares a new snapshot. Files changed or removed after session
 
 Verified on MacBook Air Speakers at 48 kHz: the generated stereo clip demo submitted 72,000 frames across 141 callbacks, released the stream, and observed zero callback overruns; maximum measured render time was 501.042 microseconds for buffers up to 512 frames. A silent interactive check confirmed a missing-asset replacement preserves session, revision, and ongoing playback. These are callback observations, not an independent acoustic capture or latency guarantee.
 
-T07b can add seek and looping against prepared snapshots using the timeline contract. It must reset note voices, select audio source offsets at the destination, and keep output-frame count separate from timeline position. Do not perform new file loads on seek or wrap. Browser editing is a separate slice.
+T07b delivered seek and looping against prepared snapshots using the timeline contract. It must reset note voices, select audio source offsets at the destination, and keep output-frame count separate from timeline position. Do not perform new file loads on seek or wrap. Browser WAV import, clip editing/fades and portable ZIP save/reopen are delivered; see [the GUI project contract](../../AUDIO-PROJECTS.md).

@@ -41,7 +41,7 @@ Command responses are synchronous and serial. Native playback continues on its o
 
 An owned single-track snapshot places one note at frame zero with a gate of `floor(sample_rate / 4)` frames and a clip spanning `floor(sample_rate / 2)` frames. Rendering produces half a second, with releases/effect tails bounded by that limit. Saved device/processing and mixer gain/pan remain; mute/solo are ignored for audition. Saved automation is evaluated on this preview timeline from frame zero. The current session, revision and audio asset root remain untouched. Output follows existing exclusive-publication rules; rejected preparation creates no output. Pd uses actual libpd DSP and requires its installed runtime.
 
-The browser bridge exposes authenticated `POST /api/note/preview` with the same fields except `path`; the server owns its temporary output and returns WAV bytes with `X-Clipped-Frames`. Discovery includes `note_preview` and `gui_bridge.note_preview`. Browser listening volume scales only preview playback. MIDI/keyboard input is opt-in, previews a fixed gate rather than following held keys, and optionally inserts stopped step notes through existing revision-checked replacement and undo. There is no new saved schema, timing/tempo migration, or real-time recording command.
+The browser bridge exposes authenticated `POST /api/note/preview` with the same fields except `path`; the server owns its temporary output and returns WAV bytes with `X-Clipped-Frames`. Discovery includes `note_preview` and `gui_bridge.note_preview`. Browser listening volume scales only preview playback. MIDI/keyboard input is opt-in, previews a fixed gate rather than following held keys, and optionally inserts stopped step notes through existing revision-checked replacement and undo. Preview itself adds no saved schema, timing/tempo migration or held-gate recording command. The separate GUI recording workflow and atomic take endpoint are documented in [recorded note takes](#listening-click-count-in-and-recorded-note-takes).
 
 ## Revision-checked edits
 
@@ -80,7 +80,7 @@ This example assumes a fresh engine. The edit returns revision `"1"`; the checke
 - Sine `frequency_hz` has unit `Hz`, default 440, and exclusive minimum 0. Its `maximum_from` is `{ "field": "session.sample_rate", "factor": 0.5, "exclusive": true }`: multiply the chosen session rate by the factor to obtain the strict upper bound. This is a field reference, not executable code. Native/browser playback can impose a lower limit from the actual output rate.
 - Sine `gain` uses linear amplitude, defaults to 0.15, and has inclusive bounds 0 and 1. It is not decibels or listening volume.
 - `file_behavior` describes the headless interface: relative paths use `process_working_directory`, `overwrite` is false for save/render, `parent_directories` is `must_exist`, and `max_session_bytes` limits loaded files. Browser file uploads/downloads remain constrained by the bridge.
-- `render.min_seconds` adds the inclusive lower duration bound (0.001) alongside the session-dependent maximum: 180 for built-in/PCM/gain-only export, 60 for prepared runtime sessions and 10 for plugin sessions. Finite native playback remains capped at 60.
+- `render.min_seconds` adds the inclusive lower duration bound (0.001) alongside the session-dependent maximum: 180 for built-in/PCM/schema-12 Pd-instrument export with gain/lowpass/delay, 60 for prepared runtime sessions and 10 for plugin sessions. Finite native playback remains capped at 60.
 
 For example, after reading capabilities, construct a device by selecting a name from `devices`, setting `kind` to that name, and copying each parameter's default from `device_metadata[kind].parameters`. Use `session.sample_rate.default` and `session_schema_version` for the containing session, and supply a unique track ID. [The Python demo](../examples/demo.py) does this without hard-coded oscillator parameters, then saves and renders the result. Metadata does not replace server validation.
 
@@ -192,7 +192,7 @@ The example commands must be sent interactively: poll status until `timeline_com
 
 ## Session schema v2
 
-Schema v2 implements the note subset of the [timeline contract](decisions/timeline.md): required root `tempo_milli_bpm`, required per-track `mode` and `clips`, and `kind: "notes"` clips containing frame-positioned note gates. See [the runnable arpeggio](../examples/sessions/arpeggio.json) for the full shape. Schema-v1 fields and behavior remain unchanged, and no load silently upgrades them.
+Schema v2 implements the note subset of the [timeline contract](archive/decisions/timeline.md): required root `tempo_milli_bpm`, required per-track `mode` and `clips`, and `kind: "notes"` clips containing frame-positioned note gates. See [the runnable arpeggio](../examples/sessions/arpeggio.json) for the full shape. Schema-v1 fields and behavior remain unchanged, and no load silently upgrades them.
 
 `capabilities.supported_session_schema_versions` includes `[1,2,3,4,5,6,7,8,9,10]`; the legacy `session_schema_version` remains 1. `capabilities.sequencing` describes limits and envelope duration. Frames are integers 0–9007199254740991, gates and clips have positive length, notes fit wholly inside their clip, and note frequencies must be below session Nyquist. Tempo is 20000–300000 milli-BPM. Clip/note IDs follow the existing byte limits and are unique within track/clip respectively. Unknown fields, missing required fields, and explicit null are rejected. Maximum counts are 1024 clips and 16384 notes; 64 simultaneous voices include continuous tracks and release tails. The existing 1 MiB file/request bound also applies.
 
@@ -294,7 +294,7 @@ The [workflow demonstration](../examples/pd_instrument_workflow_demo.py) isolate
 
 Audio clips optionally save `fade_in_frames` and `fade_out_frames` in schemas 2–11. Absent fields mean zero; zero fields are omitted on serialization. Values are unsigned integers, each at most `length_frames`, with sum at most that length. Fades multiply the source before effects/mixer and use clip-relative timeline frames. For N >= 2, the first N samples use `i/(N-1)` and the last N use `(length_frames-1-i)/(N-1)`; a one-frame fade mutes its edge sample. Seek/loop and uneven render blocks produce the same factor. Old clips remain unchanged. `capabilities.audio_clips.fades` advertises the fields and linear curve.
 
-`capabilities.audio_clips` advertises supported PCM formats/channels, rate matching, unique-file and byte limits, project-relative paths, and the lack of save-as outside the project. The [asset contract](decisions/audio-assets.md) defines decoding, mixing, preparation, and path behavior. A successful load sets the project root to the session file's canonical parent; replace/edit inherit the active root (initially process working directory). Runtime roots never appear in saved JSON. Audio-session save requires a destination in the same root and does not copy assets.
+`capabilities.audio_clips` advertises supported PCM formats/channels, rate matching, unique-file and byte limits, project-relative paths, and the lack of save-as outside the project. The [asset contract](archive/decisions/audio-assets.md) defines decoding, mixing, preparation, and path behavior. A successful load sets the project root to the session file's canonical parent; replace/edit inherit the active root (initially process working directory). Runtime roots never appear in saved JSON. Audio-session save requires a destination in the same root and does not copy assets.
 
 Mutation validates final candidate assets before committing. A failed asset load leaves the session and revision unchanged. Render prepares assets before output creation; native preparation failures use `audio_error`. Assets are reloaded for each play/render snapshot. No disk I/O occurs during callback rendering.
 
@@ -304,7 +304,7 @@ The loopback bridge runs its engine with a private temporary asset root. JSON se
 
 `gui_bridge.audio_projects` and `audio_project_limits` advertise this bridge feature. Authenticated `POST /api/audio/import` accepts raw WAV bytes with a bounded `X-DAW-Metadata` header containing exactly `{expected_revision,track_id,clip_id,start_frame}`; it returns `{session,revision,asset}`. WAVs are integer PCM16/24/32, mono/stereo, matching-rate and at most 32 MiB. `GET /api/project` downloads ZIP bytes containing `session.json` and referenced assets. `POST /api/project` accepts a bounded ZIP plus metadata `{expected_revision}` and returns `{session,revision}` after validated checked replacement. Project ZIPs are at most 128 MiB encoded/expanded, with 128 assets and the existing 128 MiB decoded audio budget; session JSON stays at 1 MiB. Paths, entry counts, CRC, duplicate/symlink/encryption and expansion rules are checked before commit.
 
-With audio present, GUI save downloads a portable project ZIP; Load session accepts that ZIP in a fresh server. Asset-free sessions keep JSON-only save. Successful ZIP import resets browser history, remaps paths to fresh owned files and reclaims old assets after commit. Failed imports retain the old project/assets. Imported files are temporary until saved in a ZIP; server shutdown releases the engine before deleting its private folder. The [GUI audio-project contract](decisions/gui-audio-projects.md) gives exact headers, ownership and transaction/budget details. The [workflow demo](../examples/audio_project_workflow_demo.py) checks mixed PCM/instrument trim/copy, fresh-server ZIP reopen and byte-identical WAV export, with optional muted native transport checks.
+With audio present, GUI save downloads a portable project ZIP; Load session accepts that ZIP in a fresh server. Asset-free sessions keep JSON-only save. Successful ZIP import resets browser history, remaps paths to fresh owned files and reclaims old assets after commit. Failed imports retain the old project/assets. Imported files are temporary until saved in a ZIP; server shutdown releases the engine before deleting its private folder. The [GUI audio-project contract](AUDIO-PROJECTS.md) gives exact headers, ownership and transaction/budget details. The [workflow demo](../examples/audio_project_workflow_demo.py) checks mixed PCM/instrument trim/copy, fresh-server ZIP reopen and byte-identical WAV export, with optional muted native transport checks.
 
 ## Serial effects in schema v3
 
@@ -314,7 +314,7 @@ The source's voices are summed without clipping, then effects run in their array
 
 `capabilities.effects` reports the supported kind, limits, routing, bypass, latency, and supported automation. Use revision-checked full replacement for gain-effect edits. Existing `set_parameter` addresses the source device only. Effect changes validate before committing, stop native playback, and advance the revision once. Saved sessions preserve chain order, IDs, gain, and bypass. Live gain-effect mutation is not supported; VST3 parameter base edits during native playback are described below. Saved automation lanes are described below.
 
-V3 native playback requires matching device/session rates. Browser editing and uploads are restricted to v1. See [the effect contract](decisions/track-effects.md) and [runnable example](../examples/sessions/gain-chain.json).
+V3 native playback requires matching device/session rates. Browser editing and uploads are restricted to v1. See [the effect contract](archive/decisions/track-effects.md) and [runnable example](../examples/sessions/gain-chain.json).
 
 ## Saved effect gain automation
 
@@ -326,7 +326,7 @@ The browser edits these gain lanes with exact absolute frame/value rows: add, up
 
 Seek and wrap restore the last value at or before the destination, or the base gain before the first point. They use prepared data and perform no file loading. Automation is part of the snapshot shared by offline and native rendering. Use revision-checked full replacement to edit lanes: invalid edits preserve session/revision/playback; successful edits stop playback before commit.
 
-`capabilities.automation` reports parameters, interpolation, point/lane limits, and `live_edits:false`. `capabilities.effects.automation` is true. [The automation contract](decisions/automation.md) gives the preparation rules; [the example](../examples/sessions/gain-automation.json) is loadable and playable. The GUI can preserve saved v4 gain lanes and removes lanes targeting an effect when that effect is removed; it does not edit automation points.
+`capabilities.automation` reports parameters, interpolation, point/lane limits, and `live_edits:false`. `capabilities.effects.automation` is true. [The automation contract](archive/decisions/automation.md) gives the preparation rules; [the example](../examples/sessions/gain-automation.json) is loadable and playable. The GUI can preserve saved v4 gain lanes and removes lanes targeting an effect when that effect is removed; it does not edit automation points.
 
 ## Session schema v1
 
@@ -399,7 +399,7 @@ At most 8 VST3 effects exist per session, with at most 64 distinct parameter IDs
 
 Build `--features vst3-offline` on macOS and build the offline worker with `native/vst3/build.py`. Other builds parse/validate v4 statically but return `plugin_error` on load/replace of a plugin session. `capabilities.offline_vst3.implemented` reports compiled offline support, not installed plugin compatibility or worker availability. No new command is introduced: use revision-checked `session.replace`, `session.save`, `session.load`, and `render`.
 
-Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. The GUI upload guard accepts only v1/v4 continuous sine session shapes; plugin sessions still require the Rust validation and preparation described above.
+Supported offline layout is one stereo input/output audio bus, no event buses, float32 at 48 kHz, maximum block 256, and zero latency. Nonzero latency, unsupported parameters/layouts/restarts, missing workers/bundles/CIDs, child crashes, oversized output, or 15-second worker timeout return `plugin_error`. Parameter-value restart notifications use current controller reads; graph/metadata/latency changes are unsupported. GUI VST3 editing is limited to v4 continuous sine sessions (legacy v1 may be explicitly upgraded). Other built-in arrangement and runtime families have their own GUI guards; plugin sessions still require the Rust validation and preparation described above.
 
 ## Schema-v5 offline Audio Unit effects
 
@@ -450,7 +450,7 @@ Plugin renders accept 0.001–10 seconds. The renderer preserves headroom betwee
 
 ### Standalone Audio Unit lifecycle proof
 
-The original `native/au.probe` AUv2 lifecycle probe remains a separate diagnostic with its own schema-version-1 result envelope and owned process harness. It opens no audio device and is distinct from schema-v5 session processing. See [the worker and proof notes](../native/au/README.md) and [the AU adapter contract](decisions/audio-units.md).
+The original `native/au.probe` AUv2 lifecycle probe remains a separate diagnostic with its own schema-version-1 result envelope and owned process harness. It opens no audio device and is distinct from schema-v5 session processing. See [the worker and proof notes](../native/au/README.md) and [the AU adapter contract](archive/decisions/audio-units.md).
 
 ## SuperCollider NRT jobs
 
@@ -462,7 +462,7 @@ The original `native/au.probe` AUv2 lifecycle probe remains a separate diagnosti
 
 Params contain exactly `score_path`, `path`, and integer `sample_rate`. Nonempty UTF-8 paths may be at most 4096 bytes and resolve relative to the controller working directory. Rates are 8000–192000. The result is `{ "path": <requested path>, "frames": <integer>, "sample_rate": <rate>, "channels": 2 }`. The command is synchronous, does not load/change the session or advance its revision, and does not start/stop transport. It has no HTTP GUI route. Wrong JSON params use `invalid_params`; score/executable/worker/output failures use `runtime_error`.
 
-The input is a regular binary score file capped at 1 MiB, snapshotted into a private job directory. Each record is a big-endian 32-bit length and a flat OSC bundle of 16–65516 bytes; at most 16384 records are allowed. Relative timestamps begin at zero, never decrease, and end between 0.001 and ten seconds. Messages use string addresses, zero padding, valid UTF-8 strings and scalar/string/blob type tags; nested bundles, integer command addresses and arrays are unsupported. Nonfinite floating arguments and malformed/trailing data are rejected before launch. See [the score contract](decisions/supercollider.md) for accepted tags and [the fixture writer](../native/supercollider/score.py).
+The input is a regular binary score file capped at 1 MiB, snapshotted into a private job directory. Each record is a big-endian 32-bit length and a flat OSC bundle of 16–65516 bytes; at most 16384 records are allowed. Relative timestamps begin at zero, never decrease, and end between 0.001 and ten seconds. Messages use string addresses, zero padding, valid UTF-8 strings and scalar/string/blob type tags; nested bundles, integer command addresses and arrays are unsupported. Nonfinite floating arguments and malformed/trailing data are rejected before launch. See [the score contract](archive/decisions/supercollider.md) for accepted tags and [the fixture writer](../native/supercollider/score.py).
 
 The owned Unix child runs `scsynth -N` with two output channels, no input, 64-frame blocks and a private restricted path for file-accessing OSC commands. Supply SynthDefs using `/d_recv`; automatic defaults and external-file assets are not loaded. No hardware audio or realtime networking starts. The process group is terminated on completion/failure, and the direct child is reaped. Timeout is 15 seconds, with 64 KiB each for stdout/stderr. Captured server error diagnostics fail even if the process returns exit status zero. Output must be bounded, stereo PCM16 at the requested rate. Up to 128 trailing block frames are trimmed to `round(last_timestamp * sample_rate)`. All samples are validated before exclusive destination creation; failure leaves no partial destination and never overwrites an existing output. This is process ownership, not a security sandbox or a live callback design.
 
@@ -502,7 +502,7 @@ Run `DAW_SCSYNTH=/absolute/scsynth python3 examples/supercollider_tracks_demo.py
 
 ### Interactive SuperCollider diagnostic
 
-`native/supercollider/live_probe.py` is a separate owned macOS server diagnostic, not a JSONL command or DAW transport adapter. It proves completion/node/control responses and finite private-bus PCM changes, with silent output-bus capture and clean quit. Existing SuperCollider source playback still uses prepared PCM. The diagnostic is independent of the live transport/control API above; GUI access is described above; see the [interactive proof and streaming gates](decisions/supercollider.md#interactive-server-proof-t11c1).
+`native/supercollider/live_probe.py` is a separate owned macOS server diagnostic, not a JSONL command or DAW transport adapter. It proves completion/node/control responses and finite private-bus PCM changes, with silent output-bus capture and clean quit. Existing SuperCollider source playback still uses prepared PCM. The diagnostic is independent of the live transport/control API above; GUI access is described above; see the [interactive proof and streaming gates](archive/decisions/supercollider.md#interactive-server-proof-t11c1).
 
 
 ## Saved-session live SuperCollider CLI (macOS)
@@ -529,7 +529,7 @@ The CSD is a nonempty regular UTF-8 file without NUL, at most 1 MiB, copied into
 
 The child process group has a fifteen-second deadline and each diagnostic pipe is drained with a 64 KiB retention limit. Owned descendants are terminated before joining readers. Existing destinations, including dangling symlinks, are preserved; final creation is exclusive. Publication occurs only after successful child exit and full PCM validation. A failed publication removes only the output created by this job. No cancellable job ID is introduced.
 
-This is caller-trusted code execution, not a sandbox. CSD opcodes, includes, embedded resources or absolute paths may access files, launch code or perform other side effects. Relative assets are not copied/resolved against the original CSD directory. This standalone job does not claim arbitrary opcode compatibility, a saved device, live block processing or GUI support. Saved prepared tracks are specified separately below. See [the tested fixture and runtime contract](decisions/csound.md).
+This is caller-trusted code execution, not a sandbox. CSD opcodes, includes, embedded resources or absolute paths may access files, launch code or perform other side effects. Relative assets are not copied/resolved against the original CSD directory. This standalone job does not claim arbitrary opcode compatibility, a saved device, live block processing or GUI support. Saved prepared tracks are specified separately below. See [the tested fixture and runtime contract](archive/decisions/csound.md).
 
 The separate `native/csound/block_probe.py` diagnostic verifies Csound 7 host buffers/control changes and reset/destruction with explicit `DAW_CSOUND_LIBRARY`. Its report marks `daw_transport:false` and `hardware_audio:false`. Saved prepared tracks below use the same ABI in an owned worker, but this diagnostic itself remains separate from DAW playback.
 
@@ -551,7 +551,7 @@ Session replacement/load validates and prepares all source PCM before stopping t
 
 The CSD is caller-trusted code. The private worker directory and disabled Csound host audio I/O do not sandbox opcodes or prevent filesystem/process side effects. CSD includes and relative external assets are not collected from the original file location. Arbitrary opcode compatibility is not claimed. Standalone WAV rendering, prepared source playback, and live Csound DSP make distinct capability claims.
 
-The separate macOS arm64 `native/csound/stream_probe.py` checks Csound-owned block production through the existing fixed queue and a paced diagnostic consumer. That diagnostic still opens no hardware and does not use DAW transport; the live capability is supplied by the separate owned transport path. See [the queue proof](decisions/csound.md#csound-producer-queue-diagnostic-t12a3b1).
+The separate macOS arm64 `native/csound/stream_probe.py` checks Csound-owned block production through the existing fixed queue and a paced diagnostic consumer. That diagnostic still opens no hardware and does not use DAW transport; the live capability is supplied by the separate owned transport path. See [the queue proof](archive/decisions/csound.md#csound-producer-queue-diagnostic-t12a3b1).
 
 ## Schema-v8 prepared Pure Data sources
 

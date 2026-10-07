@@ -1,6 +1,8 @@
 # Opus 5.5 roadmap review
 
-Received 2026-10-03 through pi using the OpenCode provider, model `claude-opus-5-5`, medium thinking. The reviewer received the original revised roadmap and a scoped implementation summary, with tools disabled. M1 implementation completed while that review was being arranged; references to future M1 work should be read in that context. This is design feedback, not an implementation or hardware verification report. Accepted changes and deliberate differences are recorded in [PLAN.md](PLAN.md).
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+Received 2026-10-03 through pi using the OpenCode provider, model `claude-opus-5-5`, medium thinking. The reviewer received the original revised roadmap and a scoped implementation summary, with tools disabled. M1 implementation completed while that review was being arranged; references to future M1 work should be read in that context. This is design feedback, not an implementation or hardware verification report. Accepted changes and deliberate differences are recorded in [PLAN.md](../../PLAN.md).
 
 # Review: macOS Rust DAW roadmap
 

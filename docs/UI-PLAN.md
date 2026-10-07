@@ -1,80 +1,59 @@
-# Sequencer UI checklist
+# Active UI consistency checklist
 
-Updated 2026-10-04 with native metronome/count-in and keyboard/Web MIDI held-gate overdub recording. Supports the delivery order in [PLAN.md](PLAN.md); this is a scoped checklist, not a second roadmap. Gate-1 through gate-3 behavior below is implemented in the current working tree. The previous detailed UI plan and implementation evidence are in [PLAN-HISTORY.md](PLAN-HISTORY.md). [OPUS-UI-REVIEW.md](OPUS-UI-REVIEW.md) remains useful design feedback.
+Updated 2026-10-07. This checklist supports [PLAN.md](PLAN.md); it is not a second roadmap. The [Opus review](OPUS-UI-CONSISTENCY-REVIEW.md) is complete, but all implementation passes below remain open. Completed sequencer/MVP delivery and acceptance are in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md) and the [archived UI checklist](archive/UI-PLAN-2026-10-04.md).
 
-## First: editing trust (M1d.1)
+## Pass A — CSS, legibility and control geometry
 
-Implemented: the actual Update handler now patches only changed fields. Six handler regressions cover off-grid/microtonal preservation, single-field edits, insertion, focus/errors and drum rows; engine/bridge workflow tests cover exact persistence and checked failure behavior.
+Status: pending. Primary file: `gui/style.css`. Review findings F4, F5, F8, F9, F11 and F15; investigate F16/F17 before changing canvas/meter geometry.
 
-- Patch only fields the user changed. Preserve untouched frame positions/durations and Hz exactly, including off-grid timing and non-12-TET pitches. Tempo changes only the authoring grid. Round absolute edited tick positions once; never accumulate rounded frame deltas.
-- Keep clip-relative notes and independent duplicates. Reject shortening that would cut a gate with a nearby explanation; do not trim or hide data silently.
-- Retain validation beside its editor until corrected/dismissed. Failed/stale replacement preserves the applied session and offers recovery without silently discarding a draft.
-- Add a clear **Stop & edit** action while native playback locks editing. Keep stopped-only replacement; automatic restart/position restoration can wait.
-- Distinguish **Applied to engine** from a session-file download. Preserve the existing New/demo replacement guard.
+- Consolidate duplicate rules into their effective values; replace undefined `--text-secondary` and remove the checkbox `!important` workaround with scoped selectors.
+- Use consistent sans/mono tokens, numeric alignment, label/body/status scales and focus treatment. Eliminate unreadable 8–9px status/peak text; verify computed styles per element, including the existing 12px metadata-error override.
+- Define standard and compact control tiers. Keep mixer density deliberate, with usable keyboard/touch targets; do not copy proposed dimensions without checking layout.
+- Align checkbox rows and apply shared styling. Use the danger token for errors and clear section/track/effect heading hierarchy.
+- Verify ruler-edge labels, desktop canvas empty space and mixer meter bounds. Preserve readable fixed canvas geometry until a browser-verified replacement also preserves gestures and pointer mapping.
 
-Acceptance: through the actual timeline action and real bridge, select an off-grid/microtonal note, edit only velocity, undo/redo, save/reload and compare untouched values. Reject an invalid/stale edit, retain its feedback through status polling, and enter editing from playback safely.
+Acceptance: compare 1280×800, 900px and 481px layouts, plus 320px overflow/target checks. No page-wide overflow, clipped labels or unreadable statuses; canvas/mixer scrolling stays local. Verify focus and disabled styles. CSS-only movement does not require new regressions; test geometry/pointer behavior that actually changes.
 
-## Then: make composition visible (M1d.3)
+## Pass B — Labels, units and state identity
 
-The compact workspace and shipped instruments are implemented. Keep these acceptance checks; defer the fuller selected-device inspector and visual polish to real composition feedback.
+Status: pending. Files: timeline, mixer and app display helpers plus CSS. Findings F2, F7, F10 and F12.
 
-| Change | Status / acceptance |
-| --- | --- |
-| Compact header and persistent transport | Implemented; 1280×800 geometry shows transport, ruler and all three template lanes. |
-| One Add track entry point | Implemented sine/drumkit/synth/Pd chooser, portable Pd preset import and demo/empty-state entry; continuous/runtime sources in secondary details. |
-| Explicit clip insertion position | Implemented separate Insert at (beat), with track selector beside Add clip. |
-| Stable selection/focus | Implemented SVG focus keys/pressed state and Stop & edit returning to selected note; interaction regressions cover redraw and keyboard selection. |
-| Selected-object detail | Clip/piano roll/note controls contextual; settings/export collapsed. Device cards remain below lanes; selecting one device instead of all cards is deferred. |
-| Readable canvas | Implemented fixed readable SVG widths and canvas scrolling; drum roll has three named 24px rows/22px note targets; intermediate shell cap removed. |
-| Visible state | Implemented textual playhead/loop, pressed selection, persistent local errors and explicit engine reload recovery; Applied to engine distinguished from downloaded JSON. |
+- Identify audio stages: instrument/device level, clip gain, effect gain stage, mixer level and listening volume. Avoid language implying listening volume changes the exported mix.
+- Use shared musician-facing device labels instead of raw `device.kind` strings.
+- Use `(beat)` for zero-based positions and `(beats)` for lengths; label loop positions, note gate, velocity 0–1, Hz, ms, frames and grid steps consistently.
+- Use one beat readout formatter while retaining precise editable values. Cosmetic gain/pan formatting must not round untouched stored values or feed rounded values into checked replacements.
+- Give selection, playhead, draft, pending and error states distinguishable meanings; pair color with text/focus/pressed state.
 
-Use the current dark styling and existing fields/buttons. Keep exact numeric editing, note names with MIDI pitch, 0–1 velocity, and one consistent musical position convention. Selected notes expose saved Hz and cents; changing MIDI pitch explicitly writes equal temperament. Synth bass/lead preset choices and controls are in the track cards.
+Acceptance: compare matching concepts across lane, piano roll, mixer, device and effects surfaces. Change only velocity on an off-grid/microtonal note; undo/reopen and verify exact frames/Hz. Verify unrelated gain/pan values remain exact after formatting and edits.
 
-Verified 1280-, 900- and 481-pixel widths against the real app: no page-wide overflow, with horizontal scrolling inside the arrangement canvas. At 1280×800 the three-track template lanes and transport fit without scrolling. The narrow panel remains usable with vertical scrolling; mobile composition is not a separate gate. Screenshot evidence is in ignored `output/mvp-preview.png`.
+## Pass C — Group controls by task
 
-## One workflow demonstration
+Status: pending. Files: `gui/index.html`, `gui/timeline.js`, `gui/app.js`, `gui/mixer.js` and CSS. Findings F3, F5, F6, F13, F14 and browser-qualified F17.
 
-Use the roadmap's drum/bass/lead project: open/create, identify tracks and playhead, select/change a note, duplicate a phrase, undo, loop, Stop & edit, then find save/reload/export. Verify keyboard focus and persistent errors as well as geometry. Target tests at interaction/data-preservation bugs; CSS movement alone does not need a large new test suite.
+- Give metronome/count-in an aligned transport-options row. Make playback state clear and keep listening volume accessible; check sticky transport height at each width/state.
+- Put step enable, clip-relative position, gate and readout together. Style the readout and distinguish its cursor from focus/playhead. Keep IDs, target selection and pending-preview cancellation semantics.
+- Separate track creation, project replacement and history actions. Keep Undo/Redo and Apply state easy to reach; group playback-only seek/loop controls with visible disabled reasons.
+- Reduce standing help/repeated idle messages while keeping failures, take results, MIDI state and recovery actions visible without hover.
+- Verify master/track meter bounds in the running app before altering rotated meter layout; review screenshots show stopped state only.
 
-## Delivered: mixing, faster editing and song-length export
+Acceptance: desktop/narrow stopped/playing/paused/recording/error views; no stranded actions or hidden essential controls. Keyboard preview/step entry, count-in/record/Stop, retry/discard and selection/focus continue to work. Presentation changes must not redirect asynchronous edits or recordings.
 
-Audio import, selected audio clip controls and ZIP save/reopen are implemented. Slices 2a–2c are implemented; their acceptance checks remain below. Processing, finishing and the first programmable device are also delivered:
+## Pass D — Commit scope and editing trust
 
-- **2a mixer (implemented):** compact track level/pan/mute/solo controls in ordered rows below the arrangement, plus track/master peak and clipping feedback. Distinguish saved mix settings from listening volume. Preserve selection, undo/reopen behavior and stopped-edit restrictions; explain the stop action beside disabled controls. Do not bundle routing, automation or a full device inspector.
-- **2b gestures (implemented):** drag clips to move/resize; draw/move/resize notes with visible snap and keyboard delete/duplicate. Keep exact numeric fallback, stable focus, independent copies and persistent errors. Commit one checked edit per completed gesture rather than replacing the engine session on every pointer movement. Cancel/rejection preserves the prior project; one successful gesture creates one undo entry. Test actual handlers for untouched frames/Hz and failure behavior.
-- **2c export (implemented):** expose the measured three-minute built-in/PCM policy consistently. Foreign-device limits remain visible. Reuse the existing export flow before adding job UI.
-- **2d processing and 2e finishing (implemented):** filter/delay controls and presets, exact-frame add/update/delete for existing step gain automation, and selected audio clip fade frame counts are delivered. Each saves/reopens/exports in the same arrangement. Checked edits/undo preserve unrelated data and other typed automation drafts; invalid fades/resize reject locally and in the engine.
+Status: pending. Files: app and mixer handlers. Finding F1. Keep behavior changes separate from style/placement passes.
 
-Multiselect, advanced zoom, velocity lanes, waveforms, resizable panels, icon/theme redesign and animation remain follow-ups. Gate 3 delivers one programmable Pd preset/device through the same track and control workflow; no separate runtime dashboard is required. Assign one integration owner for `gui/app.js` when multiple tasks are explicitly delegated.
+- Label current models as **Applied on change** versus **Draft · Apply changes**. Neither means a project file has been saved. Keep file download/persistence wording explicit.
+- Explain disabled Undo when unapplied drafts exist, with visible recovery; do not promise a new revert action unless implemented.
+- Reconcile per-strip Apply wording with its all-strip numeric-draft scope. Prefer an accurately scoped mixer action; retain preservation of typed drafts across strips/toggles.
+- Harmonize arrangement track deletion through checked edits only after establishing how unapplied device/effect drafts and audio assets survive. Preserve legacy continuous-session behavior.
+- Keep persistent local validation, stale-write recovery, exact numeric fallback, independent clip copies and stopped-only structural edits.
 
-Numeric mixer edits save on blur, Apply or Enter; toggles include visible numeric drafts so typed pan is retained. Native meter polling updates existing elements and preserves drafts/focus. Pointer capture/cancel and the click after a drag retain selection and keyboard focus. Real-browser checks cover mixer pan/solo and muted native meters, clip dragging, note move/resize/draw, keyboard Delete/Undo, and the 180-second export control.
+Acceptance: typed drafts survive unrelated edits/polling; mixer actions have advertised scope and one checked undo entry. Deletion/undo preserves PCM assets, effects, mixer and selection. Invalid/stale replacement retains the applied project and recovery state. Fresh-engine ZIP reopen/export agrees with saved state after handler changes. Add focused preservation regressions for changed handlers.
 
-The [Opus mixer review](OPUS-MIXER-REVIEW.md) was reconciled against this implementation. Unrelated note/clip edits, undo/redo and portable reopen preserve mixer settings; targeted regressions cover this. Export already displays clipped-frame feedback. Meters show latest-callback peaks without a clip latch, so short transients may fall between polls; add hold/window accumulation if real balancing requires it. Live mixer controls and smoothing remain a listening-driven follow-up. Filter/delay controls and gain automation/fades are delivered; the schema-12 Pd preset shares the existing note/control workflow.
+## Follow-ups after the consistency pass
 
-## Processing and console delivery
+Quantize and MIDI-file import/export are the next feature slice in [PLAN.md](PLAN.md). A full selected-device inspector, multiselect/zoom, velocity lanes, waveforms, resizable panels, icon/theme redesign and animation remain deferred until a concrete musical task warrants them. Live mixer editing/smoothing and peak hold are separate behavior work.
 
-Implemented compact console strips below the arrangement: vertical gain faders, stereo meters, pan sliders, mute/solo and exact numeric fallback with checked stopped edits. Master shows pre-monitor output. Lowpass and delay cards expose saved controls, bypass/removal and three presets each; native playback/export/ZIP use the same saved schema-11 settings. Gain effects now edit step points with exact song frames, explicit held values and independent mixer gain. Audio clips expose linear fade-in/out frame counts and small timeline slopes. Live mixer changes, smooth automation ramps, routing and a full selected-track inspector remain follow-ups. Gate 3 delivers one sequenced Pd preset.
+Quiet composition/listening, physical MIDI and measured latency remain open. The final keyboard-recording browser recheck was completed on 2026-10-04, including Stop/application and whole-take Undo/Redo; evidence remains in history. Recheck recording only where a new UI change affects it.
 
-## Programmable Pd preset delivery
-
-The Instrument selector includes **Pd · Filtered Sine** and **Add note track**; **Load Pd preset** imports the portable device JSON. The existing piano roll edits its monophonic notes with exact numeric fallback. Its card edits gain and cutoff, saves a preset package and exposes the embedded program for inspection. Stopped edits use checked replacement and undo, preserving other tracks, mixer/processing, automation and PCM. Program/rate/metadata/overlap errors stay visible and preserve the project; custom patch editing remains a follow-up.
-
-The HTTP acceptance workflow uses a five-track built-in/Pd/PCM arrangement and proves independent note/control edits, undo, transactional failures, fresh-engine ZIP reopen and exact exports. Muted native acceptance verifies actual worker DSP signal and loop/seek/pause/resume/Stop. Listening feedback, polyphony, live controls and envelopes remain follow-ups; abrupt gates and transport rebuffering can click or briefly silence output.
-
-Safari browser acceptance on 2026-10-04 verified adding Pd to the musical demo, clip/note creation, precise cutoff edits with undo/redo, velocity editing and WAV export. Importing the mixed five-track ZIP succeeded before and after a fresh server restart. Native Play used 48 kHz MacBook Air Speakers at monitor volume zero; the timeline advanced, cutoff editing locked during playback and unlocked after Stop. Screenshot: ignored `output/mvp-pd-instrument.jpg`. Browser download permission for ZIP save was rejected by automatic approval review and canceled; the real HTTP project save/fresh-engine reopen tests establish the ZIP round trip.
-
-
-## Delivered: play notes and enter a phrase while stopped
-
-Select a note clip and opt into computer-keyboard/Web MIDI notes. Keyboard octave selection, A/W/S/E chromatic mapping and A/S/D drum-pad mapping preview actual engine WAVs through browser listening audio. MIDI requests access only on Connect; unsupported browsers retain keyboard entry. Fixed short gates, saved instrument/effects and mixer gain/pan are explicit; previews ignore mute/solo and cannot overlap native transport. Typing in fields is unaffected. Stop/Escape disables input; target changes and stale asynchronous work cancel preview playback.
-
-Step entry uses a dedicated clip-relative position and gate in grid steps, with a visible cursor. Each accepted note creates one checked edit and undo entry, then advances the cursor; rejected/stale/overlapping/out-of-bounds edits preserve the project and cursor. Absolute tick endpoints round once. Cursor/arming changes while a preview is pending cannot redirect or retrospectively capture a note. Wait for one note to apply before entering the next; held-gate performance capture is available separately below.
-
-In-app browser acceptance on 2026-10-04 verified actual C3 preview, A/D step insertion at beats 0/0.25, advance to 0.5, one-note undo/redo and Stop disabling input. The narrow 481-pixel view remains contained. Screenshot: `output/mvp-note-input.jpg`. Real HTTP acceptance adds eight notes to the musical/PCM project, preserves other tracks/assets, rejects stale requests, reopens a ZIP in a fresh engine and exports byte-identical unclipped audio. Physical MIDI hardware and acoustic quality remain unverified. Next: quantize and MIDI-file import/export, alongside musical listening feedback.
-
-
-## Delivered: native count-in and held-gate overdub
-
-Native built-in prepared playback offers a 4/4 accented listening-only metronome and 0/1/2-bar count-in. Record notes arms the selected clip and captures keyboard/Web MIDI held gates from timeline zero; count-in notes are ignored. Selection changes do not redirect the armed target. Loop/seek/pause are disabled during recording, and input is not monitored live. Stop closes held gates before disabling input, then applies the whole take through atomic checked `/api/note/take` with one undo entry. Rejected takes remain pending for retry/discard. New gates extending beyond the clip are shortened with explicit feedback; existing off-grid/microtonal notes, PCM, mixer and effects are preserved. Stopped preview/step entry remain available.
-
-App-handler regressions verify start/reset lifecycle, target selection, Stop ordering, single history entry and retained failures. Real HTTP acceptance verifies fresh-engine portable ZIP reopen and byte-identical unclipped export. Muted native count-in/pause/seek/stop checks report zero callback overruns. Timing estimates combine sampled native status with the browser clock; physical MIDI, measured input latency and acoustic quality remain unverified. Final browser recording recheck is pending.
+**Next action:** Pass A; preserve current contracts and use the review's source qualifications rather than mechanically applying every suggestion.

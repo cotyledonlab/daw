@@ -1,5 +1,9 @@
 # SuperCollider: owned NRT jobs before track devices
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+This is a cumulative decision/evidence record. The original proposed queue experiment was subsequently delivered in the later sections, along with prepared sources, live transport and eligible control edits. Historical “next” wording is local to its dated experiment, not the current execution order; see [PLAN.md](../../PLAN.md).
+
 The first integration is `supercollider.render`, a synchronous JSONL job that turns a prepared binary OSC score into a fresh stereo PCM16 WAV. It is available on Unix with an explicitly configured absolute `DAW_SCSYNTH` executable. It does not change the active session, revision or transport, and does not expose a GUI route. Compiled support and executable configuration are separate capability fields; neither proves installed UGen compatibility.
 
 Each job reads at most 1 MiB from a regular score file and copies that snapshot into a private temporary directory. Scores use big-endian length-prefixed OSC bundles, with relative fixed-point timestamps starting at zero, in nondecreasing order, ending between 0.001 and 10 seconds. There are at most 16384 records and 65516 bytes per bundle. The initial contract accepts flat, string-address OSC messages with scalar/string/blob tags `i`, `f`, `s`, `S`, `b`, `h`, `d`, `c`, `T`, `F`, `N`, `I`. Floating arguments must be finite; lengths, padding, UTF-8 strings and trailing bytes are validated. Integer command addresses, nested bundles and OSC arrays are not accepted yet.

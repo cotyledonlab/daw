@@ -1,5 +1,9 @@
 # Timeline contract
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+This record preserves the schema-v2 design and implementation handoff. Later schemas and GUI editing are delivered; historical checklist instructions and model assignments below are not active tasks. Current contracts are in [PROTOCOL.md](../../PROTOCOL.md), and outstanding work is in [PLAN.md](../../PLAN.md).
+
 Status: T06 implements schema-v2 notes, linear offline rendering, and rate-matched native playback alongside schema v1. T07a implements audio clips; T07b implements native seek/loop transport. T08b implements saved schema-v3 effect gain automation.
 
 ## Positions and tempo
@@ -56,7 +60,7 @@ Clip start is relative to the session; note start is relative to its clip. Note 
 
 Track IDs remain unique within the session; clip IDs are unique within a track; note IDs are unique within a clip. Every ID is 1–128 UTF-8 bytes. T06 limits: 64 tracks, 1,024 note clips total, 16,384 notes total, and 64 simultaneous voices across the session, including release tails. Validation computes peak overlap of voice lifetimes and rejects excess polyphony rather than stealing voices; this must happen before session commit as well as preparation. A continuous track consumes one voice slot. Validate before publishing any replacement. Keep the 1 MiB request/session-file bound; it may limit content before the item caps do.
 
-T06 originally implemented notes only; T07a now supports the audio clips described in [the asset contract](audio-assets.md). Persisted loop fields and automation fields remain unsupported. Native transport.seek and transport.loop now implement the temporary controls described below. It exposes only working note rendering and its actual validation limits in capabilities. Native playback is enabled only at the matching session rate, after callback preparation and lifecycle verification. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
+T06 originally implemented notes only; T07a now supports the audio clips described in [the asset contract](audio-assets.md). Persisted loop fields remain unsupported; schema v2 rejects automation, while v3 and later supported schemas carry saved gain lanes. Native transport.seek and transport.loop now implement the temporary controls described below. It exposes only working note rendering and its actual validation limits in capabilities. Native playback is enabled only at the matching session rate, after callback preparation and lifecycle verification. Browser Web Audio must also reject unsupported v2 audition rather than sounding every track continuously.
 
 ## Note envelope and clip ends
 
@@ -83,11 +87,11 @@ The fixtures encode note-off priority 1 and note-on priority 3, with reset prior
 
 ## Seek, stop, and loops (T07)
 
-Keep output position separate from timeline position. Output position counts emitted frames monotonically; timeline position can jump. Pause retains phase and position while emitting device silence. Stop clears voices and sets timeline position to zero. Play after Stop starts at zero; future seek explicitly chooses another start. Existing wall-time audition limits remain independent of either position.
+Keep output position separate from timeline position. Output position counts emitted frames monotonically; timeline position can jump. Pause retains phase and position while emitting device silence. Stop clears voices and sets timeline position to zero. Play after Stop starts at zero; seek explicitly chooses another start. Existing wall-time audition limits remain independent of either position.
 
 A loop is [start,end), with end > start. Playing from before the region plays that lead-in once, then loops; playing or seeking at/after end wraps to start before sampling when the loop is enabled. Seeking inside the region uses the requested frame. At a wrap, clear all voices, including release tails, reset automation to the destination value, then process events exactly at loop start. Do not process source events at the excluded loop end. The wrap does not emit an extra silent frame.
 
-Initial seek and loop wrap use no note chase: a note whose onset was before the destination is not retriggered. Notes beginning at the destination do trigger. Audio clips (once implemented) begin at their corresponding source offset even when entered partway through. Stop/seek/wrap may click because they clear active voices; crossfades and note chase are deferred explicitly. Offline export is a linear frame-zero render that ignores the live loop setting; rendering repeated loops needs a separate explicit option later.
+Initial seek and loop wrap use no note chase: a note whose onset was before the destination is not retriggered. Notes beginning at the destination do trigger. Audio clips begin at their corresponding source offset even when entered partway through. Stop/seek/wrap may click because they clear active voices; crossfades and note chase are deferred explicitly. Offline export is a linear frame-zero render that ignores the live loop setting; rendering repeated loops needs a separate explicit option later.
 
 ## Audio and automation boundaries
 
@@ -111,6 +115,6 @@ Review each commit's error and callback paths with the primary model. Luna can o
 
 ## Fixtures and review
 
-[Timeline fixtures](../../examples/sessions/timeline-contract.json) are marked `design_only_not_loadable`; they are not sessions and must not be passed to `session.load`. Run `python3 examples/check_timeline_contract.py` to check hand-authored expected frames against the reference calculations. Cases cover absolute tick rounding, a half-frame tie, adjacent half-open note gates, same-frame stable order, and loop-end exclusion/reset without note chase.
+[Timeline fixtures](../../../examples/sessions/timeline-contract.json) are marked `design_only_not_loadable`; they are not sessions and must not be passed to `session.load`. Run `python3 examples/check_timeline_contract.py` to check hand-authored expected frames against the reference calculations. Cases cover absolute tick rounding, a half-frame tie, adjacent half-open note gates, same-frame stable order, and loop-end exclusion/reset without note chase.
 
 Reviewed tradeoffs: frame anchoring avoids accidental retiming but offers no automatic musical stretch; clip-bounded tails prevent spill but can click; rejecting excess voices avoids nondeterministic stealing; no note chase makes seek semantics simple but omits held notes spanning the destination. These choices are deliberate first-version limits, not inferred implementation defaults.

@@ -1,8 +1,10 @@
 # Opus UI review — 2026-10-03
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 Requested UI/UX/usability review, completed using pi with the OpenCode provider, `claude-opus-5-5`, medium thinking, without tools or repository write access. The user explicitly approved sending the two saved demo UI screenshots and `gui/index.html`, `gui/style.css` and `gui/timeline.js` in the review prompt. The earlier rejected transfer was not performed.
 
-Evidence: shipped UI at a 481-pixel viewport, plus the layout and timeline source. The screenshots predate this review; no UI code changed between capture and review. Live recapture timed out. Desktop recommendations are inferred from source, not verified in a desktop browser. Recommendations are proposals, not implemented capabilities; the accepted/qualified scope is in [UI-PLAN.md](UI-PLAN.md).
+Evidence: shipped UI at a 481-pixel viewport, plus the layout and timeline source. The screenshots predate this review; no UI code changed between capture and review. Live recapture timed out. Desktop recommendations are inferred from source, not verified in a desktop browser. Recommendations are proposals, not implemented capabilities; the accepted/qualified scope is in [UI-PLAN.md](../../UI-PLAN.md).
 
 The response below is preserved in full. Its “Bug” labels mix source defects and visual judgments; the UI plan distinguishes those when deciding implementation scope. In particular, mute is still a later product feature, the stored velocity range remains 0–1, and no exact screenshot coordinates or measured contrast claims are adopted as acceptance criteria. A local source cross-check also confirms New/demo replacement already has a confirmation in `gui/app.js`, which was not included in the external prompt. Error replacement happens on renders/lock-state changes, not every transport poll. Those qualifications are incorporated in the UI plan.
 

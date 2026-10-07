@@ -1,5 +1,9 @@
 # VST3 adapter boundaries
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+This cumulative record retains original offline design requirements and dated acceptance evidence. Later sections describe implemented live playback and control delivery; prospective wording in the first-slice design is historical. Current scope is summarized in [PROTOCOL.md](../../PROTOCOL.md).
+
 T09c implements the offline boundary through schema-v4 sessions and JSONL rendering. T09d adds an experimental in-process native playback path behind `vst3-live`. `native/vst3/effect_probe.inc` also remains an offline diagnostic. `src/engine.rs` prepares source stems and gains; `src/plugin_render.rs` serially applies foreign effects through `src/hosting.rs` before final mixing.
 
 ## First supported slice
@@ -39,7 +43,7 @@ Live sessions require a 48 kHz session and device, stereo float32 plugin process
 
 The queue holds 1024 frames, about 21.3 ms at 48 kHz, before device latency. An underrun emits silence and leaves the timeline unchanged; `plugin_worker_underruns` is exposed in transport status and CLI output. Startup times out after five seconds. Shutdown waits two seconds; if the worker remains hung, the engine detaches it and reports explicit stop failure. In-process plugin crashes can terminate the engine. Offline plugin rendering remains isolated in owned child processes.
 
-T09e now exposes continuous sine schema-v4 effect chains in the browser, including saved VST3 imports, bypass, saved normalized parameter values, and reuse. DSP remains native; browser Web Audio supports v1 sine audition only. Notes/audio clips and plugin windows are not editable here.
+T09e now exposes continuous sine schema-v4 effect chains in the browser, including saved VST3 imports, bypass, saved normalized parameter values, and reuse. DSP remains native; browser Web Audio supports v1 sine audition only. Sequenced plugin sessions and plugin windows remain outside this editor. Built-in note/audio arrangements without foreign effects are editable through the separate arrangement workflow.
 
 ## Implemented worker boundary
 

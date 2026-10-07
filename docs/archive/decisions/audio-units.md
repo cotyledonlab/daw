@@ -1,5 +1,7 @@
 # Audio Unit offline adapter
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 Schema v5 adds a bounded, macOS-only offline AUv2 effect adapter. It is derived from the standalone T10a lifecycle proof and currently accepts Apple's AULowpass only. The adapter is an owned child-process renderer; it does not add AU support to the GUI or native live player.
 
 ## Session contract
@@ -24,4 +26,4 @@ Load and replace validate and prepare every foreign effect before committing a n
 
 The T10a standalone proof found 23 registered Apple effects on the tested host and established lifecycle, cutoff response, binary property-list restore, and teardown for AULowpass. It used a synthetic 1 kHz source and opened no audio device. Its measured RMS values were 0.070968 at 10 kHz and 0.002876 at 200 Hz; restored output matched within 1e-6 maximum absolute sample error. Five proof runs with AddressSanitizer and UndefinedBehaviorSanitizer completed without diagnostics. These checks cover the proof host and Apple's closed-source DSP was not instrumented. They do not establish acoustic output or live callback safety.
 
-AUv3, third-party/other AU components, instruments, event buses, plugin windows, automation, non-stereo layouts, other rates, and native AU playback remain unsupported. The browser editor and upload guard do not support schema v5. VST3 editing/reuse in its supported schema-v4 GUI flow is unchanged. See [the protocol](../PROTOCOL.md) and [the standalone proof notes](../../native/au/README.md).
+AUv3, third-party/other AU components, instruments, event buses, plugin windows, automation, non-stereo layouts, other rates, and native AU playback remain unsupported. The browser editor and upload guard do not support schema v5. VST3 editing/reuse in its supported schema-v4 GUI flow is unchanged. See [the protocol](../../PROTOCOL.md) and [the standalone proof notes](../../../native/au/README.md).

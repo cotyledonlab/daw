@@ -1,8 +1,10 @@
 # VST3 hosting decision record
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 ## Current result
 
-The reference probes under [`native/vst3`](../../native/vst3/README.md) remain diagnostic tools. T09c now loads and renders scripted schema-v4 VST3 effect sessions through owned children. An optional experimental native player hosts VST3 effects through a dedicated DSP worker; the browser GUI exposes controls for effects loaded from saved continuous sine sessions. The engine remains authoritative, and its offline renderer is not suitable for direct audio-callback use.
+The reference probes under [`native/vst3`](../../../native/vst3/README.md) remain diagnostic tools. T09c now loads and renders scripted schema-v4 VST3 effect sessions through owned children. An optional experimental native player hosts VST3 effects through a dedicated DSP worker; the browser GUI exposes controls for effects loaded from saved continuous sine sessions. The engine remains authoritative, and its offline renderer is not suitable for direct audio-callback use.
 
 The spike uses Steinberg's official `pluginterfaces` source pinned to commit `31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c` (`v3.8.0_build_66`). It builds with the system `clang++` and CoreFoundation, without CMake. The build copies the SDK's MIT license notice to `output/vst3-spike/STEINBERG-LICENSE.txt`; generated SDK material and binaries stay under ignored `output/`.
 
@@ -12,11 +14,11 @@ The spike does not cover editor windows, instrument processing, general layouts,
 
 ## Decision
 
-Expose the completed offline adapter through `offline_vst3` capabilities and schema-v4 JSONL rendering. Keep live plugin-hosting capabilities false until native playback and callback lifecycle are verified. The original scanner/probes remain diagnostics.
+Expose the completed offline adapter through `offline_vst3` capabilities and schema-v4 JSONL rendering. Experimental live plugin-hosting capabilities are now advertised by macOS `vst3-live` builds; the adapter record describes the bounded worker/callback evidence and remaining limits. The original scanner/probes remain diagnostics.
 
 Use the existing C++ child as the reference for the next bounded offline adapter: its lifecycle, state bounds, failure containment, and effect automation have direct tests here. The Rust candidate remains viable, but a short render does not validate the same ownership/state constraints. This is a choice for the offline slice, not a decision about production callback hosting. No new dependency enters the portable Rust core in this ticket.
 
-## Next steps
+## Original delivery steps (completed)
 
 1. **T09c: offline session integration.** Follow [the adapter boundary](vst3-adapter.md): pin exact identity, validate buses/state/parameters before output creation, feed prepared track audio into an owned bounded child, and propagate explicit failures. Introduce session/protocol fields only with working processing. Preserve fresh outputs, transactional replacement, and portable builds.
 2. **T09d: native ownership and callback review.** Compare the Rust `RealtimePluginRunner` and a thin C++ shim against DAW-owned buffers, automation queues, teardown handoff, and callback allocation/timing. Choose playback isolation separately. Plugin loading, state, and destruction remain off callback. Add live capability only after measured integration.

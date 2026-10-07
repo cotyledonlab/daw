@@ -1,5 +1,7 @@
 # Rust VST3 host candidate trial
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 Trial date: 2026-09-30. This is a bounded source and build-feasibility check of `HelgeSverre/rust-vst3-host` v0.9.0. It does not establish DAW plugin support.
 
 ## Revision and build result

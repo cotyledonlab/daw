@@ -1,5 +1,9 @@
 # VST3 host binding comparison
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+Historical binding comparison: the subsequent bounded C++ adapter and experimental native worker are delivered. Candidate research and dated probe evidence below do not represent the active plan; see [the adapter record](vst3-adapter.md) and [PLAN.md](../../PLAN.md).
+
 Research snapshot: 2026-09-30. T09 needs discovery, load, process, automation, state, teardown, and crash containment evidence. This note compares implementation starting points; it does not establish DAW plugin support.
 
 ## Findings

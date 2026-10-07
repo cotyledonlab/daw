@@ -1,6 +1,10 @@
 # Native audio spike
 
-T04 adds optional macOS playback through CPAL 0.15.3. That version was available in the local dependency cache, compiled successfully in this workspace and provides the needed CoreAudio lifecycle. It is pinned for this spike; upgrading it is a separate compatibility check. T04b adds a native transport service and GUI output selection. No plugin host or native live session editing is implemented.
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
+Current scope, reconciled 2026-10-07: prepared timeline playback, until-stopped built-in/Pd transport, mixer meters, metronome/count-in and GUI note overdub are delivered. Foreign modes retain narrower limits. This record preserves the original spike and its dated hardware evidence; use [PROTOCOL.md](../../PROTOCOL.md) for current transport contracts.
+
+T04 adds optional macOS playback through CPAL 0.15.3. That version was available in the local dependency cache, compiled successfully in this workspace and provides the needed CoreAudio lifecycle. It is pinned for this spike; upgrading it is a separate compatibility check. T04b adds a native transport service and GUI output selection. Later slices add experimental worker-backed VST3 and live runtime playback with eligible saved-control edits; structural editing remains stopped. The spike evidence below retains its original scope.
 
 ## Commands
 
@@ -11,7 +15,7 @@ target/debug/daw play path/to/session.json 2
 target/debug/daw play path/to/session.json 2 0.1
 ```
 
-`devices` returns JSON describing outputs and the default output name. `play` accepts a regular session JSON file, duration from 0.001 to 60 seconds, and optional volume from 0 to 1 (default 0.25). It uses the system's current default output without changing system settings. Playback ends automatically; Ctrl+C terminates the process and releases its resources. Session state is never written back. Logs go to stderr and the final measurement report goes to stdout. The standalone commands are separate from the interactive JSONL transport described in [PROTOCOL.md](../PROTOCOL.md). Native macOS builds report `live_audio: true`.
+`devices` returns JSON describing outputs and the default output name. `play` accepts a regular session JSON file, duration from 0.001 to 60 seconds, and optional volume from 0 to 1 (default 0.25). It uses the system's current default output without changing system settings. Playback ends automatically; Ctrl+C terminates the process and releases its resources. Session state is never written back. Logs go to stderr and the final measurement report goes to stdout. The standalone commands are separate from the interactive JSONL transport described in [PROTOCOL.md](../../PROTOCOL.md). Native macOS builds report `live_audio: true`.
 
 Enable `native-audio` on macOS. Other builds retain the portable core and return an explicit error for these commands. CPAL supports other platforms, but this spike only enables its dependency on macOS. CI compiles and tests the optional path on macOS without attempting hardware playback.
 
@@ -47,10 +51,10 @@ Portable tests check mono/stereo/multichannel mapping, unsigned silence, malform
 
 A dedicated owner thread creates and drops the CPAL stream. The controller sends commands over an eight-slot bounded queue and waits up to ten seconds for each result. The callback reads scalar atomics for pause and volume and publishes observed state, peak level, and frame count. It never accesses the command queue. A 25 ms owner loop checks device errors and the wall-time limit even when no client polls. Pause emits silence while preserving phase; time paused still consumes the requested duration. Stop drops the stream before responding. Play prepares a new snapshot and starts at frame zero.
 
-The GUI applies drafts before native play and locks track edits for that run. Source switching stops the outgoing player, and generation checks prevent stale status replies from overwriting later commands. Browser audition remains available. The two modes are coordinated within one editing window; there is no cross-tab Web Audio ownership or revision conflict detection yet.
+The GUI applies drafts before native play and locks track edits for that run. Source switching stops the outgoing player, and generation checks prevent stale status replies from overwriting later commands. Browser audition remains available. The two modes are coordinated within one editing window; there is no cross-tab Web Audio ownership. Later revision-checked writes detect stale edits, but do not merge drafts.
 
 Hardware JSONL checks on the same device observed 1,024 submitted frames before pause, no cursor movement across 100 ms paused, and 2,048 frames after resume. Peak level was 0.025 for gain 0.1 at volume 0.25. Volume change, stop, restart, and automatic short-run completion without polling passed. Invalid session replacement preserved active playback; valid replacement stopped it. EOF during active playback exited successfully and a new process reopened the device. GUI checks confirmed native callback state/level, pause silence, resume, and switching to browser output. These are callback and UI observations, not an independent acoustic capture. Device disconnect and hot-swap remain unverified.
 
-Next implement discovery metadata (T01) and revision-checked edits (T02) before extending session editing. Native live graph changes require a separate preparation and callback-boundary design.
+Discovery metadata and revision-checked edits are delivered. Current feature order is in [PLAN.md](../../PLAN.md). Native live graph changes require a separate preparation and callback-boundary design.
 
 Sources: [pinned CPAL documentation](https://docs.rs/cpal/0.15.3/cpal/) and [CPAL repository](https://github.com/RustAudio/cpal).

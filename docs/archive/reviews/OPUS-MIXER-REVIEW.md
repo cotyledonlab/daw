@@ -1,5 +1,7 @@
 # Opus 5.5 mixer design review
 
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../../PLAN.md) and [current contracts](../../PROTOCOL.md). Do not implement archived proposals without a current task.
+
 Received 2026-10-03 through pi/OpenCode, provider `opencode`, model `claude-opus-5-5`, medium thinking. Tools, extensions, skills, prompt/theme discovery, context-file discovery and session storage were disabled. The user explicitly approved the exact prepared payload and destination after the initial automatic approval rejection. The invocation exited successfully; no model substitution was requested.
 
 The prompt contains the pre-implementation active roadmap, compact UI summary and mixer contract. It contains no credentials, unrelated files or runtime state. The prompt and raw response are in ignored `output/opus-mixer-prompt.txt` and `output/opus-mixer-response.txt`. Prompt SHA-256: `98e6331a6b6ef538f3121b24a902576c629bbd2823c8159beddd6a23e0c823db`.

@@ -1,6 +1,6 @@
 # GUI audio import and portable projects
 
-Implemented 2026-10-03. The browser can import an integer PCM WAV into a new audio lane, edit its timeline placement, and save/reopen a ZIP project containing the session and its audio. Rust remains authoritative for session, clip-range and asset validation. This extends the [PCM clip contract](audio-assets.md) without adding arbitrary filesystem routes.
+Implemented 2026-10-03. The browser can import an integer PCM WAV into a new audio lane, edit its timeline placement, and save/reopen a ZIP project containing the session and its audio. Rust remains authoritative for session, clip-range and asset validation. This extends the [PCM clip contract](archive/decisions/audio-assets.md) without adding arbitrary filesystem routes.
 
 ## HTTP contract
 
@@ -12,7 +12,7 @@ All routes use the existing loopback Host/Origin checks and `X-DAW-Token` authen
 | `GET /api/project` | Authenticated request | `application/zip` attachment named `session.daw.zip`, containing `session.json` and exactly its referenced WAV assets |
 | `POST /api/project` | Raw ZIP; `application/zip` or `application/octet-stream`; metadata exactly `{expected_revision}` | `{session, revision}` with newly owned asset paths |
 
-Revisions are canonical unsigned 64-bit decimal strings. Audio import appends a new, uniquely named track; track and clip IDs contain 1–128 UTF-8 bytes. `start_frame` is an integer within the existing timeline limit, and the imported full-length clip must fit that limit. Import supports built-in sessions v1/v2/v3/v4/v9 with gain effects. It explicitly upgrades v1 to v9, retaining its sine devices and adding continuous mode, empty clips/effects and a 120 BPM authoring grid. Other supported versions remain unchanged. Runtime/plugin session scope is unchanged.
+Revisions are canonical unsigned 64-bit decimal strings. Audio import appends a new, uniquely named track; track and clip IDs contain 1–128 UTF-8 bytes. `start_frame` is an integer within the existing timeline limit, and the imported full-length clip must fit that limit. Import supports v1/v2/v3/v4/v9/v10/v11/v12 sessions. Eligible devices are sine/audio/synth/drumkit, plus the constrained Pd instrument in v12. Effects are gain-only through v10, with lowpass/delay also accepted in v11/v12. It explicitly upgrades v1 to v9, retaining its sine devices and adding continuous mode, empty clips/effects and a 120 BPM authoring grid. Other supported versions remain unchanged. Runtime/plugin session scope is unchanged.
 
 Discovery adds `gui_bridge.audio_projects: true` and `gui_bridge.audio_project_limits` with `audio_bytes`, `project_bytes`, `metadata_bytes`, `decoded_bytes` and `assets`.
 
@@ -37,7 +37,7 @@ Session/project operations share a project lock; export observes one consistent 
 
 If an engine connection loss/timeout leaves the commit outcome unknown, staged files are retained until Server teardown. They might belong to the committed session; automatic rollback would risk deleting active audio. The error directs the user to restart the server. Cleanup after a known successful replacement never rolls back its active assets.
 
-Missing registered files fail authoritative preparation/replacement before commit; a prepared stream already owns its decoded snapshot. ZIP saving/reopening requires the files themselves. Native until-stopped playback supports built-in instruments and preloaded PCM with gain effects: seek/loop use memory and callbacks perform no file loading. Until-stopped controls live playback duration; WAV export retains its separate duration limit. See [seek and loop](seek-loop.md) for transport reset behavior.
+Missing registered files fail authoritative preparation/replacement before commit; a prepared stream already owns its decoded snapshot. ZIP saving/reopening requires the files themselves. Native until-stopped playback supports built-in instruments, the sequenced Pd preset and preloaded PCM with gain/lowpass/delay: seek/loop use memory and callbacks perform no file loading. Until-stopped controls live playback duration; WAV export retains its separate duration limit. See [seek and loop](archive/decisions/seek-loop.md) for transport reset behavior.
 
 ## Validation
 
