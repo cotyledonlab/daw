@@ -49,7 +49,7 @@ Only regular matching-rate mono/stereo integer PCM16/24/32 WAVs are accepted. Si
 
 Encoded files are bounded to 32 MiB each; at most 128 unique canonical paths share immutable decoded buffers within the 128 MiB stereo-f64 budget. Declared frame counts and remaining budget are checked before allocation. A transient encoded read adds at most 32 MiB plus one byte, excluding parser overhead and any active snapshot.
 
-Mutations validate the model and final candidate assets before stopping playback and committing. Each render/play prepares a new snapshot, so changed/missing files can fail the next preparation; an already prepared stream owns its audio in memory. Rendering prepares assets before creating output. Callback clip boundaries perform no filesystem access, decoding, allocation, reference-count changes or buffer destruction.
+Replacement/load mutations validate the model and final candidate assets before stopping playback and committing. Eligible [live arrangement updates](PROTOCOL.md#live-arrangement-updates) prepare assets before publication and retain running playback. Each render/play prepares a new snapshot, so changed/missing files can fail the next preparation; an already prepared stream owns its audio in memory. Rendering prepares assets before creating output. Callback clip boundaries perform no filesystem access, decoding, allocation, reference-count changes or buffer destruction.
 
 ## Verification
 

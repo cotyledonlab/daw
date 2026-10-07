@@ -14,7 +14,7 @@ function setup(){
   $('#studio-prompt').value='Lower lead by 3 dB';$('#studio-role').value='engineer';
   const plan={revision:'7',parts:[{role:'engineer',reply:'Reduce lead.',operations:[{op:'gainDb',track_id:'lead',db:-3}]}]};
   const ctx={$,studioConfig:{available:true,operations:contract},studioPending:false,studioHistory:[],sessionRevision:'7',applied:song,draft:structuredClone(song),noteProjectGeneration:0,
-    busy:false,nativeLocked:()=>false,player:{context:null},starting:false,noteRecording:null,historyAction:false,unsupportedSession:false,studioRecorder:null,studioMicStarting:false,studioTranscribing:false,
+    busy:false,nativeLocked:()=>false,editLocked:()=>false,player:{context:null},starting:false,noteRecording:null,historyAction:false,unsupportedSession:false,studioRecorder:null,studioMicStarting:false,studioTranscribing:false,
     SessionEditor:E,StudioActions:Studio,clone:structuredClone,noticeEl:{textContent:'',classList:{contains:()=>false}},
     studioScope:()=>null,studioHasDrafts:()=>false,studioMessage:(...args)=>messages.push(args),syncStatus(){},
     request:async()=>({json:async()=>plan}),
@@ -32,7 +32,7 @@ test('actual prompt handler preserves edits made while a provider was working',a
 });
 test('actual prompt handler preserves typed drafts, active playback and rejected takes',async()=>{
   for(const state of ['drafts','playing','take']){
-    const s=setup();if(state==='drafts')s.ctx.studioHasDrafts=()=>true;if(state==='playing')s.ctx.nativeLocked=()=>true;if(state==='take')s.ctx.noteRecording={pending:true};
+    const s=setup();if(state==='drafts')s.ctx.studioHasDrafts=()=>true;if(state==='playing'){s.ctx.nativeLocked=()=>true;s.ctx.editLocked=()=>true;}if(state==='take')s.ctx.noteRecording={pending:true};
     await s.ctx.sendStudioPrompt();assert.deepEqual(s.ctx.draft,s.song);assert.equal(s.history.undo.length,0);assert.match(s.$('#studio-status').textContent,/No studio edits applied/);
   }
 });
@@ -66,4 +66,9 @@ test('actual microphone transcription preserves newer typing and releases microp
   vm.runInContext(extract('async function toggleStudioMic()', "$('#studio-file-action').addEventListener"),s.ctx);
   await s.ctx.toggleStudioMic();await s.ctx.studioRecorder.stop();
   assert.equal(stopped,true);assert.equal(s.ctx.studioTranscribing,false);assert.equal(s.ctx.studioRecorder,null);assert.equal(s.$('#studio-prompt').value,'A new typed direction');assert.deepEqual(s.messages.at(-1),['Voice transcript','Lower the melody by 3 dB']);
+});
+
+test('actual prompt handler applies relative edits during supported native playback',async()=>{
+  const s=setup();s.ctx.nativeLocked=()=>true;s.ctx.editLocked=()=>false;await s.ctx.sendStudioPrompt();
+  assert.equal(s.history.undo.length,1);assert.notDeepEqual(s.ctx.applied,s.song);
 });

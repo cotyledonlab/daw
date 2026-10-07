@@ -31,6 +31,7 @@ enum NoteSound {
 
 #[derive(Debug)]
 struct PreparedNote {
+    identity: (String, String, String),
     track_index: usize,
     start: u64,
     off: u64,
@@ -188,6 +189,7 @@ impl Engine {
                     ordered.push((
                         (&track.id, &clip.id, &note.id),
                         PreparedNote {
+                            identity: (track.id.clone(), clip.id.clone(), note.id.clone()),
                             track_index,
                             start,
                             off,
@@ -250,6 +252,52 @@ impl Engine {
             output_position: 0,
             loop_region: None,
         })
+    }
+
+    /// Prepared replacement adopts ongoing state on the owned render worker.
+    /// Past new notes are not chased; retained notes continue with their phase.
+    pub fn adopt_live(&mut self, previous: &mut Self, old: &Session, new: &Session) {
+        let frame = previous.frame_position;
+        // Internal playback may advance beyond the authoring/seek limit.
+        // Retain that position directly rather than validating it as a new seek.
+        self.frame_position = frame;
+        self.reset_schedules(frame);
+        self.output_position = previous.output_position;
+        self.loop_region = previous.loop_region;
+        for voice in &mut self.voices {
+            if let Some(prior) = previous
+                .voices
+                .iter()
+                .find(|v| v.track_index == voice.track_index)
+            {
+                voice.phase = prior.phase;
+            }
+        }
+        for active in &previous.active[..previous.active_count] {
+            let prior = &previous.notes[active.index];
+            if let Ok(index) = self
+                .notes
+                .binary_search_by(|n| n.identity.cmp(&prior.identity))
+            {
+                let note = &self.notes[index];
+                if note.start < frame && frame < note.end && self.active_count < MAX_VOICES {
+                    self.active[self.active_count] = ActiveNote {
+                        index,
+                        phase: active.phase,
+                        filter: active.filter,
+                    };
+                    self.active_count += 1;
+                }
+            }
+        }
+        // Removal can change identity ranks; keep the renderer's summation order.
+        self.active[..self.active_count].sort_unstable_by_key(|v| v.index);
+        if let (Some(chains), Some(prior)) = (&mut self.effect_chains, &mut previous.effect_chains)
+        {
+            for (index, chain) in chains.iter_mut().enumerate() {
+                chain.adopt_live(&mut prior[index], &old.tracks[index], &new.tracks[index]);
+            }
+        }
     }
 
     pub fn has_pd(&self) -> bool {

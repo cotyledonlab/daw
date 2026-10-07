@@ -38,10 +38,14 @@ Existing automated export/reopen and muted native checks are complete. Listening
 
 The finishing and note-recording workflow demos passed ZIP/fresh-server reopen and byte-identical unclipped export; the finishing demo also passed muted native callbacks. This does not close acoustic listening acceptance. Agents currently inspect session data, not audio; runtime program/plugin-hosting expansion remains outside this slice.
 
+## Requested live arrangement editing
+
+- [x] Keep built-in native playback running while applying mixer, sound/effect, automation, note and clip edits. Prepared worker updates retain untouched voice/effect state; stale/unsupported/queue-full failures preserve the applied project. Focused DSP/callback/bridge/editor regressions and the browser passed live note/clip/mixer edits, Undo and a real engineer prompt. The muted live-editing workflow passed snapshot Undo/Redo, pause/resume, rejected updates and ZIP/fresh-server byte-identical unclipped exports with no callback budget overruns or steady worker underruns. Track/device-kind/rate/runtime replacement remains stopped; acoustic listening remains open.
+
 ## After MVP
 
 Quantize/MIDI-file import/export can be the next feature slice when requested. Broader UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** listen quietly to the reopened finishing-workflow WAV and report any clicks, silence or mix/editing problems; retry the voice smoke check after a valid ElevenLabs key is configured. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; retry voice after a valid ElevenLabs credential is configured. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).

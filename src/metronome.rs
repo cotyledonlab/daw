@@ -39,6 +39,10 @@ impl Metronome {
             count_in_remaining: count_in_total,
         })
     }
+    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+    pub(crate) fn set_tempo(&mut self, tempo: u32) {
+        self.tempo = tempo;
+    }
     pub fn enabled(&self) -> bool {
         self.enabled
     }

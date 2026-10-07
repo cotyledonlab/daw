@@ -336,16 +336,16 @@ class Handler(BaseHTTPRequestHandler):
             data = strict_json(body)
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
-            if self.path in ("/api/session", "/api/note/take"):
+            if self.path in ("/api/session", "/api/session/live", "/api/note/take"):
                 if set(data) not in ({"session"}, {"session", "expected_revision"}):
                     raise ValueError("Expected session and optional expected_revision only.")
-                if self.path == "/api/note/take" and "expected_revision" not in data:
+                if self.path in ("/api/note/take", "/api/session/live") and "expected_revision" not in data:
                     raise ValueError("A recorded take requires expected_revision.")
                 if "expected_revision" in data:
                     validate_revision(data["expected_revision"])
                 validate_editor_session_shape(data["session"])
                 self.server.projects.registered(data["session"])
-                result = self.server.engine.call("session.replace", data)
+                result = self.server.engine.call("session.update_live" if self.path == "/api/session/live" else "session.replace", data)
                 if self.path == "/api/note/take":
                     result = self.server.engine.call("session.inspect")
                 self.send_json(200, result)

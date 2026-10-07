@@ -22,6 +22,8 @@ struct Block {
     timeline: [u64; FRAMES],
     peaks: MixerPeaks,
     generation: u64,
+    session_revision: u64,
+    tempo: u32,
 }
 impl Default for Block {
     fn default() -> Self {
@@ -30,6 +32,8 @@ impl Default for Block {
             timeline: [0; FRAMES],
             peaks: MixerPeaks::default(),
             generation: 0,
+            session_revision: 0,
+            tempo: 120000,
         }
     }
 }
@@ -45,6 +49,7 @@ struct Shared {
     target: AtomicU64,
     loop_start: AtomicU64,
     loop_end: AtomicU64,
+    audible_revision: AtomicU64,
 }
 // SPSC slot ownership: producer publishes with Release; consumer returns the
 // slot with Release. Neither accesses a slot while the other owns it.
@@ -62,8 +67,39 @@ pub(crate) struct Reader {
 pub(crate) struct Worker {
     shared: Arc<Shared>,
     handle: Option<JoinHandle<Result<(), String>>>,
+    updates: std::sync::mpsc::SyncSender<(Engine, Session, u64)>,
+    session: Session,
 }
 impl Worker {
+    #[cfg(test)]
+    pub(crate) fn update(&mut self, session: Session, revision: u64) -> Result<(), String> {
+        validate_live_update(&self.session, &session)?;
+        let engine = Engine::prepare(&session)?;
+        self.update_prepared(engine, session, revision)
+    }
+    pub(crate) fn update_prepared(
+        &mut self,
+        engine: Engine,
+        session: Session,
+        revision: u64,
+    ) -> Result<(), String> {
+        validate_live_update(&self.session, &session)?;
+        if self.shared.failed.load(Acquire) || self.shared.stop.load(Acquire) {
+            return Err("arrangement worker is unavailable".into());
+        }
+        self.updates
+            .try_send((engine, session.clone(), revision))
+            .map_err(|_| "arrangement update queue is full or closed".to_string())?;
+        self.session = session;
+        Ok(())
+    }
+
+    pub(crate) fn audible_revision(&self) -> u64 {
+        self.shared.audible_revision.load(Acquire)
+    }
+    pub(crate) fn live_edits_available(&self) -> bool {
+        validate_live_update(&self.session, &self.session).is_ok()
+    }
     pub(crate) fn underruns(&self) -> u64 {
         self.shared.underruns.load(Relaxed)
     }
@@ -97,6 +133,9 @@ impl Reader {
         if self.offset < FRAMES {
             peaks.merge(&self.block.peaks);
         }
+    }
+    pub(crate) fn tempo(&self) -> u32 {
+        self.block.tempo
     }
     pub(crate) fn frame_position(&self) -> u64 {
         self.timeline
@@ -168,6 +207,9 @@ impl Reader {
             }
         }
         if self.offset == 0 {
+            self.shared
+                .audible_revision
+                .store(self.block.session_revision, Release);
             peaks.merge(&self.block.peaks);
         }
         let sample = self.block.audio[self.offset];
@@ -177,6 +219,34 @@ impl Reader {
         Ok(Some(sample))
     }
 }
+pub(crate) fn validate_live_update(old: &Session, new: &Session) -> Result<(), String> {
+    new.validate()?;
+    let builtins = |session: &Session| {
+        session.tracks.iter().all(|t| {
+            matches!(
+                t.device,
+                crate::session::Device::Sine { .. }
+                    | crate::session::Device::Synth { .. }
+                    | crate::session::Device::Drumkit { .. }
+                    | crate::session::Device::Audio { .. }
+            ) && t.effects.iter().flatten().all(|e| e.is_builtin())
+        })
+    };
+    if !builtins(old)
+        || !builtins(new)
+        || old.sample_rate != new.sample_rate
+        || old.tracks.len() != new.tracks.len()
+        || old.tracks.iter().zip(&new.tracks).any(|(a, b)| {
+            a.id != b.id
+                || a.mode != b.mode
+                || std::mem::discriminant(&a.device) != std::mem::discriminant(&b.device)
+        })
+    {
+        return Err("live edits require the same ordered built-in tracks, device kinds, modes and sample rate; stop playback for track or foreign-runtime changes".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
     session.validate()?;
     let shared = Arc::new(Shared {
@@ -194,8 +264,11 @@ pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
         target: AtomicU64::new(0),
         loop_start: AtomicU64::new(0),
         loop_end: AtomicU64::new(0),
+        audible_revision: AtomicU64::new(0),
     });
-    let session = session.clone();
+    let mut session = session.clone();
+    let saved_session = session.clone();
+    let (updates, pending_updates) = std::sync::mpsc::sync_channel::<(Engine, Session, u64)>(1);
     let producer = Arc::clone(&shared);
     let (ready, startup) = std::sync::mpsc::sync_channel(1);
     let handle = thread::Builder::new()
@@ -221,8 +294,11 @@ pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
                     }
                 };
                 let mut generation = 0;
+                let mut session_revision = 0;
                 let mut announced = false;
                 let mut block = Block::default();
+                let mut transition = [[0.0; 2]; 64];
+                let mut transition_pending = false;
                 while !producer.stop.load(Acquire) {
                     let revision = producer.revision.load(Acquire);
                     if revision % 2 != 0 {
@@ -241,6 +317,16 @@ pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
                         engine.seek(target)?;
                         generation = revision;
                     }
+                    if let Ok((mut prepared, next_session, revision)) = pending_updates.try_recv() {
+                        prepared.adopt_live(&mut engine, &session, &next_session);
+                        if session != next_session {
+                            engine.render_block(&mut transition);
+                            transition_pending = true;
+                        }
+                        engine = prepared;
+                        session = next_session;
+                        session_revision = revision;
+                    }
                     let write = producer.write.load(Relaxed);
                     let read = producer.read.load(Acquire);
                     if write.wrapping_sub(read) == CAPACITY {
@@ -252,11 +338,23 @@ pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
                         continue;
                     }
                     block.generation = generation;
+                    block.session_revision = session_revision;
+                    block.tempo = session.tempo_milli_bpm.unwrap_or(120000);
                     block.peaks = MixerPeaks::default();
                     for index in 0..FRAMES {
                         engine.render_block(&mut block.audio[index..index + 1]);
                         block.timeline[index] = engine.frame_position();
                         block.peaks.merge(engine.mixer_peaks());
+                    }
+                    if transition_pending {
+                        for (index, prior) in transition.iter().enumerate() {
+                            let blend = (index + 1) as f64 / transition.len() as f64;
+                            for (channel, sample) in prior.iter().enumerate() {
+                                block.audio[index][channel] =
+                                    sample * (1.0 - blend) + block.audio[index][channel] * blend;
+                            }
+                        }
+                        transition_pending = false;
                     }
                     // SAFETY: capacity check reserves this producer-owned slot.
                     unsafe {
@@ -275,6 +373,8 @@ pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {
     let mut worker = Worker {
         shared: Arc::clone(&shared),
         handle: Some(handle),
+        updates,
+        session: saved_session,
     };
     match startup.recv_timeout(Duration::from_secs(15)) {
         Ok(Ok(())) => Ok((
