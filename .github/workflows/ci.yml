@@ -3,6 +3,9 @@ on:
   push:
     branches: [master]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
     strategy:
@@ -17,6 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}
       - run: python3 examples/check_timeline_contract.py
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
