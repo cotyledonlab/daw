@@ -12,7 +12,7 @@ The three implementation gates are delivered: a musical drum/bass/lead loop; a p
 
 ### 1. Restore UI consistency
 
-Address the [Opus consistency review and source qualifications](OPUS-UI-CONSISTENCY-REVIEW.md) through the focused passes in [UI-PLAN.md](UI-PLAN.md). The review is complete; its recommended fixes are not implemented.
+Address the [Opus consistency review and source qualifications](OPUS-UI-CONSISTENCY-REVIEW.md) through the focused passes in [UI-PLAN.md](UI-PLAN.md). Pass A is implemented: CSS/control consistency and ruler-edge fixes are complete. Continue with labels/units in pass B, then passes C–D.
 
 1. Consolidate CSS and control typography/geometry; fix undefined tokens and inconsistent statuses without changing behavior.
 2. Clarify gain stages, musical units, device names and selection/state colors while preserving exact stored values.
@@ -57,4 +57,4 @@ This table preserves possible later directions, not a delivery commitment or per
 - Freeze new host formats, standalone probes, AU breadth, subscriptions/MCP and broad refactors unless they fix a regression or block the active musical slice.
 - When parallel work is explicitly requested, use distinct file owners and one integration owner, particularly for `gui/app.js`. Close work through one shared musical fixture.
 
-**Next action:** UI pass A from [UI-PLAN.md](UI-PLAN.md), collecting quiet listening/composition feedback alongside it. Complete the remaining consistency passes before quantize/MIDI-file work.
+**Next action:** UI pass B from [UI-PLAN.md](UI-PLAN.md), collecting quiet listening/composition feedback alongside it. Complete the remaining consistency passes before quantize/MIDI-file work.

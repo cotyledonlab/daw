@@ -1,10 +1,10 @@
 # Active UI consistency checklist
 
-Updated 2026-10-07. This checklist supports [PLAN.md](PLAN.md); it is not a second roadmap. The [Opus review](OPUS-UI-CONSISTENCY-REVIEW.md) is complete, but all implementation passes below remain open. Completed sequencer/MVP delivery and acceptance are in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md) and the [archived UI checklist](archive/UI-PLAN-2026-10-04.md).
+Updated 2026-10-07. This checklist supports [PLAN.md](PLAN.md); it is not a second roadmap. The [Opus review](OPUS-UI-CONSISTENCY-REVIEW.md) is complete, Pass A is implemented; passes B–D remain open. Completed sequencer/MVP delivery and acceptance are in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md) and the [archived UI checklist](archive/UI-PLAN-2026-10-04.md).
 
 ## Pass A — CSS, legibility and control geometry
 
-Status: pending. Primary file: `gui/style.css`. Review findings F4, F5, F8, F9, F11 and F15; investigate F16/F17 before changing canvas/meter geometry.
+Status: complete (2026-10-07). Primary file: `gui/style.css`. Review findings F4, F5, F8, F9, F11 and F15; investigate F16/F17 before changing canvas/meter geometry.
 
 - Consolidate duplicate rules into their effective values; replace undefined `--text-secondary` and remove the checkbox `!important` workaround with scoped selectors.
 - Use consistent sans/mono tokens, numeric alignment, label/body/status scales and focus treatment. Eliminate unreadable 8–9px status/peak text; verify computed styles per element, including the existing 12px metadata-error override.
@@ -13,6 +13,10 @@ Status: pending. Primary file: `gui/style.css`. Review findings F4, F5, F8, F9, 
 - Verify ruler-edge labels, desktop canvas empty space and mixer meter bounds. Preserve readable fixed canvas geometry until a browser-verified replacement also preserves gestures and pointer mapping.
 
 Acceptance: compare 1280×800, 900px and 481px layouts, plus 320px overflow/target checks. No page-wide overflow, clipped labels or unreadable statuses; canvas/mixer scrolling stays local. Verify focus and disabled styles. CSS-only movement does not require new regressions; test geometry/pointer behavior that actually changes.
+
+Implemented shared sans/mono and standard/compact control tokens, consolidated duplicate rules and responsive breakpoints, scoped checkbox rows, consistent focus/error treatment, readable status/peak text and section/track/effect hierarchy. Arrangement and piano-roll endpoint labels no longer clip. The 1000px SVG geometry stays fixed: browser inspection confirmed readable local scrolling and meter bars within their bounds, so canvas scaling and rotated meter geometry were retained.
+
+Verified the musical demo with a selected phrase at 1280×800, 900×800, 481×800 and 320×800: no page-wide overflow; canvas and mixer scrolling stay local. Checked gain-effect/automation controls, disabled styles, keyboard focus, and muted native Play/Pause/Stop with meters inside their bounds. Status paragraphs compute to 12px; peak readouts compute to 10px; the metadata-error override remains 12px. All 24 timeline tests pass, including gesture mapping and exact note/fade preservation. No session mutation handler changed. Local screenshot evidence: `output/ui-consistency-pass-a-desktop.jpg` (ignored). Quiet acoustic listening remains open.
 
 ## Pass B — Labels, units and state identity
 
@@ -56,4 +60,4 @@ Quantize and MIDI-file import/export are the next feature slice in [PLAN.md](PLA
 
 Quiet composition/listening, physical MIDI and measured latency remain open. The final keyboard-recording browser recheck was completed on 2026-10-04, including Stop/application and whole-take Undo/Redo; evidence remains in history. Recheck recording only where a new UI change affects it.
 
-**Next action:** Pass A; preserve current contracts and use the review's source qualifications rather than mechanically applying every suggestion.
+**Next action:** Pass B; preserve current contracts and use the review's source qualifications rather than mechanically applying every suggestion.
