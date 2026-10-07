@@ -50,7 +50,7 @@ struct Stats {
 impl Stats {
     fn prepared(session: &Session) -> Self {
         if session.schema_version < 10
-            && (session.schema_version < 2
+            && (session.schema_version < 3
                 || crate::pd_playback::validate_live_update(session, session).is_err())
         {
             return Self::default();
