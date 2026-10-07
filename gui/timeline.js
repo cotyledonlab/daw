@@ -308,7 +308,7 @@
       for (let b = 0; b <= beatLength; b += step) {
         const x = 60 + b / beatLength * 930;
         node(roll, 'line', {x1:x,x2:x,y1:24,y2:height,class:'beat-grid'});
-        node(roll, 'text', {x:x + 3,y:16,class:'ruler-text'}, b);
+        node(roll, 'text', {x:x > 960 ? x - 3 : x + 3,y:16,class:'ruler-text','text-anchor':x > 960 ? 'end' : 'start'}, b);
       }
       notes.forEach((n, i) => {
         const group = node(roll, 'g', {class: `roll-note ${selectedNote === n.id ? 'selected' : ''}`, 'data-focus-key': `note:${n.id}`, 'aria-pressed': String(selectedNote === n.id), 'aria-label': `Note ${n.id}, MIDI ${pitches[i]}, beat ${fmt(n.start_frame)}`});
@@ -396,7 +396,8 @@
       for (let b = 0; b <= totalBeats; b += step) {
         const x = 150 + b / totalBeats * 840;
         node(svg, 'line', {x1:x,x2:x,y1:32,y2:height,class:'beat-grid'});
-        node(svg, 'text', {x:x+4,y:21,class:'ruler-text'}, b % 4 === 0 ? `${Math.floor(b / 4) + 1} · ${b}` : String(b));
+        // The endpoint grid line remains; a label here clips or overlaps its neighbour.
+        if (x <= 960) node(svg, 'text', {x:x+4,y:21,class:'ruler-text'}, b % 4 === 0 ? `${Math.floor(b / 4) + 1} · ${b}` : String(b));
       }
       session.tracks.forEach((track, trackIndex) => {
         const y = 36 + trackIndex * 64;
