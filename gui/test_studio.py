@@ -6,7 +6,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from gui.studio import Studio, StudioError, json_object, validate_plan
+from gui.studio import Studio, StudioError, json_object, model_catalog, validate_plan
 from gui.server import ROOT, Server
 
 SESSION = {'schema_version': 1, 'sample_rate': 48000, 'tracks': [
@@ -25,8 +25,49 @@ def response(plan):
 
 class StudioTests(unittest.TestCase):
     def setUp(self):
-        with patch.dict('os.environ', {'OPENCODE_API_KEY': 'private-model-key', 'ELEVEN_API_KEY': 'private-voice-key'}):
+        catalog = patch('gui.studio.model_catalog', return_value={'space-bunny-free', 'big-pickle'})
+        self.catalog = catalog.start()
+        self.addCleanup(catalog.stop)
+        with patch.dict('os.environ', {'OPENCODE_API_KEY': 'private-model-key', 'ELEVEN_API_KEY': 'private-voice-key', 'DAW_STUDIO_MODEL': ''}):
             self.studio = Studio()
+
+    def test_stealth_preference_refreshes_and_recovers_after_model_retirement(self):
+        plan = response({'reply': 'Ready.', 'operations': []})
+        with patch('gui.studio.remote', return_value=plan) as send:
+            for available, expected in [
+                ({'space-bunny-free', 'big-pickle'}, 'space-bunny-free'),
+                ({'big-pickle'}, 'big-pickle'),
+                ({'glm-5.3-flash', 'unknown-free'}, 'glm-5.3-flash'),
+                ({'space-bunny-free'}, 'space-bunny-free'),
+            ]:
+                self.catalog.return_value = available
+                self.studio.prompt(data('engineer'), SNAPSHOT)
+                self.assertEqual(json.loads(send.call_args.args[1])['model'], expected)
+                self.assertEqual(self.studio.status()['model'], expected)
+        self.assertEqual(self.catalog.call_count, 4)
+
+    def test_catalog_outage_keeps_last_selection_and_override_bypasses_discovery(self):
+        plan = response({'reply': 'Ready.', 'operations': []})
+        self.studio.model = 'big-pickle'
+        self.catalog.side_effect = StudioError('Offline')
+        with patch('gui.studio.remote', return_value=plan) as send:
+            self.studio.prompt(data('engineer'), SNAPSHOT)
+            self.assertEqual(json.loads(send.call_args.args[1])['model'], 'big-pickle')
+            with patch.dict('os.environ', {'OPENCODE_API_KEY': 'test', 'DAW_STUDIO_MODEL': 'glm-5.3'}):
+                configured = Studio()
+            self.catalog.reset_mock()
+            configured.prompt(data('engineer'), SNAPSHOT)
+            self.catalog.assert_not_called()
+            self.assertEqual(json.loads(send.call_args.args[1])['model'], 'glm-5.3')
+
+    def test_catalog_is_bounded_public_get_and_rejects_malformed_entries(self):
+        with patch('gui.studio.remote', return_value=b'{"data":[{"id":"big-pickle"}]}') as send:
+            self.assertEqual(model_catalog(), {'big-pickle'})
+        self.assertEqual(send.call_args.args, ('https://opencode.ai/zen/v1/models', None, {}))
+        self.assertEqual(send.call_args.kwargs, {'method': 'GET', 'timeout': 10})
+        for raw in (b'{}', b'{"data":null}', b'{"data":[{}]}', b'{"data":[{"id":7}]}'):
+            with patch('gui.studio.remote', return_value=raw), self.assertRaises(StudioError):
+                model_catalog()
 
     def test_keys_stay_server_side_and_real_provider_payload_is_bounded(self):
         status = json.dumps(self.studio.status())
@@ -51,6 +92,8 @@ class StudioTests(unittest.TestCase):
             result = self.studio.prompt(data(), SNAPSHOT)
         self.assertEqual(send.call_count, 2)
         self.assertEqual([p['role'] for p in result['parts']], ['producer', 'engineer'])
+        self.catalog.assert_called_once_with()
+        self.assertEqual([json.loads(call.args[1])['model'] for call in send.call_args_list], ['space-bunny-free'] * 2)
 
     def test_invalid_plan_gets_one_bounded_correction_without_relaxing_scope(self):
         bad = {'reply': '', 'operations': [{'op': 'gainDb', 'track_id': 'other', 'db': -3}]}
@@ -93,6 +136,7 @@ class StudioTests(unittest.TestCase):
             with patch('gui.studio.remote') as send, self.assertRaises(StudioError):
                 self.studio.prompt({**data(), **change}, SNAPSHOT)
             send.assert_not_called()
+        self.catalog.assert_not_called()
 
     def test_invalid_json_truncation_and_busy_fail_cleanly(self):
         for raw in ['{"a":1,"a":2}', '{"a":NaN}', '[]', 'invalid']:
@@ -126,6 +170,9 @@ class StudioTests(unittest.TestCase):
 
 class StudioBridgeTests(unittest.TestCase):
     def setUp(self):
+        catalog = patch('gui.studio.model_catalog', return_value={'space-bunny-free'})
+        catalog.start()
+        self.addCleanup(catalog.stop)
         self.server = Server(ROOT / 'target/debug/daw')
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

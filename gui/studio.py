@@ -13,6 +13,10 @@ CONTRACT = json.loads(Path(__file__).with_name('studio_contract.json').read_text
 ROLES = ('producer', 'engineer', 'musician')
 MAX_OPERATIONS = 128
 MAX_RESPONSE = 2 * 1024 * 1024
+# Vetted chat-completions stealth candidates, in our preference order.
+# Zen's catalog exposes availability, not quality rankings or stealth labels.
+STEALTH_MODELS = ('space-bunny-free', 'big-pickle')
+FALLBACK_MODEL = 'glm-5.3-flash'
 
 
 class StudioError(ValueError):
@@ -24,10 +28,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise StudioError('Provider redirect refused.')
 
 
-def remote(url, body, headers, limit=MAX_RESPONSE):
-    request = urllib.request.Request(url, body, {**headers, 'User-Agent': 'DAW-Studio/1.0'}, method='POST')
+def remote(url, body, headers, limit=MAX_RESPONSE, *, method='POST', timeout=60):
+    request = urllib.request.Request(url, body, {**headers, 'User-Agent': 'DAW-Studio/1.0'}, method=method)
     try:
-        with urllib.request.build_opener(NoRedirect).open(request, timeout=60) as response:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=timeout) as response:
             result = response.read(limit + 1)
         if len(result) > limit:
             raise StudioError('Provider response exceeded the size limit.')
@@ -36,6 +40,15 @@ def remote(url, body, headers, limit=MAX_RESPONSE):
         # Do not echo upstream bodies, authorization headers or user content.
         code = getattr(error, 'code', None)
         raise StudioError(f'Provider request failed{f" (HTTP {code})" if code else ""}. Check server credentials, credits and network.') from None
+
+
+def model_catalog():
+    catalog = json_object(remote('https://opencode.ai/zen/v1/models', None, {}, method='GET', timeout=10))
+    entries = catalog.get('data')
+    if (not isinstance(entries, list)
+            or any(not isinstance(entry, dict) or not isinstance(entry.get('id'), str) for entry in entries)):
+        raise StudioError('Provider returned an invalid model catalog.')
+    return {entry['id'] for entry in entries}
 
 
 def json_object(raw):
@@ -105,7 +118,8 @@ class Studio:
     def __init__(self):
         self.key = os.environ.get('OPENCODE_API_KEY', '')
         self.voice_key = os.environ.get('ELEVEN_API_KEY', '') or os.environ.get('ELEVENLABS_API_KEY', '')
-        self.model = os.environ.get('DAW_STUDIO_MODEL', 'glm-5.3-flash')
+        self.model_override = os.environ.get('DAW_STUDIO_MODEL', '').strip()
+        self.model = self.model_override or STEALTH_MODELS[0]
         self.voice_id = os.environ.get('DAW_STUDIO_VOICE_ID', 'JBFqnCBsd6RMkjVDRZzb')
         self.lock = threading.Lock()
 
@@ -174,6 +188,14 @@ At most {MAX_OPERATIONS} operations. Do not mix a command with edits or delegati
         if not self.lock.acquire(blocking=False):
             raise StudioError('Studio is handling another prompt; try again when it finishes.')
         try:
+            if not self.model_override:
+                try:
+                    available = model_catalog()
+                except StudioError:
+                    # A catalog outage must not prevent trying the last selection.
+                    pass
+                else:
+                    self.model = next((model for model in STEALTH_MODELS if model in available), FALLBACK_MODEL)
             plan = self.infer(role, prompt, snapshot['session'], scope, history)
             parts = [{'role': role, 'reply': plan['reply'], 'operations': plan['operations']}]
             for task in plan['delegations']:
