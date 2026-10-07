@@ -61,6 +61,8 @@ Read [AGENTS.md](AGENTS.md) for implementation and PR review/merge instructions.
 
 `src/session.rs` owns the model/validation; `src/control.rs` owns commands/persistence; `src/engine.rs` owns prepared DSP; `src/render.rs` owns WAV output; `src/audio.rs` owns native playback. `gui/server.py` is the Python standard-library loopback bridge; `gui/` contains the plain JavaScript/CSS editor. There is no frontend build step.
 
+Generated test/demo exports, screenshots and logs live in ignored `output/`; keep reusable fixtures in `tests/`, `gui/test_*`, `native/` and `examples/`. Remove individual obsolete output directories after checking their contents. `output/` also holds optional installed runtimes, SDKs, native hosts and requested media projects, so do not clear it wholesale. With Cargo idle, `target/debug/incremental/` and Python `__pycache__/` directories can be removed; they regenerate on demand. Keep historical plans and reviews in Git history rather than adding archive folders.
+
 Core checks (Node 22+ for browser tests):
 
 ```sh

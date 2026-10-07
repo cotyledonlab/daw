@@ -17,6 +17,7 @@ Updated 2026-10-07. This is the only plan. Ship a small macOS arrangement DAW in
 - [x] Native metronome/count-in and held-gate note overdub; atomic take application, retry/discard and whole-take Undo/Redo.
 - [x] Browser recording acceptance, including Stop/application and whole-take Undo/Redo (2026-10-04).
 - [x] UI consistency review and CSS/control geometry pass, including narrow layouts and ruler labels (2026-10-07, `afbd2b7`).
+- [x] Repository cleanup: remove obsolete local test/demo outputs, review dumps and caches; preserve current contracts, regression fixtures, optional runtime dependencies and requested studio-tour projects.
 
 These checks record delivered work and prior acceptance, not new verification performed during this documentation cleanup. Reproducible evidence lives in `tests/`, `gui/test_*` and the workflow demos in `examples/`.
 
