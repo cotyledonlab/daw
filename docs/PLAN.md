@@ -1,6 +1,6 @@
 # MVP checklist
 
-Updated 2026-10-07. This is the only plan. Ship a small macOS arrangement DAW in which someone can make a phrase, record notes, mix a song, save/reopen it and export WAV. The implementation is delivered; close the remaining usability and listening checks before expanding features.
+Updated 2026-10-07. This is the only plan. Ship a small macOS arrangement DAW in which someone can make a phrase, record notes, mix a song, save/reopen it and export WAV. The arrangement implementation is delivered. The user also requested integrated studio prompt control; keep acoustic listening acceptance distinct from the delivered implementation.
 
 ## Completed
 
@@ -23,10 +23,18 @@ These checks record delivered work and prior acceptance, not new verification pe
 
 ## Remaining before calling the MVP accepted
 
-1. [ ] Clarify editing/persistence in the existing UI: distinguish applied edits from device/effect drafts and downloaded files; explain Undo disabled by drafts; make mixer Apply wording match its all-strip numeric-draft scope. Keep this a small fix and preserve typed drafts/exact values.
+1. [x] Clarify editing/persistence in the existing UI: distinguish applied edits from device/effect drafts and downloaded files; explain Undo disabled by drafts; make mixer Apply wording match its all-strip numeric-draft scope. Labels now distinguish in-memory edits from downloads, explain draft-blocked Undo and all-strip mixer Apply. Narrow browser layout and existing exact-value regressions checked.
 2. [ ] Quietly use the app end to end: create a phrase, preview/record notes, Undo/Redo a take, import WAV, balance/process/fade the mix, save ZIP, reopen in a fresh server and listen to the exported WAV. Audition Pd gates/seek/loop when libpd is configured. Check clicks, silence and confusing or failed edits; fix observed blockers with focused regressions.
 
 Existing automated export/reopen and muted native checks are complete. Listening/composition feedback remains open; physical MIDI, measured input latency and sustained runtime clock/latency tests remain unverified and are follow-ups, not new MVP implementation gates.
+
+## Requested integrated studio
+
+- [x] Add producer, engineer and musician prompt control through OpenCode Zen using server-side `OPENCODE_API_KEY`, relative edits and selected-track/clip scope. Producer delegates bounded specialist calls; edits reuse editor validation, checked replacement and one bounded Undo entry. Regression checks cover role/scope, stale requests, typing/playback/pending takes, rejected batches and responsive controls. A real producer created a four-note phrase in the browser; whole-batch Undo/Redo was verified.
+- [x] Add optional ElevenLabs push-to-talk transcription and spoken replies through server-side `ELEVEN_API_KEY`; review transcripts before sending. Text control works independently. Provider/bridge failure tests pass.
+- [ ] Verify live voice with a valid credential: the configured key returns HTTP 401 on `POST /v1/text-to-speech`; no successful speech/transcription or physical microphone acceptance is claimed.
+
+The finishing and note-recording workflow demos passed ZIP/fresh-server reopen and byte-identical unclipped export; the finishing demo also passed muted native callbacks. This does not close acoustic listening acceptance. Agents currently inspect session data, not audio; runtime program/plugin-hosting expansion remains outside this slice.
 
 ## After MVP
 
@@ -34,4 +42,4 @@ Quantize/MIDI-file import/export can be the next feature slice when requested. B
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** the small editing/persistence clarity fix, then the listening workflow. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** listen quietly to the reopened finishing-workflow WAV and report any clicks, silence or mix/editing problems; retry the voice smoke check after a valid ElevenLabs key is configured. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).

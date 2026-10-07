@@ -531,7 +531,14 @@
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd' && clip()) { event.preventDefault(); edit('duplicateClip',{start_frame:clip().start_frame+clip().length_frames}); }
     });
-    return {render,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
+    function hasDrafts() {
+      if (session && Number(field('tempo').value) !== (session.tempo_milli_bpm || 120000) / 1000) return true;
+      const selected = clip();
+      if (selected && ['clipStart','clipLength'].some((key, i) => String(field(key).value) !== String(fmt(i ? selected.length_frames : selected.start_frame)))) return true;
+      const baseline = selected?.kind === 'audio' ? audioBaseline : noteBaseline;
+      return Boolean(baseline && Object.entries(baseline).some(([key, text]) => String(field(key).value) !== text));
+    }
+    return {hasDrafts,render,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
   }
   window.ArrangementView = {create};
 })();

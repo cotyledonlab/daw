@@ -5,6 +5,8 @@
   const DEFAULT_SESSION = { schema_version: 1, sample_rate: 48000, tracks: [] };
   let applied = null;
   let draft = structuredClone(DEFAULT_SESSION);
+  let studioConfig = null, studioPending = false, studioHistory = [], studioAudioUrl = null;
+  let studioRecorder = null, studioMicStream = null, studioMicTimer = null, studioMicStarting = false, studioTranscribing = false;
   let busy = false;
   let unsupportedSession = false;
   const editHistory = new SessionHistory();
@@ -476,9 +478,16 @@
     const saveState = $('#save-state');
     const text = $('#save-state-text');
     const dirty = isDirty();
+    if ($('#studio-send')) $('#studio-send').disabled = busy || studioPending || !studioConfig?.available || Boolean(studioRecorder) || studioMicStarting || studioTranscribing;
+    if ($('#studio-file-action')?.dataset.target) $('#studio-file-action').disabled = busy || Boolean($($('#studio-file-action').dataset.target)?.disabled);
+    if ($('#studio-clear')) $('#studio-clear').disabled = studioPending;
+    if ($('#studio-mic')) $('#studio-mic').disabled = studioPending || studioTranscribing || !studioConfig?.voice_available;
+    if ($('#studio-spoken')) $('#studio-spoken').disabled = !studioConfig?.voice_available;
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
-    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Unapplied changes' : 'Applied to engine';
+    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Device/effect drafts · Apply changes' : 'Applied to engine · download to keep';
+    const historyHelp = $('#history-help');
+    if (historyHelp) historyHelp.textContent = dirty ? 'Undo/Redo paused: apply device/effect drafts first. Applied edits are in memory; download your project to keep them.' : 'Undo/Redo restores applied edits. Save session downloads the current project; it does not autosave.';
     const locked = nativeLocked() || Boolean(noteRecording?.pending) || recordingStarting;
     applyButton.disabled = unsupportedSession || busy || locked || !dirty;
     saveButton.disabled = unsupportedSession || busy || locked;
@@ -1527,12 +1536,12 @@
     }
   }
 
-  async function applyDraft({recordHistory = true} = {}) {
-    if ([...document.querySelectorAll('.frequency-control .number-input')].some((input) => input.value.trim() === '')) {
+  async function applyDraft({recordHistory = true, readControls = true} = {}) {
+    if (readControls && [...document.querySelectorAll('.frequency-control .number-input')].some((input) => input.value.trim() === '')) {
       announceError('Enter a frequency for every track before applying changes.');
       return false;
     }
-    updateDraftFromControls();
+    if (readControls) updateDraftFromControls();
     const validation = validateSession(draft);
     if (validation) {
       announceError(validation);
@@ -1998,6 +2007,175 @@
     event.preventDefault();
     event.returnValue = '';
   });
+
+
+  function studioMessage(role, text) {
+    const log = $('#studio-conversation');
+    log.append(element('p', 'studio-message', `${role}: ${text}`));
+    while (log.children.length > 12) log.firstElementChild.remove();
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function studioHasDrafts() {
+    return isDirty() || mixerView?.hasDrafts() || arrangementView?.hasDrafts() || automationViews.some(({view}) => view.getDraftState().drafts.length);
+  }
+
+  function studioScope() {
+    const value = $('#studio-scope').value;
+    if (value === 'session') return null;
+    const selected = arrangementView?.getSelection();
+    const track = selected && applied?.tracks[selected.trackIndex];
+    if (!track) throw Error('Select a clip in the arrangement to scope this prompt.');
+    return {track_id: track.id, ...(value === 'clip' ? {clip_id: selected.clipId} : {})};
+  }
+
+  async function studioCommand(op) {
+    const args = op.args;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('Invalid command arguments.');
+    const allowed = {seek:['frame'],loop:['region'],monitor:['volume'],export:['seconds']}[op.name] || [];
+    if (Object.keys(args).some(key=>!allowed.includes(key)) || Object.keys(args).length !== allowed.length) throw Error('Invalid command arguments.');
+    if (op.name !== 'stop' && op.name !== 'discardTake' && (busy || historyAction)) throw Error('Wait for the current session operation.');
+    if (!['stop','applyTake','discardTake'].includes(op.name) && noteRecording?.pending) throw Error('Apply or discard the pending take first.');
+    if (!['stop','pause','monitor'].includes(op.name) && studioHasDrafts()) throw Error('Apply your typed drafts before running this command.');
+    const click = id => { const button = $(id); if (!button || button.disabled) throw Error('This control is unavailable for the current session.'); button.click(); };
+    switch (op.name) {
+      case 'stop': if (nativeActive()) await stopNative(); else { stopNoteInput(); stopLive(); } break;
+      case 'play':
+        if (nativeSnapshot.state === 'playing' || (player.context && !paused)) break;
+        if (outputMode.value === 'native') await toggleNative(); else await playLive(); break;
+      case 'pause':
+        if (nativeSnapshot.state === 'playing') await toggleNative(); else if (player.context && !paused) await toggleLive(); break;
+      case 'undo': if ($('#undo-button').disabled) throw Error('Undo is unavailable.'); await traverseHistory('undo'); break;
+      case 'redo': if ($('#redo-button').disabled) throw Error('Redo is unavailable.'); await traverseHistory('redo'); break;
+      case 'save': if (saveButton.disabled) throw Error('Stop playback before saving.'); await saveSession(); break;
+      case 'export':
+        if (renderButton.disabled || !Number.isFinite(args.seconds) || args.seconds <= 0 || args.seconds > SessionEditor.exportMaximum(draft,renderLimits)) throw Error('Invalid or unavailable WAV export.');
+        durationInput.value = String(args.seconds); await renderAudio(); break;
+      case 'importWav': case 'loadProject': {
+        const button = $('#studio-file-action'), target = op.name === 'importWav' ? '#import-audio-button' : '#load-button';
+        if ($(target).disabled) throw Error('Stop playback before choosing a file.');
+        button.dataset.target = target; button.textContent = op.name === 'importWav' ? 'Choose WAV for studio' : 'Choose project for studio'; button.hidden = false; button.disabled = false;
+        return 'Click the studio file button to choose your local file.';
+      }
+      case 'newArrangement': if (nativeLocked()) throw Error('Stop playback first.'); await replaceWithArrangement(); break;
+      case 'demo': if (nativeLocked()) throw Error('Stop playback first.'); await replaceWithArrangement(true); break;
+      case 'preview': click('#note-preview-button'); break;
+      case 'connectMidi': click('#connect-midi-button'); break;
+      case 'recordNotes': if ($('#record-notes-button').disabled) throw Error('Select a clip and enable keyboard/MIDI input first.'); await startNoteRecording(); break;
+      case 'applyTake': await applyNoteTake(); break;
+      case 'discardTake': click('#discard-take-button'); break;
+      case 'seek':
+        if (!Number.isSafeInteger(args.frame) || args.frame < 0 || !nativeActive()) throw Error('Seek requires active native playback and a nonnegative frame.');
+        await timelineCommand('/api/transport/seek',args); break;
+      case 'loop':
+        if (!nativeActive() || (args.region !== null && (!args.region || !Number.isSafeInteger(args.region.start_frame) || !Number.isSafeInteger(args.region.end_frame) || args.region.start_frame < 0 || args.region.end_frame <= args.region.start_frame))) throw Error('Loop requires active native playback and valid frames.');
+        await timelineCommand('/api/transport/loop',args); break;
+      case 'monitor':
+        if (!Number.isFinite(args.volume) || args.volume < 0 || args.volume > 1) throw Error('Listening volume must be between 0 and 1.');
+        $('#monitor-volume').value = String(args.volume); $('#monitor-volume').dispatchEvent(new Event('input')); break;
+      default: throw Error('Unknown studio command.');
+    }
+  }
+
+  async function speakStudio(text) {
+    const response = await request('/api/studio/speak', {method:'POST', body:JSON.stringify({text:text.slice(0,4000)})});
+    const audio = $('#studio-audio'); audio.pause();
+    if (studioAudioUrl) URL.revokeObjectURL(studioAudioUrl);
+    studioAudioUrl = URL.createObjectURL(await response.blob());
+    audio.src = studioAudioUrl; audio.hidden = false;
+    try { await audio.play(); } catch (_) { $('#studio-status').textContent += ' Press Play on the spoken reply.'; }
+  }
+
+  async function sendStudioPrompt() {
+    if (studioPending || !studioConfig?.available) return;
+    const prompt = $('#studio-prompt').value.trim();
+    if (!prompt) return;
+    studioPending = true; $('#studio-send').disabled = true; $('#studio-clear').disabled = true;
+    $('#studio-status').textContent = 'Studio agents are working…';
+    let resultText = '';
+    try {
+      if (!sessionRevision || busy || studioRecorder || studioMicStarting || studioTranscribing) throw Error('Wait for the current session or microphone operation.');
+      const scope = studioScope(), revision = sessionRevision, before = JSON.stringify(draft), generation = noteProjectGeneration;
+      studioMessage('You',prompt);
+      const response = await request('/api/studio/prompt', {method:'POST',body:JSON.stringify({prompt,role:$('#studio-role').value,scope,expected_revision:revision,history:studioHistory.slice(-6)})});
+      const plan = await response.json();
+      if (plan.revision !== revision || sessionRevision !== revision || before !== JSON.stringify(draft) || generation !== noteProjectGeneration || JSON.stringify(scope) !== JSON.stringify(studioScope())) throw Error('Project or selection changed while agents were working. No studio edits applied; retry your prompt.');
+      if (!Array.isArray(plan.parts)) throw Error('Invalid studio response.');
+      const operations = plan.parts.flatMap(part=>part.operations);
+      for (const part of plan.parts) studioMessage(part.role,part.reply);
+      if (operations.some(op=>op.op === 'command')) {
+        if (operations.length !== 1 || plan.parts.length !== 1 || plan.parts[0].role !== 'producer' || scope) throw Error('A producer command must run alone at whole-session scope.');
+        setNotice('');
+        const commandResult = await studioCommand(operations[0]);
+        resultText = noticeEl.classList.contains('error') ? noticeEl.textContent : commandResult || 'Studio command dispatched to the existing control.';
+      } else if (operations.length) {
+        if (busy || nativeLocked() || player.context || starting || noteRecording?.pending || historyAction || unsupportedSession || studioHasDrafts()) throw Error('Stop playback and apply typed drafts or resolve the pending take first. No studio edits applied.');
+        const next = StudioActions.apply(applied,plan.parts,scope,studioConfig.operations,SessionEditor);
+        draft = next;
+        // Leave existing controls intact until success; failed edits preserve typed fields.
+        if (!await applyDraft({readControls:false})) { draft = JSON.parse(before); syncStatus(); throw Error(noticeEl.textContent || 'Studio edit failed.'); }
+        resultText = `${operations.length} studio edits applied as one Undo entry. Download your project to keep them.`;
+      } else resultText = 'Studio replied without changing the project.';
+      const reply = plan.parts.map(part=>`${part.role}: ${part.reply}`).join('\n');
+      studioHistory.push({role:'user',content:prompt},{role:'assistant',content:`${reply}\nOutcome: ${resultText}`.slice(0,4000)});
+      studioHistory = studioHistory.slice(-6);
+      $('#studio-prompt').value = '';
+      studioMessage('Studio',resultText);
+      $('#studio-status').textContent = resultText;
+      if ($('#studio-spoken').checked && studioConfig.voice_available) {
+        try { await speakStudio(`${resultText} ${reply}`); } catch (error) { $('#studio-status').textContent = `${resultText} Voice reply failed: ${error.message}`; }
+      }
+    } catch (error) { studioMessage('Studio',error.message); $('#studio-status').textContent = error.message; }
+    finally { studioPending = false; $('#studio-send').disabled = !studioConfig?.available; $('#studio-clear').disabled = false; }
+  }
+
+  async function toggleStudioMic() {
+    if (studioRecorder) { studioRecorder.stop(); return; }
+    if (studioMicStarting || studioPending || studioTranscribing) return;
+    studioMicStarting = true;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw Error('Microphone capture is unavailable in this browser. Type your prompt instead.');
+      $('#studio-audio').pause();
+      studioMicStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const mimeType = ['audio/webm','audio/mp4','audio/ogg'].find(type=>MediaRecorder.isTypeSupported(type));
+      if (!mimeType) throw Error('No supported microphone recording format.');
+      const chunks = []; let bytes = 0, recordingFailed = false;
+      const recorder = new MediaRecorder(studioMicStream,{mimeType}); studioRecorder = recorder;
+      recorder.addEventListener('dataavailable', event=>{ bytes += event.data.size; if (bytes <= 4 * 1024 * 1024) chunks.push(event.data); else { recordingFailed = true; if (recorder.state !== 'inactive') recorder.stop(); } });
+      recorder.addEventListener('error',()=>{recordingFailed=true; if (recorder.state !== 'inactive') recorder.stop();});
+      recorder.addEventListener('stop',async()=> {
+        clearTimeout(studioMicTimer); studioMicStream?.getTracks().forEach(track=>track.stop()); studioMicStream = null; studioRecorder = null;
+        studioTranscribing = true;
+        $('#studio-mic').textContent = 'Record voice prompt'; $('#studio-mic').disabled = true; $('#studio-send').disabled = true;
+        try {
+          if (recordingFailed) throw Error('Microphone recording failed or exceeded 4 MiB. Try a shorter prompt.');
+          $('#studio-status').textContent = 'Transcribing your voice prompt…';
+          const blob = new Blob(chunks,{type:mimeType});
+          const response = await request('/api/studio/transcribe',{method:'POST',headers:{'Content-Type':mimeType},body:blob});
+          const result = await response.json(); $('#studio-prompt').value = result.text;
+          $('#studio-status').textContent = 'Transcript ready. Review it, then Send to studio.';
+        } catch(error) { $('#studio-status').textContent = error.message; }
+        finally { studioTranscribing = false; $('#studio-mic').disabled = !studioConfig?.voice_available; $('#studio-send').disabled = !studioConfig?.available; }
+      });
+      recorder.start(250); $('#studio-mic').textContent = 'Stop voice recording';
+      $('#studio-status').textContent = 'Recording microphone · stops after 30 seconds. Stop to transcribe.';
+      studioMicTimer = setTimeout(()=>{if(recorder.state !== 'inactive') recorder.stop();},30000);
+    } catch(error) { studioMicStream?.getTracks().forEach(track=>track.stop()); studioMicStream=null; studioRecorder=null; $('#studio-status').textContent=error.message; }
+    finally { studioMicStarting = false; }
+  }
+
+  $('#studio-file-action').addEventListener('click',()=> { const button = $('#studio-file-action'), target = $(button.dataset.target); if (target && !target.disabled) { target.click(); button.hidden = true; } });
+  $('#studio-send').addEventListener('click',()=>{void sendStudioPrompt();});
+  $('#studio-prompt').addEventListener('keydown',event=>{if(event.key==='Enter' && (event.metaKey || event.ctrlKey)){event.preventDefault();void sendStudioPrompt();}});
+  $('#studio-mic').addEventListener('click',()=>{void toggleStudioMic();});
+  $('#studio-clear').addEventListener('click',()=>{studioHistory=[];$('#studio-conversation').replaceChildren();$('#studio-audio').pause();$('#studio-audio').hidden=true;});
+  void (async()=>{
+    try {
+      studioConfig = await (await request('/api/studio')).json();
+      $('#studio-send').disabled = !studioConfig.available; $('#studio-mic').disabled = !studioConfig.voice_available; $('#studio-spoken').disabled = !studioConfig.voice_available;
+      $('#studio-status').textContent = studioConfig.available ? `OpenCode Zen · ${studioConfig.model}${studioConfig.voice_available ? ' · ElevenLabs key configured' : ' · set ELEVEN_API_KEY for voice'}` : 'Set OPENCODE_API_KEY in the server environment and restart to enable studio agents.';
+    } catch(error) { $('#studio-status').textContent = `Studio unavailable: ${error.message}`; }
+  })();
 
   renderTracks();
   void loadCurrentSession();

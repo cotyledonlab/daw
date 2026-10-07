@@ -46,15 +46,38 @@
         </div>
       </section>
 
+      <section class="studio-panel" aria-labelledby="studio-heading">
+        <h2 id="studio-heading">Studio agents</h2>
+        <p class="output-hint">Direct the producer, sound engineer or studio musician. Prompts and session data go to OpenCode Zen; microphone recordings and spoken replies use ElevenLabs. Edits apply while stopped as one Undo entry.</p>
+        <div class="arrangement-controls">
+          <label>Talk to<select id="studio-role"><option value="producer">Producer · coordinate the studio</option><option value="engineer">Sound engineer · mix and processing</option><option value="musician">Studio musician · parts and takes</option></select></label>
+          <label>Scope<select id="studio-scope"><option value="session">Whole session</option><option value="track">Selected track</option><option value="clip">Selected clip</option></select></label>
+          <label class="note-input-toggle"><input type="checkbox" id="studio-spoken">Speak replies</label>
+          <button type="button" class="button button-quiet" id="studio-mic" disabled>Record voice prompt</button>
+        </div>
+        <label class="studio-prompt-label" for="studio-prompt">Your direction</label>
+        <textarea id="studio-prompt" rows="2" maxlength="4000" placeholder="Make a four-bar drum and bass groove, then have the engineer balance it."></textarea>
+        <div class="arrangement-controls">
+          <button type="button" class="button button-primary" id="studio-send" disabled>Send to studio</button>
+          <button type="button" class="button button-quiet" id="studio-file-action" hidden>Choose file</button>
+          <button type="button" class="button button-quiet" id="studio-clear">Clear conversation</button>
+          <span class="output-hint" id="studio-status" role="status" aria-live="polite">Connecting to studio agents…</span>
+        </div>
+        <div id="studio-conversation" class="studio-conversation" role="log" aria-label="Studio conversation" aria-live="polite"></div>
+        <audio id="studio-audio" controls hidden aria-label="Spoken studio reply"></audio>
+      </section>
+
       <section class="toolbar" aria-label="Session actions">
         <div class="toolbar-left">
           <span class="track-count" id="track-count">0 tracks</span>
-          <span class="save-state" id="save-state" aria-live="polite"><span class="state-dot"></span><span id="save-state-text">All changes applied</span></span>
+          <span class="save-state" id="save-state" aria-live="polite"><span class="state-dot"></span><span id="save-state-text">Applied to engine · download to keep</span></span>
         </div>
         <div class="toolbar-actions">
           <button class="button button-quiet apply-button" id="apply-button" type="button" disabled>Apply changes</button>
         </div>
       </section>
+      <p class="output-hint" id="persistence-help">Arrangement edits apply immediately. Device/effect drafts need Apply changes. Applied edits are in memory; Save session downloads a file to keep before closing.</p>
+      <p class="output-hint" id="history-help" aria-live="polite"></p>
 
       <section class="arrangement-section" aria-label="Arrangement workspace">
         <div class="arrangement-actions">
@@ -193,6 +216,7 @@
   <script src="/automation.js" defer></script>
   <script src="/note_input.js" defer></script>
   <script src="/note_recording.js" defer></script>
+  <script src="/studio.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

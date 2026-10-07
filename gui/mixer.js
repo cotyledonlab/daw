@@ -57,7 +57,7 @@
       session = next; controls = []; numeric = []; meters = new Map();
       container.replaceChildren(); container.hidden = !session?.tracks?.length;
       const header = el('div', 'mixer-heading');
-      header.append(el('strong', '', 'Mixer'), el('span', 'mixer-help', 'Saved mix · faders save on release · exact values: blur, Apply or Enter · stopped edits'));
+      header.append(el('strong', '', 'Mixer'), el('span', 'mixer-help', 'Applied mix · faders apply on release · blur, Enter or Apply all numbers commits numeric drafts across every strip · download your project to keep'));
       container.append(header);
       if (!editor.mixerSupported(session)) {
         container.append(el('p','output-hint','Mixer requires built-in instruments/audio with supported effects. This session is preserved.'));
@@ -94,7 +94,8 @@
         const panScale = el('span','mixer-pan-scale'); panScale.append(el('span','','L'),el('span','','PAN'),el('span','','R'));
         panLabel.append(panScale,pan); row.append(panLabel);
         const toggles = el('div','mixer-toggles');
-        const apply = el('button','button button-quiet mixer-apply','Apply'); apply.type = 'button';
+        const apply = el('button','button button-quiet mixer-apply','Apply all numbers'); apply.type = 'button';
+        apply.title = 'Apply gain and pan number drafts across every mixer strip.';
         apply.setAttribute('aria-label', `${track.id} apply mixer values`);
         apply.addEventListener('click',()=>edit(index)); controls.push(apply);
         for (const key of ['mute','solo']) {
@@ -138,7 +139,13 @@
       const byId = new Map((values?.tracks || []).map(track => [track.id, track]));
       for (const [id, target] of meters) updateMeter(target, byId.get(id));
     }
-    return {render, setState, updateMeters};
+    function hasDrafts() {
+      return numeric.some(row => ['gain','pan'].some(key => {
+        const text = String(row[key].value).trim();
+        return !text || Number(text) !== (session.tracks[row.index].mixer?.[key] ?? (key === 'gain' ? 1 : 0));
+      }));
+    }
+    return {render, setState, updateMeters, hasDrafts};
   }
   const api = {create};
   if (typeof module !== 'undefined') module.exports = api;

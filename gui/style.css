@@ -369,3 +369,13 @@ button:disabled, input:disabled, select:disabled { cursor: default; opacity: .52
   .arrangement-controls input { width: 100px; }
   .arrangement-actions .button { flex-grow: 1; }
 }
+
+/* Integrated studio prompt controls follow the existing workspace geometry. */
+.studio-panel { margin: 0 0 24px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; }
+.studio-panel h2 { margin: 0 0 8px; font-size: 18px; }
+.studio-panel .arrangement-controls { flex-wrap: wrap; margin: 12px 0; }
+.studio-prompt-label { display: block; margin-bottom: 6px; }
+.studio-panel textarea { box-sizing: border-box; width: 100%; padding: 10px; font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--surface, #fff); resize: vertical; }
+.studio-conversation { max-height: 280px; overflow: auto; overflow-wrap: anywhere; }
+.studio-message { white-space: pre-wrap; margin: 8px 0; padding: 10px; background: var(--surface, #f5f7f5); border-radius: 6px; }
+.studio-panel audio { width: 100%; margin-top: 12px; }

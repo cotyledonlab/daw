@@ -350,3 +350,12 @@ test('Pd piano roll uses normal precise note editing and displays monophonic con
   assert.deepEqual(JSON.parse(JSON.stringify(env.edits[0].patch)),{velocity:0.723456789});
   env.view.setState({locked:true}); assert.equal(env.button('addNote').disabled,true);
 });
+
+test('studio draft guard detects exact tempo, clip, note and audio typing without consuming it',()=>{
+  for(const kind of ['sine','audio']){
+    const s=setup(kind);assert.equal(s.view.hasDrafts(),false);
+    for(const key of ['tempo','clipStart','clipLength',kind==='audio'?'audioGain':'velocity']){
+      const value=s.field(key).value;s.field(key).value='';assert.equal(s.view.hasDrafts(),true);assert.equal(s.field(key).value,'');s.field(key).value=value;assert.equal(s.view.hasDrafts(),false);
+    }
+  }
+});
