@@ -61,7 +61,7 @@ fn capabilities() -> Value {
             "schema_version": 3, "parameters": ["gain"], "interpolation": ["step"],
             "max_lanes_per_track": session::MAX_AUTOMATION_LANES_PER_TRACK,
             "max_points": session::MAX_AUTOMATION_POINTS,
-            "live_edits": false
+            "live_edits": cfg!(all(feature="native-audio",target_os="macos"))
         },
         "effects": {
             "schema_version": 3, "builtin_schema_version": 11, "kinds": ["gain", "lowpass", "delay"],

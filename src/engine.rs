@@ -258,7 +258,10 @@ impl Engine {
     /// Past new notes are not chased; retained notes continue with their phase.
     pub fn adopt_live(&mut self, previous: &mut Self, old: &Session, new: &Session) {
         let frame = previous.frame_position;
-        self.seek(frame).expect("existing timeline is valid");
+        // Internal playback may advance beyond the authoring/seek limit.
+        // Retain that position directly rather than validating it as a new seek.
+        self.frame_position = frame;
+        self.reset_schedules(frame);
         self.output_position = previous.output_position;
         self.loop_region = previous.loop_region;
         for voice in &mut self.voices {

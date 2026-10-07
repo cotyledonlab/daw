@@ -70,3 +70,20 @@ fn live_gain_change_keeps_dsp_state_and_loop_without_moving_saved_frames() {
     }
     assert_eq!(session.tracks[0].clips, next.tracks[0].clips);
 }
+
+#[test]
+fn live_update_after_maximum_seek_retains_internal_position_without_panicking() {
+    let session = song();
+    let mut original = Engine::prepare(&session).unwrap();
+    original.seek(daw::session::MAX_FRAME).unwrap();
+    let mut output = [[0.0; 2]; 8];
+    original.render_block(&mut output);
+    assert_eq!(original.frame_position(), daw::session::MAX_FRAME + 8);
+    let mut updated = Engine::prepare(&session).unwrap();
+    updated.adopt_live(&mut original, &session, &session);
+    assert_eq!(updated.frame_position(), original.frame_position());
+    assert_eq!(updated.output_position(), original.output_position());
+    updated.render_block(&mut output);
+    assert_eq!(updated.frame_position(), daw::session::MAX_FRAME + 16);
+    assert_eq!(output, [[0.0; 2]; 8]);
+}
