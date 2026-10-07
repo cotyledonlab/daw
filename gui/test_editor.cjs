@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Editor = require('./editor.js');
+const {assertSessionFixture} = require('./test_helpers/session_fixture.cjs');
 
 function track(id, overrides = {}) {
   return {
@@ -315,7 +316,7 @@ test('loads engine arpeggio and gain fixtures and creates JSON-roundtrippable tw
   assert.equal(Editor.framesToTicks(demo, end), 64 * 960);
   assert.notEqual(demo.tracks[0].clips[0].notes[0].frequency_hz, demo.tracks[0].clips[1].notes[0].frequency_hz);
   const fixture = JSON.parse(fs.readFileSync(`${__dirname}/../examples/sessions/note-demo.json`, 'utf8'));
-  assert.deepEqual(fixture, demo);
+  assertSessionFixture(demo, fixture);
   assert.equal(Editor.validate(JSON.parse(JSON.stringify(demo))), null);
 });
 

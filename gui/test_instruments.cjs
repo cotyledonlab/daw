@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const E = require('./editor.js');
+const {assertSessionFixture} = require('./test_helpers/session_fixture.cjs');
 
 test('musical fixture is sixteen bars of independently saved synth/bass/drums presets', () => {
   const session = E.createMusicalDemoSession();
@@ -15,7 +16,7 @@ test('musical fixture is sixteen bars of independently saved synth/bass/drums pr
   ]);
   for (const track of session.tracks) assert.equal(Math.max(...track.clips.map(c => c.start_frame + c.length_frames)), 32 * 48000);
   assert.deepEqual(JSON.parse(JSON.stringify(session)), session);
-  assert.deepEqual(JSON.parse(fs.readFileSync(`${__dirname}/../examples/sessions/musical-demo.json`)), session);
+  assertSessionFixture(session, JSON.parse(fs.readFileSync(`${__dirname}/../examples/sessions/musical-demo.json`)));
   const second = E.createMusicalDemoSession();
   session.tracks[2].device.gain = 0;
   session.tracks[2].clips[0].notes[0].velocity = 0;
