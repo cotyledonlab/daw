@@ -264,7 +264,7 @@ impl PlaybackBuffer {
             self.metronome = None;
             return Ok(());
         }
-        if self.engine.is_none() || !crate::metronome::supports_session(session) {
+        if !crate::metronome::supports_session(session) {
             return Err("metronome and count-in require built-in prepared playback".into());
         }
         if self.device_rate != session.sample_rate {
@@ -351,6 +351,10 @@ impl PlaybackBuffer {
         }
         let available = output.len() / self.channels;
         if let Some(metronome) = &mut self.metronome {
+            #[cfg(all(feature = "native-audio", target_os = "macos"))]
+            if let Some(pd) = &self.pd {
+                pd.begin_callback(&mut self.mixer_peaks);
+            }
             let mut rendered = 0;
             for destination in output.chunks_exact_mut(self.channels) {
                 let count_sample = metronome.next_count_in();
@@ -360,17 +364,33 @@ impl PlaybackBuffer {
                     if self.remaining == 0 {
                         break;
                     }
-                    let mut position = self.engine.as_ref().unwrap().frame_position();
+                    let mut position = self
+                        .engine
+                        .as_ref()
+                        .map_or(self.timeline, Engine::frame_position);
+                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                    if let Some(pd) = &self.pd {
+                        position = pd.frame_position();
+                    }
                     if let Some((start, end)) = self.loop_region {
                         if position >= end {
                             position = start;
                         }
                     }
-                    let click = metronome.sample(position);
                     let mut frame = [[0.0; 2]; 1];
-                    self.engine.as_mut().unwrap().render_block(&mut frame);
-                    self.mixer_peaks
-                        .merge(self.engine.as_ref().unwrap().mixer_peaks());
+                    if let Some(engine) = &mut self.engine {
+                        engine.render_block(&mut frame);
+                        self.mixer_peaks.merge(engine.mixer_peaks());
+                    }
+                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                    if let Some(pd) = &mut self.pd {
+                        let Some(sample) = pd.next(&mut self.mixer_peaks)? else {
+                            break;
+                        };
+                        frame[0] = sample;
+                        metronome.set_tempo(pd.tempo());
+                    }
+                    let click = metronome.sample(position);
                     if !self.until_stopped {
                         self.remaining -= 1;
                     }
@@ -673,6 +693,58 @@ mod live_tests {
         worker.finish().unwrap();
         worker.finish().unwrap();
     }
+    #[test]
+    fn live_arrangement_queue_keeps_held_notes_and_callback_heap_free() {
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "schema_version":10,"sample_rate":48000,"tempo_milli_bpm":120000,
+            "tracks":[{"id":"lead","mode":"sequenced","device":{"kind":"sine","frequency_hz":440,"gain":0.2},"effects":[],
+            "clips":[{"kind":"notes","id":"phrase","start_frame":0,"length_frames":48000,
+            "notes":[{"id":"held","start_frame":0,"duration_frames":40000,"frequency_hz":440,"velocity":0.8}]}]}]
+        })).unwrap();
+        let (mut playback, mut worker) =
+            PlaybackBuffer::prepare_pd(&session, 48000, 2, None, 1.0).unwrap();
+        let mut reference = Engine::prepare(&session).unwrap();
+        let mut output = [0.0; 512];
+        let mut expected = [[0.0; 2]; 256];
+        // Identical replacement tests phase retention after queued blocks drain.
+        worker.update(session.clone(), 7).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while playback.output_position() < 4096 {
+            OPERATIONS.set(0);
+            WATCH.set(true);
+            let count = playback.fill(&mut output, |v| v).unwrap() as usize;
+            WATCH.set(false);
+            assert_eq!(OPERATIONS.get(), 0);
+            reference.render_block(&mut expected[..count]);
+            for index in 0..count {
+                assert_eq!(output[index * 2], expected[index][0]);
+            }
+            assert_eq!(playback.frame_position(), reference.frame_position());
+            assert!(std::time::Instant::now() < deadline);
+            if count == 0 {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+        }
+        assert_eq!(worker.audible_revision(), 7);
+        let mut changed = session.clone();
+        changed.tracks[0].device = Device::Sine {
+            frequency_hz: 440.0,
+            gain: 0.1,
+        };
+        worker.update(changed.clone(), 8).unwrap();
+        let mut rejected = changed.clone();
+        rejected.tracks.clear();
+        assert!(worker.update(rejected, 9).is_err());
+        while worker.audible_revision() != 8 {
+            playback.fill(&mut output, |v| v).unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
+        assert!(playback.output_position() >= 4096);
+        drop(playback);
+        worker.finish().unwrap();
+    }
+
     #[cfg(feature = "vst3-live")]
     #[test]
     #[ignore = "requires built native fixture and DAW_VST3_FIXTURE_NO_EVENTS/REALTIME=1"]

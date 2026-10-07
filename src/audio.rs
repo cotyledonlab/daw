@@ -49,7 +49,10 @@ struct Stats {
 
 impl Stats {
     fn prepared(session: &Session) -> Self {
-        if session.schema_version < 10 {
+        if session.schema_version < 10
+            && (session.schema_version < 2
+                || crate::pd_playback::validate_live_update(session, session).is_err())
+        {
             return Self::default();
         }
         Self {
@@ -478,6 +481,7 @@ enum Action {
     Loop(Option<(u64, u64)>),
     #[cfg(all(feature = "vst3-live", target_os = "macos"))]
     Parameter(crate::live_plugins::ParameterChange),
+    UpdateSession(Box<crate::engine::Engine>, Session, u64),
     Status,
 }
 struct Envelope {
@@ -523,7 +527,10 @@ impl Active {
         let selected = device.default_output_config().map_err(|e| e.to_string())?;
         let format = selected.sample_format();
         let config: cpal::StreamConfig = selected.into();
-        let (pd_renderer, pd_worker) = if crate::pd_instrument::has_instruments(session) {
+        let (pd_renderer, pd_worker) = if crate::pd_instrument::has_instruments(session)
+            || (session.schema_version >= 2
+                && crate::pd_playback::validate_live_update(session, session).is_ok())
+        {
             let (renderer, worker) = PlaybackBuffer::prepare_pd(
                 session,
                 config.sample_rate.0,
@@ -747,7 +754,11 @@ impl Active {
         if let Some(worker) = &self.pd_worker {
             report["pd_worker_underruns"] = json!(worker.underruns());
             report["pd_transport_wait_buffers"] = json!(worker.transport_waits());
-            report["runtime"] = json!("puredata_instrument");
+            report["live_arrangement_edits"] = json!(worker.live_edits_available());
+            report["audible_session_revision"] = json!(worker.audible_revision().to_string());
+            if !worker.live_edits_available() {
+                report["runtime"] = json!("puredata_instrument");
+            }
         }
         report["mixer_meters"] = self.stats.mixer_snapshot();
         report
@@ -875,6 +886,15 @@ impl Transport {
     }
     pub fn stop(&mut self) -> Result<Value, String> {
         self.request(Action::Stop)
+    }
+    pub fn update_session(&mut self, session: &Session, revision: u64) -> Result<Value, String> {
+        crate::pd_playback::validate_live_update(session, session)?;
+        let engine = crate::engine::Engine::prepare(session)?;
+        self.request(Action::UpdateSession(
+            Box::new(engine),
+            session.clone(),
+            revision,
+        ))
     }
     pub fn status(&mut self) -> Result<Value, String> {
         self.request(Action::Status)
@@ -1011,6 +1031,20 @@ fn owner(receiver: std::sync::mpsc::Receiver<Envelope>) {
                         .as_mut()
                         .ok_or("native playback has no live SC sources")?
                         .queue_control(change)?;
+                }
+                Action::UpdateSession(engine, session, revision) => {
+                    let current = active.as_mut().ok_or("native playback is stopped")?;
+                    if current.stats.done.load(Relaxed)
+                        || current.stats.error.load(Relaxed)
+                        || current.drain.is_some()
+                    {
+                        return Err("native playback is finishing".into());
+                    }
+                    current
+                        .pd_worker
+                        .as_mut()
+                        .ok_or("playback does not support live arrangement edits")?
+                        .update_prepared(*engine, session, revision)?;
                 }
                 Action::Status => {}
                 Action::Pause | Action::Resume => {

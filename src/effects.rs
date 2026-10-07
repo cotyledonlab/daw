@@ -135,6 +135,47 @@ impl PreparedChain {
         }
     }
 
+    pub(crate) fn adopt_live(&mut self, old: &mut Self, old_track: &Track, new_track: &Track) {
+        let old_effects = old_track.effects.as_deref().unwrap_or_default();
+        for (index, definition) in new_track
+            .effects
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            let Some(prior_index) = old_effects.iter().position(|e| e.id() == definition.id())
+            else {
+                continue;
+            };
+            match (&mut self.effects[index], &mut old.effects[prior_index]) {
+                (
+                    PreparedEffect::Lowpass { state, .. },
+                    PreparedEffect::Lowpass { state: prior, .. },
+                ) => *state = *prior,
+                (
+                    PreparedEffect::Delay {
+                        buffer,
+                        cursor,
+                        valid_frames,
+                        ..
+                    },
+                    PreparedEffect::Delay {
+                        buffer: prior_buffer,
+                        cursor: prior_cursor,
+                        valid_frames: prior_valid,
+                        ..
+                    },
+                ) if buffer.len() == prior_buffer.len() => {
+                    buffer.clone_from(prior_buffer);
+                    *cursor = *prior_cursor;
+                    *valid_frames = *prior_valid;
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn process(&mut self, samples: &mut [f64; 2], frame: u64) {
         for effect in &mut self.effects {
             match effect {

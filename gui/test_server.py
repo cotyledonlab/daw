@@ -146,6 +146,20 @@ class ServerIntegrationTests(unittest.TestCase):
                     self.assertEqual(status, 422, body)
             call.assert_not_called()
 
+    def test_live_session_route_requires_auth_revision_and_forwards_distinct_command(self):
+        payload = {"session": SESSION, "expected_revision": "0"}
+        status, _, _ = self.request("POST", "/api/session/live", payload, token=False)
+        self.assertEqual(status, 403)
+        with patch.object(self.server.engine, "call", return_value=SESSION) as call:
+            for invalid in ({"session": SESSION}, {**payload, "expected_revision": "00"},
+                            {**payload, "extra": True}):
+                status, body, _ = self.post("/api/session/live", invalid)
+                self.assertEqual(status, 422, body)
+            call.assert_not_called()
+            status, body, _ = self.post("/api/session/live", payload)
+            self.assertEqual(status, 200, body)
+            self.assertEqual(call.call_args.args, ("session.update_live", payload))
+
     def test_live_parameter_engine_rejection_returns_structured_error_without_replacing_session(self):
         status, body, _ = self.post("/api/session", {"session": SESSION})
         self.assertEqual(status, 200, body)

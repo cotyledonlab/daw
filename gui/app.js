@@ -22,6 +22,7 @@
   let metadataPending = new Set();
   let metadataSuppressed = false;
   let sessionRevision = null;
+  let liveArrangementEditsAvailable = false;
   let liveParameterEditsAvailable = false;
   let liveSourceEditsAvailable = false;
   let csoundLiveEditsAvailable = false;
@@ -105,6 +106,11 @@
 
   function nativeLocked() {
     return nativeActive();
+  }
+
+  function editLocked() {
+    return nativeLocked() && !(liveArrangementEditsAvailable && nativeSnapshot.live_arrangement_edits === true &&
+      ['playing', 'paused'].includes(nativeSnapshot.state) && !noteRecording?.active && !noteRecording?.pending);
   }
 
   function liveParameterEligible(trackId, effectId, parameterId) {
@@ -256,6 +262,7 @@
       csoundLiveAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.implemented === true;
       csoundLiveEditsAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.live_control_edits === true;
       nativeAvailable = capabilities.live_audio === true;
+      liveArrangementEditsAvailable = capabilities.live_arrangement_edits?.implemented === true;
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
       parameterMetadataAvailable = capabilities.parameter_metadata?.implemented === true;
@@ -470,7 +477,7 @@
       control.dataset.metadataDisabled = info.automatable !== true || info.read_only === true ? 'true' : 'false';
       range.dataset.metadataDisabled = control.dataset.metadataDisabled;
       const live = liveParameterEligible(identity.track_id, identity.effect_id, control.dataset.parameterId);
-      range.disabled = busy || (nativeLocked() && !live) || control.dataset.metadataDisabled === 'true';
+      range.disabled = busy || (editLocked() && !live) || control.dataset.metadataDisabled === 'true';
     }
   }
 
@@ -488,13 +495,14 @@
     text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Device/effect drafts · Apply changes' : 'Applied to engine · download to keep';
     const historyHelp = $('#history-help');
     if (historyHelp) historyHelp.textContent = dirty ? 'Undo/Redo paused: apply device/effect drafts first. Applied edits are in memory; download your project to keep them.' : 'Undo/Redo restores applied edits. Save session downloads the current project; it does not autosave.';
-    const locked = nativeLocked() || Boolean(noteRecording?.pending) || recordingStarting;
+    const locked = editLocked() || Boolean(noteRecording?.pending) || recordingStarting;
+    const structuralLocked = nativeLocked() || Boolean(noteRecording?.pending) || recordingStarting;
     applyButton.disabled = unsupportedSession || busy || locked || !dirty;
     saveButton.disabled = unsupportedSession || busy || locked;
-    loadButton.disabled = unsupportedSession || busy || locked;
-    fileInput.disabled = unsupportedSession || busy || locked;
+    loadButton.disabled = unsupportedSession || busy || structuralLocked;
+    fileInput.disabled = unsupportedSession || busy || structuralLocked;
     const audioImport = $('#import-audio-button');
-    audioImport.disabled = unsupportedSession || busy || locked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    audioImport.disabled = unsupportedSession || busy || structuralLocked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     audioImport.title = audioProjectsAvailable ? 'Import WAV into a new audio lane at Insert at (beat).' : 'Restart the local server to enable WAV imports.';
     $('#audio-file').disabled = audioImport.disabled;
     saveButton.textContent = hasAudio() ? 'Save project ZIP' : 'Save session';
@@ -509,11 +517,11 @@
     playButton.title = hasSources() ? 'Click to play or stop live sources. Escape also stops.' : 'Click to play or pause. Hold to stop. Escape also stops.';
     const add = $('#add-track-button');
     const emptyAdd = $('#empty-add-button');
-    if (add) add.disabled = unsupportedSession || busy || locked || draft.tracks.length >= 64;
-    recoverButton.disabled = busy || locked;
-    if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || locked || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    if (add) add.disabled = unsupportedSession || busy || structuralLocked || draft.tracks.length >= 64;
+    recoverButton.disabled = busy || structuralLocked;
+    if (emptyAdd) emptyAdd.disabled = unsupportedSession || busy || structuralLocked || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     const addCsound = $('#add-csound-button');
-    addCsound.disabled = unsupportedSession || busy || locked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0 || SessionEditor.arrangement(draft);
+    addCsound.disabled = unsupportedSession || busy || structuralLocked || !csoundBridgeAvailable || draft.tracks.length >= 64 || SessionEditor.plugins(draft).length > 0 || SessionEditor.arrangement(draft);
     addCsound.title = csoundBridgeAvailable ? 'Add a CSD program as a Csound track (format 7).' : 'Restart the local server to enable Csound imports.';
     mixerView?.setState({locked: unsupportedSession || busy || locked || Boolean(player.context) || starting});
     automationViews.forEach(({view}) => view.setState({locked: unsupportedSession || busy || locked || Boolean(player.context) || starting}));
@@ -523,9 +531,9 @@
       const sourceEditable = source && sourceEligible(source.dataset.trackId, source.dataset.sourceControl);
       const live = control.type === 'range' && row && control.closest('[data-parameter-id]') &&
         liveParameterEligible(row.dataset.trackId, row.dataset.effectId, control.closest('[data-parameter-id]').dataset.parameterId);
-      control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true' || (locked && control.dataset.structural === 'true');
+      control.disabled = unsupportedSession || busy || (source ? !sourceEditable : locked && !live) || control.dataset.metadataDisabled === 'true' || (structuralLocked && control.dataset.structural === 'true');
     });
-    rateSelect.disabled = unsupportedSession || busy || locked || SessionEditor.plugins(draft).length > 0 || hasSources() || SessionEditor.arrangement(draft);
+    rateSelect.disabled = unsupportedSession || busy || structuralLocked || SessionEditor.plugins(draft).length > 0 || hasSources() || SessionEditor.arrangement(draft);
     if (draft.schema_version !== 1) {
       outputMode.querySelector('option[value="browser"]').disabled = true;
       playButton.disabled ||= !nativeAvailable || (SessionEditor.plugins(draft).length > 0 && !nativePluginsAvailable);
@@ -537,10 +545,10 @@
     tracksEl.querySelectorAll('.add-vst3').forEach(control => { control.disabled ||= !effectCatalog.length || !offlinePluginsAvailable || SessionEditor.arrangement(draft); });
     for (const id of ['new-arrangement-button', 'demo-arrangement-button']) {
       const control = document.getElementById(id);
-      if (control) control.disabled = busy || locked || unsupportedSession;
+      if (control) control.disabled = busy || structuralLocked || unsupportedSession;
     }
     const noteTrack = $('#add-note-track-button');
-    if (noteTrack) noteTrack.disabled = busy || locked || unsupportedSession || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    if (noteTrack) noteTrack.disabled = busy || structuralLocked || unsupportedSession || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     if ($('#note-device')) {
       $('#note-device').disabled = noteTrack?.disabled === true;
       const pdOption = $('#note-device option[value="pd_instrument"]');
@@ -827,15 +835,15 @@
     outputMode.querySelector('option[value="browser"]').disabled = effectsMode;
     if (effectsMode && nativeAvailable) outputMode.value = 'native';
     if (SessionEditor.arrangement(draft)) {
-      $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Edits apply while stopped; tempo changes the grid only.';
+      $('#effects-hint').textContent = 'Note arrangement · native playback. Select a clip to edit notes. Note, clip and mix edits apply during built-in native playback; tempo changes the grid only.';
     }
     durationInput.max = String(SessionEditor.exportMaximum(draft, renderLimits));
     $('#render-limit').textContent = `Export up to ${durationInput.max} seconds for this project.`;
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
     $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live sources. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved scalar/array controls without automation can change live; SC initialization-rate slots remain read-only. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
-    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. During playback, only saved VST3 parameters without automation can change live; other effect controls require stopped playback.' : 'Effects use native playback. Add gain, lowpass or delay, or load a saved VST3 session to reuse its validated effects.';
-    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = `Native playback uses the applied arrangement. Seek and loop are available during playback or pause. Use Stop & edit to change notes. ${untilStoppedAvailable ? `Built-in playback runs until Stop; WAV export supports up to ${durationInput.max} seconds.` : 'This engine limits playback to 60 seconds.'}`;
-    if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = `${hasAudio() ? 'Arrangement' : 'Note arrangement'} · native playback. Select a clip to ${hasAudio() ? 'edit notes or trim audio' : 'edit notes'}. Edits apply while stopped; tempo changes the grid only.`;
+    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. Built-in sound, effect, automation, mixer, note and clip edits apply during native playback. Track and foreign-runtime changes require Stop.' : 'Effects use native playback. Add gain, lowpass or delay, or load a saved VST3 session to reuse its validated effects.';
+    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = `Native playback uses the applied arrangement. Seek and loop are available during playback or pause. Edit notes, clips and mix while built-in playback runs. ${untilStoppedAvailable ? `Built-in playback runs until Stop; WAV export supports up to ${durationInput.max} seconds.` : 'This engine limits playback to 60 seconds.'}`;
+    if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = `${hasAudio() ? 'Arrangement' : 'Note arrangement'} · native playback. Select a clip to ${hasAudio() ? 'edit notes or trim audio' : 'edit notes'}. Note, clip and mix edits apply during built-in native playback; tempo changes the grid only.`;
     if (draft.tracks.some(track => track.device.kind === 'pd_instrument')) {
       $('#effects-hint').textContent += ' Pd notes are monophonic; cutoff and gain edits apply while stopped. Playback and export require libpd.';
       $('.live-help').textContent = `Native playback uses the applied arrangement. Use Stop & edit to change notes and Pd controls. Pd notes are scheduled in 64-frame blocks. WAV export supports up to ${durationInput.max} seconds.`;
@@ -951,7 +959,7 @@
     gain.append(gainLabel, gainRow);
 
     const remove = element('button', 'remove-button', '×');
-    remove.type = 'button';
+    remove.type = 'button'; remove.dataset.structural = 'true';
     remove.setAttribute('aria-label', `Remove sine track ${index + 1}`);
     remove.addEventListener('click', () => {
       draft.tracks.splice(index, 1);
@@ -977,7 +985,7 @@
     input.setAttribute('aria-label', `${track.id} Gain`);
     input.addEventListener('input', () => { draft.tracks[index].device.gain = input.value.trim() ? Number(input.value) : NaN; markEdited(); });
     gain.append(input); controls.append(gain);
-    const remove = element('button', 'remove-button', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${track.id}`);
+    const remove = element('button', 'remove-button', '×'); remove.type = 'button'; remove.dataset.structural = 'true'; remove.setAttribute('aria-label', `Remove ${track.id}`);
     remove.addEventListener('click', () => { draft.tracks.splice(index, 1); renderTracks(); markEdited(); });
     card.append(ident, controls, remove, makeEffectPanel(track, index));
     return card;
@@ -1056,7 +1064,7 @@
       numeric('release_ms', 'Release (ms)', 0, 2000, 1);
       numeric('cutoff_hz', 'Cutoff (Hz)', 20, Math.min(20000,draft.sample_rate/2-1), 1);
     }
-    const remove = element('button', 'remove-button', '×'); remove.type='button'; remove.setAttribute('aria-label', `Remove ${track.id}`);
+    const remove = element('button', 'remove-button', '×'); remove.type='button'; remove.dataset.structural = 'true'; remove.setAttribute('aria-label', `Remove ${track.id}`);
     remove.addEventListener('click',()=>{ draft.tracks.splice(index,1); renderTracks(); markEdited(); });
     card.append(ident, controls, remove, makeEffectPanel(track,index));
     return card;
@@ -1257,7 +1265,7 @@
         holder.dataset.automationTrack = String(index);
         const view = AutomationView.create(holder, {editor: SessionEditor, trackIndex: index, effectId: effect.id,
           draftState: automationDraftStates.get(key), onEdit: applyAutomationEdit, onError: announceError});
-        view.render(draft, {locked: busy || nativeLocked() || unsupportedSession || Boolean(player.context) || starting});
+        view.render(draft, {locked: busy || editLocked() || unsupportedSession || Boolean(player.context) || starting});
         automationViews.push({key, view});
         row.append(holder);
       }
@@ -1311,7 +1319,7 @@
     configureSessionMode();
     automationDraftStates = new Map(automationViews.map(({key, view}) => [key, view.getDraftState()]));
     automationViews = [];
-    mixerView?.render(draft, {locked: busy || nativeLocked() || unsupportedSession || Boolean(player.context) || starting});
+    mixerView?.render(draft, {locked: busy || editLocked() || unsupportedSession || Boolean(player.context) || starting});
     mixerView?.updateMeters(nativeSnapshot.mixer_meters, nativeSnapshot.state);
     tracksEl.replaceChildren(...draft.tracks.map((track, index) => (['supercollider', 'csound'].includes(track.device.kind) ? makeSourceCard(track, index) : makeTrackCard(track, index))));
     const empty = draft.tracks.length === 0;
@@ -1319,12 +1327,12 @@
     tracksEl.hidden = empty;
     $('#track-count').textContent = `${draft.tracks.length} ${draft.tracks.length === 1 ? 'track' : 'tracks'}`;
     $('#arrangement').hidden = !SessionEditor.arrangement(draft);
-    arrangementView?.render(draft, {locked: busy || nativeLocked(), frame: nativeSnapshot.timeline_frame || 0, loop: nativeActive() ? nativeSnapshot.loop_region : null, transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state), pending: timelineBusy});
+    arrangementView?.render(draft, {locked: busy || editLocked(), frame: nativeSnapshot.timeline_frame || 0, loop: nativeActive() ? nativeSnapshot.loop_region : null, transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state), pending: timelineBusy});
     syncStatus();
   }
 
   async function applyMixerEdit(next) {
-    if (busy || nativeLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    if (busy || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
     if (player.context || starting) return false;
     const before = clone(draft);
     draft = next;
@@ -1335,7 +1343,7 @@
   }
 
   async function applyAutomationEdit(next, focus) {
-    if (busy || nativeLocked() || historyAction || unsupportedSession || player.context || starting) return false;
+    if (busy || editLocked() || historyAction || unsupportedSession || player.context || starting) return false;
     const before = clone(draft);
     draft = next;
     if (await applyDraft()) {
@@ -1369,7 +1377,8 @@
   }
 
   async function editArrangement(action) {
-    if (busy || nativeLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    if (busy || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    if (nativeLocked() && ['addTrack', 'deleteTrack', 'editPdInstrument'].includes(action.type)) return false;
     const before = clone(draft);
     try {
       const index = action.trackIndex;
@@ -1429,7 +1438,7 @@
   }
 
   async function traverseHistory(direction) {
-    if (busy || nativeLocked() || noteRecording?.pending || isDirty() || historyAction) return;
+    if (busy || editLocked() || noteRecording?.pending || isDirty() || historyAction) return;
     const target = direction === 'undo' ? editHistory.undoTarget(applied) : editHistory.redoTarget(applied);
     if (!target) return;
     historyAction = true;
@@ -1554,7 +1563,7 @@
     try {
       await capabilitiesLoading;
       if (!bridgeDiscovered) throw new Error('Server capabilities are unavailable. Reload before applying changes.');
-      const response = await request('/api/session', { method: 'POST', body: JSON.stringify({session: draft, ...(checkedReplacementAvailable ? {expected_revision: sessionRevision} : {})}) });
+      const response = await request(nativeActive() ? '/api/session/live' : '/api/session', { method: 'POST', body: JSON.stringify({session: draft, ...(checkedReplacementAvailable ? {expected_revision: sessionRevision} : {})}) });
       const result = await response.json();
       const session = result.session || result;
       const error = validateSession(session);
@@ -1895,7 +1904,7 @@
   });
   $('#stop-button').addEventListener('click', () => { if (nativeActive()) void stopNative(); else { stopNoteInput(); stopLive(); } });
   document.addEventListener('keydown', event => {
-    if (event.target.closest('input, textarea, select') || busy || nativeLocked()) return;
+    if (event.target.closest('input, textarea, select') || busy || editLocked()) return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault(); void traverseHistory(event.shiftKey ? 'redo' : 'undo');
     }
@@ -2109,7 +2118,7 @@
         const commandResult = await studioCommand(operations[0]);
         resultText = noticeEl.classList.contains('error') ? noticeEl.textContent : commandResult || 'Studio command dispatched to the existing control.';
       } else if (operations.length) {
-        if (busy || nativeLocked() || player.context || starting || noteRecording?.pending || historyAction || unsupportedSession || studioHasDrafts()) throw Error('Stop playback and apply typed drafts or resolve the pending take first. No studio edits applied.');
+        if (busy || editLocked() || player.context || starting || noteRecording?.pending || historyAction || unsupportedSession || studioHasDrafts()) throw Error('Stop playback and apply typed drafts or resolve the pending take first. No studio edits applied.');
         const next = StudioActions.apply(applied,plan.parts,scope,studioConfig.operations,SessionEditor);
         draft = next;
         // Leave existing controls intact until success; failed edits preserve typed fields.

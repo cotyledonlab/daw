@@ -23,6 +23,7 @@ pub const METHODS: &[&str] = &[
     "effect.set_parameter",
     "source.set_control",
     "session.replace",
+    "session.update_live",
     "session.edit",
     "session.save",
     "session.load",
@@ -164,6 +165,7 @@ fn capabilities() -> Value {
             "parent_directories": "must_exist", "max_session_bytes": MAX_MESSAGE_BYTES
         }
     });
+    result["live_arrangement_edits"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"same_tracks":true,"devices":["sine","synth","drumkit","audio"],"max_pending":1});
     result["supercollider_live_transport"] = sc_live;
     result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
     result["csound_live_transport"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"source_mode":"live","schema_version":7,"session_schema_versions":[7,8],"sample_rate":48000,"max_seconds":10,"effects":["gain"],"pause":false,"seek":false,"loop":false,"live_control_edits":cfg!(all(feature="native-audio",target_os="macos",target_arch="aarch64")),"max_pending_controls":8,"requires_queue_bridge":true});
@@ -221,7 +223,7 @@ fn capabilities() -> Value {
         json!(["sine", "synth", "drumkit", "audio"]);
     result["timeline_transport"]["count_in_bars"] = json!({"minimum":0,"maximum":2,"default":0,"timeline_frozen":true,"click_when_metronome_off":true});
     result["note_preview"] = json!({"implemented":true,"devices":["sine","synth","drumkit","pd_instrument"],"effects":["gain","lowpass","delay"],"track_mode":"sequenced","stopped_only":true,"gate_seconds":0.25,"seconds":0.5,"format":"wav_pcm16","channels":2,"revision_required":true,"changes_session":false,"mixer":"saved_gain_pan_ignore_mute_solo","automation":"saved_at_preview_frame_zero","tail_policy":"truncate_at_0.5_seconds"});
-    result["mixer"] = json!({"implemented":true,"schema_version":10,"devices":["sine","synth","drumkit","audio","pd_instrument"],"effects":["gain","lowpass","delay"],"gain":{"minimum":0.0,"maximum":2.0,"default":1.0},"pan":{"minimum":-1.0,"maximum":1.0,"default":0.0,"law":"stereo_balance_cosine"},"mute_default":false,"solo_default":false,"solo":"inclusive_mute_overrides","position":"post_effect_pre_master","meters":{"native":cfg!(all(feature="native-audio",target_os="macos")),"scope":"last_callback_buffer","peak":"absolute_linear","clipped_at":1.0,"master":"pre_clamp_pre_monitor"}});
+    result["mixer"] = json!({"implemented":true,"schema_version":10,"devices":["sine","synth","drumkit","audio","pd_instrument"],"effects":["gain","lowpass","delay"],"gain":{"minimum":0.0,"maximum":2.0,"default":1.0},"pan":{"minimum":-1.0,"maximum":1.0,"default":0.0,"law":"stereo_balance_cosine"},"mute_default":false,"solo_default":false,"solo":"inclusive_mute_overrides","position":"post_effect_pre_master","meters":{"native":cfg!(all(feature="native-audio",target_os="macos")),"scope":"peaks_of_consumed_256_frame_worker_blocks","lookahead_max_frames":255,"peak":"absolute_linear","clipped_at":1.0,"master":"pre_clamp_pre_monitor"}});
     result
 }
 
@@ -828,7 +830,7 @@ impl Controller {
                 let _: EmptyParams = params(value)?;
                 Ok(json!({"revision": self.revision.to_string(), "session": self.session}))
             }
-            "session.replace" => {
+            "session.replace" | "session.update_live" => {
                 let mut replacement: ReplaceParams = params(value)?;
                 if let Some(expected) = replacement.expected_revision.as_deref() {
                     self.check_revision(expected)?;
@@ -838,7 +840,34 @@ impl Controller {
                     .validate()
                     .map_err(|e| ControlError::new("invalid_session", e))?;
                 replacement.session.asset_root = self.session.asset_root.clone();
-                self.commit_session(replacement.session)?;
+                if method == "session.update_live" {
+                    if replacement.expected_revision.is_none() {
+                        return Err(ControlError::new(
+                            "invalid_params",
+                            "live edits require expected_revision",
+                        ));
+                    }
+                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                    let next = self.revision.checked_add(1).ok_or_else(|| {
+                        ControlError::new("revision_exhausted", "session revision exhausted")
+                    })?;
+                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                    self.transport
+                        .update_session(&replacement.session, next)
+                        .map_err(|e| ControlError::new("transport_error", e))?;
+                    #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+                    return Err(ControlError::new(
+                        "unsupported",
+                        "live edits require native macOS audio",
+                    ));
+                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                    {
+                        self.session = replacement.session;
+                        self.revision = next;
+                    }
+                } else {
+                    self.commit_session(replacement.session)?;
+                }
                 Ok(json!(self.session))
             }
             "session.edit" => {
