@@ -6,10 +6,18 @@ rust-version = "1.85"
 description = "A headless, scriptable DAW scaffold"
 publish = false
 
+[features]
+default = []
+vst3-offline = []
+au-offline = []
+vst3-live = ["vst3-offline", "native-audio"]
+native-audio = ["dep:cpal"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cpal = { version = "=0.15.3", optional = true }
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 hound = "3.5"
-
-[dev-dependencies]
 tempfile = "3.23"

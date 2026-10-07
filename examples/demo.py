@@ -12,33 +12,33 @@ def main():
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="demo-", dir=output))
-    session = {
-        "schema_version": 1,
-        "sample_rate": 48000,
-        "tracks": [
-            {"id": "a", "device": {"kind": "sine", "frequency_hz": 220, "gain": 0.1}},
-            {"id": "b", "device": {"kind": "sine", "frequency_hz": 330, "gain": 0.1}},
-        ],
-    }
-    commands = [
-        ("capabilities", {}),
-        ("session.replace", {"session": session}),
-        ("session.save", {"path": str(directory / "session.json")}),
-        ("render", {"path": str(directory / "demo.wav"), "seconds": 1}),
-    ]
     with subprocess.Popen(
         [str(ROOT / "target/debug/daw"), "serve"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=ROOT,
     ) as server:
         try:
-            for index, (method, params) in enumerate(commands):
-                request_id = str(index)
+            def call(method, params):
+                request_id = method
                 server.stdin.write(json.dumps({"protocol_version": 1, "id": request_id, "method": method, "params": params}) + "\n")
                 server.stdin.flush()
                 response = json.loads(server.stdout.readline())
                 if response.get("id") != request_id or not response.get("ok"):
                     raise RuntimeError(response)
                 print(json.dumps(response))
+                return response["result"]
+
+            capabilities = call("capabilities", {})
+            kind = capabilities["devices"][0]
+            parameters = capabilities["device_metadata"][kind]["parameters"]
+            device = {"kind": kind, **{name: info["default"] for name, info in parameters.items()}}
+            track = {"id": "demo", "device": device}
+            snapshot = call("session.inspect", {})
+            call("session.edit", {
+                "expected_revision": snapshot["revision"],
+                "operations": [{"op": "add_track", "track": track}],
+            })
+            call("session.save", {"path": str(directory / "session.json")})
+            call("render", {"path": str(directory / "demo.wav"), "seconds": 1})
         finally:
             server.stdin.close()
         if server.wait(timeout=5) != 0:

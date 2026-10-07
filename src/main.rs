@@ -3,9 +3,18 @@ use std::io::{self, BufRead, Write};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| {
+        a == "devices" || a == "play" || a == "sc-stream-play" || a == "sc-session-play"
+    }) {
+        if let Err(error) = native_command(&args) {
+            eprintln!("daw: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "daw serve\nRead one versioned JSON request per line on stdin; write one response per line to stdout.\nSee docs/PROTOCOL.md and examples/demo.py. File paths are relative to the working directory."
+            "daw serve\ndaw devices\ndaw play SESSION.json SECONDS [VOLUME]\ndaw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN\ndaw sc-session-play SESSION.json SECONDS [VOLUME]\nNative commands require macOS and --features native-audio. Session volume defaults to 0.25. SC stream is a finite diagnostic, separate from session transport.\nRead one versioned JSON request per line on stdin in serve mode.\nSee docs/PROTOCOL.md and examples/demo.py. Paths are relative to the working directory."
         );
         return;
     }
@@ -19,6 +28,61 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+#[cfg(all(feature = "native-audio", target_os = "macos"))]
+fn native_command(args: &[String]) -> Result<(), String> {
+    use std::io::Read;
+    let result = match args[0].as_str() {
+        "devices" if args.len() == 1 => daw::audio::devices()?,
+        "sc-stream-play" if args.len() == 6 => daw::audio::play_sc_stream(
+            std::path::Path::new(&args[1]),
+            args[2].parse().map_err(|_| "invalid SC queue nonce")?,
+            args[3].parse().map_err(|_| "invalid SC block count")?,
+            args[4].parse().map_err(|_| "invalid SC volume")?,
+            args[5].parse().map_err(|_| "invalid SC gain")?,
+        )?,
+        command @ ("play" | "sc-session-play") if args.len() == 3 || args.len() == 4 => {
+            let seconds = args[2].parse::<f64>().map_err(|_| "invalid seconds")?;
+            let volume = args
+                .get(3)
+                .map(|v| v.parse::<f64>())
+                .transpose()
+                .map_err(|_| "invalid volume")?
+                .unwrap_or(0.25);
+            let mut bytes = Vec::new();
+            let file = std::fs::File::open(&args[1]).map_err(|e| e.to_string())?;
+            if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+                return Err("session must be a regular JSON file".into());
+            }
+            file.take(MAX_MESSAGE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > MAX_MESSAGE_BYTES {
+                return Err("session exceeds 1 MiB".into());
+            }
+            let mut session: daw::session::Session =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            session.asset_root = Some(
+                std::path::Path::new(&args[1])
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .parent()
+                    .ok_or("session has no parent")?
+                    .to_path_buf(),
+            );
+            if command == "sc-session-play" { daw::audio::play_sc_session(&session, seconds, volume)? }
+            else { daw::audio::play(&session, seconds, volume)? }
+        }
+        _ => return Err("usage: daw devices | daw play SESSION.json SECONDS [VOLUME] | daw sc-stream-play QUEUE NONCE BLOCKS VOLUME GAIN | daw sc-session-play SESSION.json SECONDS [VOLUME]".into()),
+    };
+    println!("{result}");
+    Ok(())
+}
+
+#[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+fn native_command(_: &[String]) -> Result<(), String> {
+    Err("native playback requires macOS and a build with --features native-audio".into())
 }
 
 fn serve() -> io::Result<()> {

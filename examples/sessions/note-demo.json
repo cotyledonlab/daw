@@ -1,0 +1,1055 @@
+{
+  "schema_version": 3,
+  "sample_rate": 48000,
+  "tempo_milli_bpm": 120000,
+  "tracks": [
+    {
+      "id": "lead",
+      "mode": "sequenced",
+      "device": {
+        "kind": "sine",
+        "frequency_hz": 440,
+        "gain": 0.15
+      },
+      "clips": [
+        {
+          "kind": "notes",
+          "id": "phrase",
+          "start_frame": 0,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 391.99543598174927,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 391.99543598174927,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 659.2551138257398,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-2",
+          "start_frame": 192000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 523.2511306011972,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-3",
+          "start_frame": 384000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 174.61411571650194,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 174.61411571650194,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 174.61411571650194,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 440,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-4",
+          "start_frame": 576000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 195.99771799087463,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 246.94165062806206,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 293.6647679174076,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 195.99771799087463,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 246.94165062806206,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 293.6647679174076,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 195.99771799087463,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 493.8833012561241,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-5",
+          "start_frame": 768000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 391.99543598174927,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 391.99543598174927,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 783.9908719634985,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-6",
+          "start_frame": 960000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 329.6275569128699,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 659.2551138257398,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-7",
+          "start_frame": 1152000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 174.61411571650194,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 261.6255653005986,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 174.61411571650194,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 220,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 523.2511306011972,
+              "velocity": 0.7
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-8",
+          "start_frame": 1344000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 16500,
+              "frequency_hz": 246.94165062806206,
+              "velocity": 0.85
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 12000,
+              "frequency_hz": 293.6647679174076,
+              "velocity": 0.7
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 16500,
+              "frequency_hz": 195.99771799087463,
+              "velocity": 0.7
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 12000,
+              "frequency_hz": 246.94165062806206,
+              "velocity": 0.7
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 16500,
+              "frequency_hz": 293.6647679174076,
+              "velocity": 0.85
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 12000,
+              "frequency_hz": 195.99771799087463,
+              "velocity": 0.7
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 16500,
+              "frequency_hz": 246.94165062806206,
+              "velocity": 0.7
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 12000,
+              "frequency_hz": 587.3295358348151,
+              "velocity": 0.7
+            }
+          ]
+        }
+      ],
+      "effects": []
+    },
+    {
+      "id": "bass",
+      "mode": "sequenced",
+      "device": {
+        "kind": "sine",
+        "frequency_hz": 440,
+        "gain": 0.15
+      },
+      "clips": [
+        {
+          "kind": "notes",
+          "id": "phrase",
+          "start_frame": 0,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 130.8127826502993,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 130.8127826502993,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-2",
+          "start_frame": 192000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 110,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 110,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-3",
+          "start_frame": 384000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 87.30705785825097,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 87.30705785825097,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-4",
+          "start_frame": 576000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 97.99885899543733,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 97.99885899543733,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-5",
+          "start_frame": 768000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 130.8127826502993,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 65.40639132514966,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 130.8127826502993,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-6",
+          "start_frame": 960000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 110,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 55,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 110,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-7",
+          "start_frame": 1152000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 87.30705785825097,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 43.653528929125486,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 87.30705785825097,
+              "velocity": 0.65
+            }
+          ]
+        },
+        {
+          "kind": "notes",
+          "id": "phrase-8",
+          "start_frame": 1344000,
+          "length_frames": 192000,
+          "notes": [
+            {
+              "id": "n1",
+              "start_frame": 0,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n2",
+              "start_frame": 24000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n3",
+              "start_frame": 48000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n4",
+              "start_frame": 72000,
+              "duration_frames": 18000,
+              "frequency_hz": 97.99885899543733,
+              "velocity": 0.65
+            },
+            {
+              "id": "n5",
+              "start_frame": 96000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n6",
+              "start_frame": 120000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n7",
+              "start_frame": 144000,
+              "duration_frames": 18000,
+              "frequency_hz": 48.999429497718666,
+              "velocity": 0.65
+            },
+            {
+              "id": "n8",
+              "start_frame": 168000,
+              "duration_frames": 18000,
+              "frequency_hz": 97.99885899543733,
+              "velocity": 0.65
+            }
+          ]
+        }
+      ],
+      "effects": []
+    }
+  ]
+}

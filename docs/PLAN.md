@@ -1,131 +1,60 @@
-# DAW plan and implementation tickets
+# DAW roadmap
 
-## Product scope
+Updated 2026-10-07 after the Opus UI consistency review and plan cleanup. This file contains outstanding work and its execution order. [UI-PLAN.md](UI-PLAN.md) defines the immediate UI passes; [PROTOCOL.md](PROTOCOL.md) defines existing contracts. Completed records live in [PLAN-HISTORY.md](archive/PLAN-HISTORY.md). The previous [roadmap](archive/PLAN-2026-10-04.md) and [UI checklist](archive/UI-PLAN-2026-10-04.md) are archived intact.
 
-Build a small macOS-first DAW whose musical state can be inspected and changed by scripts and AI agents. Keep the session model and offline rendering portable. The usable DAW milestone includes track device chains, audio/MIDI clips on a timeline, transport, automation, save/load, one native plugin format, and one programmable device runtime. A thin UI will use the same command interface as agents.
+## Destination and baseline
 
-The Max for Live analogy means programmable devices participating in track audio, events, parameters, and saved state. Launching a program or sending OSC alone does not provide that integration. VST means VST3 initially. Legacy VST2, AUv3 extensions, CLAP, time stretching, notation, collaboration, and a visual patch editor are outside the first milestone.
+Build a macOS-first arrangement DAW with dependable instruments/effects and drop-in programmable devices. Active scope is improving the existing arrangement workflow and then quantize/MIDI-file handling. Existing runtime/plugin paths are retained for compatibility; their presence does not authorize expansion. Ableton-style parity and broader studio workflows are historical direction, not current acceptance requirements.
 
-## Architecture
+The three implementation gates are delivered: a musical drum/bass/lead loop; a portable three-minute built-in/PCM song with mixer, processing, automation and fades; and one sequenced Pd instrument. Keyboard/Web MIDI preview, stopped step entry, native metronome/count-in and held-gate overdub are also delivered. These are the baseline, not active tickets. Quiet listening, physical MIDI and sustained latency validation remain open; automated and muted native evidence does not establish acoustic quality.
 
-```text
-Python / other scripts / future UI or MCP adapter
-                |
-       versioned commands (JSONL now)
-                |
-      controller + validated session model
-                |
-      prepared render state / graph (future)
-                |
-      offline render or live audio callback
-                |
-      built-ins / native plugins / runtime adapters
-```
+## Active delivery order
 
-The control module owns validation, persistence, and edits. Audio code receives prepared state rather than parsing commands. Future live edits cross a bounded queue at a block boundary. Preparation, allocation, plugin loading, and destruction happen off the audio thread. Offline rendering remains the reference path for tests.
+### 1. Restore UI consistency
 
-Prefer a Rust core with narrow C++/Objective-C bridges if native hosting needs them. Choose the bridge after a working host spike. Do not define a generic processor interface until a second concrete implementation exposes what varies. Plugin editors stay outside DSP. A scanner process isolates discovery failures; isolation during playback is a separate decision.
+Address the [Opus consistency review and source qualifications](OPUS-UI-CONSISTENCY-REVIEW.md) through the focused passes in [UI-PLAN.md](UI-PLAN.md). The review is complete; its recommended fixes are not implemented.
 
-Scripts run outside the engine initially, using JSONL from any language. Later add parameter metadata, validated batch edits, revision checks, event subscriptions, and render jobs. An MCP wrapper can translate this interface once stable. Do not execute model-generated code in an audio callback.
+1. Consolidate CSS and control typography/geometry; fix undefined tokens and inconsistent statuses without changing behavior.
+2. Clarify gain stages, musical units, device names and selection/state colors while preserving exact stored values.
+3. Regroup transport, step-entry, history and mixer actions; verify stopped and playback/recording layouts.
+4. Explain draft versus applied edits and file persistence. Reconcile mixer Apply scope and track-deletion behavior in a separate checked handler pass.
 
-## S0: completed scaffold
+Acceptance: coherent desktop/narrow layouts, keyboard focus and visible disabled reasons; unchanged frames/Hz and untouched gain/pan values; retained drafts and rejected takes; checked undo and portable save/reopen/export where behavior changes. Preserve readable canvas geometry and validate pointer mapping before changing SVG sizing. No full inspector or framework migration is required.
 
-- One Rust crate with `daw serve` and bounded JSONL input.
-- `capabilities`, `session.get`, transactional `session.replace`, `session.save`, `session.load`, and `render`.
-- Strict versioned sessions: 0–64 tracks, 8–192 kHz, unique IDs, validated sine frequency/gain.
-- Offline stereo PCM16 rendering, 0.001–60 seconds, clipping report, fresh output files only.
-- Python client, tests, CI definition, protocol documentation.
+### 2. Quantize and MIDI-file import/export
 
-See [PROTOCOL.md](PROTOCOL.md) for the exact contract. No live audio, plugins, transport, clips, GUI, or external runtimes are implemented yet.
+Continue the small composition/recording slice after the consistency pass. Define supported MIDI events, tempo-map handling, note pairing and clip placement before implementation. Make unsupported data and intentional timing conversion explicit; do not silently retime existing frame-based projects.
 
-## Working method
+Acceptance: quantize one selected phrase with checked undo; import/export a supported MIDI phrase with explicit pitch/gate/velocity/timing behavior; preserve unrelated notes, PCM, mixer and effects; reject malformed/unsupported inputs without partial changes. Retain exact persistence and fresh-engine portable reopen/export checks. Sustain, input-device selection and physical MIDI timing remain separate follow-ups unless needed by this fixture.
 
-Use GPT-6 Luna for bounded tickets. Supply the ticket ID, prerequisites, named files, current protocol, and verification command. Complete one logical ticket per commit and update its status here. Do not implement adjacent tickets speculatively. Run the checks in [AGENTS.md](../AGENTS.md).
+## Deferred possibilities — outside active scope
 
-Parallelize tests/examples/docs only with stable interfaces and separate file ownership. One owner integrates code. A stronger model reviews schema changes, real-time concurrency, FFI, and plugin lifecycle. These are technical review checkpoints, not extra user-approval requirements. Ask the user only when a product decision or blocked action requires it.
+| Order | Outstanding workflow | Initial scope |
+| --- | --- | --- |
+| 3 | Sampled instruments | Single-sample pitched instrument and user-sample drum pads using prepared PCM; basic envelopes/filter/presets. |
+| 4 | Audio recording | Input selection, arm/monitor/record, measured latency and portable takes; comping later. |
+| 5 | Clip/scenes performance | Quantized launch/stop/scenes and arrangement capture, reusing the clip scheduler and session model. |
+| 6 | Tempo-aware audio | Import resampling first; then beat-based audio, tempo following/stretch/warp, groove and reverse. Sample-rate conversion and stretching are separate slices. |
+| 7 | Studio expansion | Sends/returns/routing, freeze/resample, broader parameter automation, reliable VST3 discovery/state/editor/instruments and latency compensation. Broaden AU for a concrete musical need. |
 
-## Backlog
+This table preserves possible later directions, not a delivery commitment or permission to implement them. Reopen a deferred slice only for a concrete user request or a demonstrated dependency of the active work.
 
-All tickets below are pending; new module names are proposed. Acceptance checks supplement the standard format/lint/test commands.
+## Open validation and follow-ups
 
-### T01: machine-readable discovery
+- **Listening/composition:** quietly build a phrase from scratch, balance the mixed song and audition Pd gates/seek/loop boundaries. Turn observed clicks, silence or editing friction into small fixes.
+- **Input/transport:** physical Web MIDI, measured input latency, sustain/input-device selection and long-run runtime clock/latency behavior remain unverified or unimplemented. The final keyboard-recording browser check is completed in history; do not reopen it as unfinished delivery.
+- **Editing/audio polish:** multiselect/zoom, velocity lanes, waveforms, unsaved-work recovery, smooth automation ramps, other parameter lanes, live mixer edits/smoothing and peak hold. Prioritize demonstrated workflow or data-loss problems.
+- **Programmable devices:** Pd polyphony/envelopes, arbitrary patches/externals, live controls, programmable effects and a second sequenced runtime. Preserve the current 48 kHz monophonic preset limits until explicitly expanded.
+- **Separate WIP:** legacy continuous Pd receiver controls are checkpointed in `878f711`; native acceptance and contract reconciliation remain unfinished. They are separate from the delivered schema-12 note instrument.
 
-**Depends on:** S0. **Owner:** Luna. **Files:** `src/control.rs`, `docs/PROTOCOL.md`, `tests/control.rs`.
+## Working rules
 
-Extend capabilities with parameter descriptions, units, defaults, limits, session limits, and file behavior. Preserve existing fields. Acceptance: a client constructs a valid sine session from metadata alone; limits match validation tests. No future devices or new transport.
+- Measure progress by music someone can make, reopen and export. Commit completed slices at their acceptance boundary. Preserve unrelated working-tree changes.
+- Reuse Rust, JSONL, the browser bridge, checked replacement, polling and bounded snapshot undo. Keep one session model and existing capability helpers; no speculative abstraction or format migration.
+- Preserve untouched frames, Hz, gain/pan and drafts. Tempo currently changes the authoring grid without moving saved frames. Distinguish applied engine state from downloaded project files.
+- Keep structural edits stopped, failures transactional and publication exclusive. No allocation, blocking locks, I/O, process startup or foreign initialization in audio callbacks.
+- Verify relevant formatting/lint/tests and save/reopen/export at behavioral slice boundaries. Use installed-runtime/FFI/native checks when those paths change; do not rerun unrelated adapter matrices for documentation or CSS-only edits.
+- Freeze new host formats, standalone probes, AU breadth, subscriptions/MCP and broad refactors unless they fix a regression or block the active musical slice.
+- When parallel work is explicitly requested, use distinct file owners and one integration owner, particularly for `gui/app.js`. Close work through one shared musical fixture.
 
-### T02: revision-checked atomic edits
-
-**Depends on:** T01 and stronger-model protocol review. **Owner:** Luna after review. **Files:** `src/control.rs`, `tests/control.rs`, `docs/PROTOCOL.md`.
-
-Introduce a revision and one batch command for add/remove track and parameter edits. Require the expected revision; edit a copy, validate, then commit. Define replacement/load revision behavior and compatibility with v1 clients. Acceptance: stale revision conflicts, a failed middle edit preserves all state, and a successful batch advances revision once. No undo or concurrency yet.
-
-### T03: block renderer with persistent phase
-
-**Depends on:** S0. **Owner:** Luna; stronger-model review before live use. **Files:** `src/render.rs`, proposed `src/engine.rs`, `tests/render.rs`.
-
-Separate prepared sine state, sample-block rendering, and WAV encoding. Allocate before rendering; maintain oscillator phase and frame cursor across blocks. Acceptance: 4,800 frames rendered in different block sizes agree within one PCM16 step, phase never restarts at block boundaries, silence/clipping remain correct. Verify callback-path allocation before claiming real-time safety. No hardware dependency.
-
-### T04: macOS playback spike
-
-**Depends on:** T03. **Owner:** stronger model for lifecycle, Luna for harness/docs. **Files:** proposed `src/audio.rs`, `src/main.rs`, `Cargo.toml`, `docs/decisions/live-audio.md`.
-
-Evaluate CPAL on the actual device with an explicit bounded playback command. Handle format, channels, callback sizes, stop, device errors, and sample-rate mismatch without pitch changes. Acceptance: manually verify a short tone and stream release, record configuration/callback timing, test buffer bounds and silence on error in a fake callback harness. CI is not live-device acceptance. No recording or hot-swap.
-
-### T05: timeline contract
-
-**Depends on:** T02, T03. **Owner:** stronger model for design, Luna for fixtures. **Files:** proposed `docs/decisions/timeline.md`, `examples/sessions/`.
-
-Specify integer sample positions, constant tempo conversion, clip lengths, stable event order, loops, automation timing, and migration from v1. Acceptance: fixtures for adjacent clips, simultaneous notes, a loop boundary, and tempo conversion include expected frames. Review before implementing T06/T07. No tempo maps or stretching.
-
-### T06: note sequencing
-
-**Depends on:** T05. **Owner:** Luna. **Files:** `src/session.rs`, `src/engine.rs`, `src/render.rs`, `tests/timeline.rs`.
-
-Implement note sequences, sample-offset events, a bounded voice count, note-off behavior, and short attack/release envelopes. Acceptance: note timing is frame-accurate, voice limits hold, block size does not change output, and sessions round-trip. No hardware MIDI or piano roll.
-
-### T07: audio clips and transport
-
-**Depends on:** T05, T06; T04 for live checks. **Owner:** separate Luna commits. **Files:** `src/session.rs`, `src/engine.rs`, `src/audio.rs`, `src/control.rs`, `tests/timeline.rs`.
-
-First add PCM WAV clips at the session rate, preloaded off the callback, with gain and offset. Then add play/stop/seek. Define project-relative assets and missing-file reporting. Acceptance: known impulse clips mix at exact offsets, unsupported formats/rates fail, seek/stop leave no sounding notes, and asset references survive reload. No resampling, recording, or compressed audio.
-
-### T08: device chains and automation
-
-**Depends on:** T06. **Owner:** stronger-model interface review, Luna implementation. **Files:** `src/session.rs`, `src/engine.rs`, `src/control.rs`, `tests/devices.rs`.
-
-Add a gain effect as the second concrete processor, then extract their shared interface. Define preparation, audio/events, parameters, state, and latency. Add serial chains and bounded automation with smoothing. Acceptance: expected sine/gain output, block-independent automation, bypass/state round trips, and no callback allocations during edits. No arbitrary cycles, sends, or sidechains.
-
-### T09: VST3 host proof of concept
-
-**Depends on:** T08; research may start earlier. **Owner:** stronger model, Luna fixtures/docs. **Files:** proposed `native/`, `src/hosting/`, `docs/decisions/plugin-hosting.md`.
-
-Compare official SDK plus thin C++ shim against maintained Rust bindings using one known test plugin. Choose from working lifecycle coverage. Scan in a child process with timeouts. Implement buses, buffers, events, automation, state, and teardown before editors. Acceptance: discover/load/process/automate/save/restore one plugin; scanner failure cannot kill the controller. Document playback isolation honestly and verify pinned SDK notices. No blanket compatibility claim.
-
-### T10: Audio Unit host proof of concept
-
-**Depends on:** T09 host contract. **Owner:** stronger model, Luna harness/docs. **Files:** `native/`, `src/hosting/`, macOS integration tests.
-
-Start with desktop Audio Units: discovery, instantiation, formats, resources, cached render blocks, parameters/state, teardown. Contain Objective-C and window lifecycle in native code. Acceptance: known Apple AU renders and restores state; portable builds still work; unsupported units fail clearly. No AUv3 extensions.
-
-### T11: SuperCollider jobs and control
-
-**Depends on:** S0 for offline spike; T08 for track integration. **Owner:** Luna process harness, stronger-model audio-routing review. **Files:** proposed `src/runtimes/supercollider.rs`, runtime tests, example score.
-
-First launch a configured `scsynth` with a prepared NRT score, fresh WAV path, argument arrays, timeout, and captured errors. Then add owned child-process OSC with completion handling. Never use a shell or terminate unrelated servers. Acceptance: installed engine renders a fixture, missing executable/timeout errors work, interactive create/free is acknowledged. Live audio transport needs separate measured design; OSC success alone is not track integration.
-
-### T12: Csound and Pure Data adapters
-
-**Depends on:** T11 job conventions; T08 for embedded devices. **Owner:** Luna offline harnesses, stronger model FFI. **Files:** proposed `src/runtimes/csound.rs`, `src/runtimes/pd.rs`, separate tests.
-
-Use separate commits. Start Csound with CLI rendering, then assess libcsound blocks. Spike libpd with one patch, explicit search paths, controlled externals, block sizes, and thread ownership. Acceptance for each: known audio fixture, state/parameters, missing-runtime errors, cleanup, capability flag, and preserved dependency notices. Do not claim arbitrary externals/opcodes work. No general sandbox.
-
-### T13: agent jobs and thin UI
-
-**Depends on:** T02, T07, T08, one native plugin, one runtime device. **Owner:** separate Luna tasks after interface review.
-
-First add cancellable render jobs with progress and subscriptions. Then build minimal track/clip/device/transport/meter views through the same commands. Optional MCP translates discovery, inspect, edit, and jobs without another session model. Acceptance: Python creates/edits/saves/reloads/renders the arrangement shown by the UI, failed edits preserve state, and cancellation cleans output. Defer a visual patch editor and elaborate mixer.
-
-## Next starting point
-
-Implement T01. T03 can proceed independently with separate renderer ownership. Review T02/T05 before assigning implementation. See [INTEGRATIONS.md](INTEGRATIONS.md) for sources and integration choices.
+**Next action:** UI pass A from [UI-PLAN.md](UI-PLAN.md), collecting quiet listening/composition feedback alongside it. Complete the remaining consistency passes before quantize/MIDI-file work.

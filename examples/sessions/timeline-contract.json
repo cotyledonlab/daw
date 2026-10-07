@@ -1,0 +1,356 @@
+{
+  "fixture_version": 1,
+  "status": "design_only_not_loadable",
+  "description": "Reference examples for the proposed T05 timeline contract. These are not session files.",
+  "cases": [
+    {
+      "id": "tempo-round-half-up",
+      "category": "tempo_conversion",
+      "input": {
+        "formula": "(2*n+d)//(2*d), n=ticks*sample_rate*60000, d=960*tempo_milli_bpm",
+        "conversions": [
+          {
+            "sample_rate": 48000,
+            "tempo_milli_bpm": 120000,
+            "ticks": [
+              0,
+              960,
+              1920
+            ]
+          },
+          {
+            "sample_rate": 44100,
+            "tempo_milli_bpm": 120000,
+            "ticks": [
+              1,
+              2,
+              960,
+              100
+            ]
+          },
+          {
+            "sample_rate": 48000,
+            "tempo_milli_bpm": 96000,
+            "ticks": [
+              2
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "sample_rate": 48000,
+          "tempo_milli_bpm": 120000,
+          "ticks": [
+            0,
+            960,
+            1920
+          ],
+          "frames": [
+            0,
+            24000,
+            48000
+          ]
+        },
+        {
+          "sample_rate": 44100,
+          "tempo_milli_bpm": 120000,
+          "ticks": [
+            1,
+            2,
+            960,
+            100
+          ],
+          "frames": [
+            23,
+            46,
+            22050,
+            2297
+          ]
+        },
+        {
+          "sample_rate": 48000,
+          "tempo_milli_bpm": 96000,
+          "ticks": [
+            2
+          ],
+          "frames": [
+            63
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adjacent-half-open-clips",
+      "category": "adjacent_clips",
+      "input": {
+        "clips": [
+          {
+            "track_id": "track",
+            "clip_id": "a",
+            "notes": [
+              {
+                "note_id": "n",
+                "start_frame": 0,
+                "duration_frames": 8
+              }
+            ],
+            "start_frame": 0,
+            "length_frames": 8
+          },
+          {
+            "track_id": "track",
+            "clip_id": "b",
+            "notes": [
+              {
+                "note_id": "n",
+                "start_frame": 0,
+                "duration_frames": 8
+              }
+            ],
+            "start_frame": 8,
+            "length_frames": 8
+          }
+        ],
+        "event_order": [
+          "frame",
+          "priority(note_off=1,note_on=3)",
+          "track_id UTF-8",
+          "clip_id UTF-8",
+          "note_id UTF-8"
+        ],
+        "gate_query_frames": [
+          7,
+          8,
+          15,
+          16
+        ]
+      },
+      "expected": {
+        "events": [
+          {
+            "frame": 0,
+            "kind": "note_on",
+            "track_id": "track",
+            "clip_id": "a",
+            "note_id": "n"
+          },
+          {
+            "frame": 8,
+            "kind": "note_off",
+            "track_id": "track",
+            "clip_id": "a",
+            "note_id": "n"
+          },
+          {
+            "frame": 8,
+            "kind": "note_on",
+            "track_id": "track",
+            "clip_id": "b",
+            "note_id": "n"
+          },
+          {
+            "frame": 16,
+            "kind": "note_off",
+            "track_id": "track",
+            "clip_id": "b",
+            "note_id": "n"
+          }
+        ],
+        "active_note_ids_by_frame": {
+          "7": [
+            "a/n"
+          ],
+          "8": [
+            "b/n"
+          ],
+          "15": [
+            "b/n"
+          ],
+          "16": []
+        }
+      }
+    },
+    {
+      "id": "simultaneous-stable-order",
+      "category": "simultaneous_events",
+      "input": {
+        "events": [
+          {
+            "frame": 12,
+            "kind": "note_on",
+            "track_id": "z",
+            "clip_id": "c2",
+            "note_id": "b"
+          },
+          {
+            "frame": 12,
+            "kind": "note_off",
+            "track_id": "a",
+            "clip_id": "c2",
+            "note_id": "old-z"
+          },
+          {
+            "frame": 12,
+            "kind": "note_on",
+            "track_id": "a",
+            "clip_id": "c1",
+            "note_id": "b"
+          },
+          {
+            "frame": 12,
+            "kind": "note_off",
+            "track_id": "a",
+            "clip_id": "c1",
+            "note_id": "old-a"
+          },
+          {
+            "frame": 12,
+            "kind": "note_on",
+            "track_id": "a",
+            "clip_id": "c1",
+            "note_id": "a"
+          }
+        ],
+        "event_order": [
+          "frame",
+          "priority(note_off=1,note_on=3)",
+          "track_id UTF-8",
+          "clip_id UTF-8",
+          "note_id UTF-8"
+        ]
+      },
+      "expected": [
+        {
+          "frame": 12,
+          "kind": "note_off",
+          "track_id": "a",
+          "clip_id": "c1",
+          "note_id": "old-a"
+        },
+        {
+          "frame": 12,
+          "kind": "note_off",
+          "track_id": "a",
+          "clip_id": "c2",
+          "note_id": "old-z"
+        },
+        {
+          "frame": 12,
+          "kind": "note_on",
+          "track_id": "a",
+          "clip_id": "c1",
+          "note_id": "a"
+        },
+        {
+          "frame": 12,
+          "kind": "note_on",
+          "track_id": "a",
+          "clip_id": "c1",
+          "note_id": "b"
+        },
+        {
+          "frame": 12,
+          "kind": "note_on",
+          "track_id": "z",
+          "clip_id": "c2",
+          "note_id": "b"
+        }
+      ]
+    },
+    {
+      "id": "loop-clear-without-chase",
+      "category": "loop_trace",
+      "input": {
+        "loop_start": 4,
+        "loop_end": 8,
+        "render_start": 4,
+        "output_frames": 9,
+        "notes": [
+          {
+            "note_id": "earlier",
+            "start": 3,
+            "end": 5
+          },
+          {
+            "note_id": "a",
+            "start": 4,
+            "end": 6
+          },
+          {
+            "note_id": "b",
+            "start": 7,
+            "end": 9
+          },
+          {
+            "note_id": "excluded",
+            "start": 8,
+            "end": 10
+          }
+        ],
+        "rules": [
+          "half-open loop interval",
+          "no chase at initial seek",
+          "reset all voices at each wrap",
+          "ignore events at loop_end"
+        ]
+      },
+      "expected": [
+        {
+          "output_frame": 0,
+          "timeline_frame": 4,
+          "kind": "note_on",
+          "note_id": "a"
+        },
+        {
+          "output_frame": 2,
+          "timeline_frame": 6,
+          "kind": "note_off",
+          "note_id": "a"
+        },
+        {
+          "output_frame": 3,
+          "timeline_frame": 7,
+          "kind": "note_on",
+          "note_id": "b"
+        },
+        {
+          "output_frame": 4,
+          "timeline_frame": 4,
+          "kind": "reset",
+          "note_id": null
+        },
+        {
+          "output_frame": 4,
+          "timeline_frame": 4,
+          "kind": "note_on",
+          "note_id": "a"
+        },
+        {
+          "output_frame": 6,
+          "timeline_frame": 6,
+          "kind": "note_off",
+          "note_id": "a"
+        },
+        {
+          "output_frame": 7,
+          "timeline_frame": 7,
+          "kind": "note_on",
+          "note_id": "b"
+        },
+        {
+          "output_frame": 8,
+          "timeline_frame": 4,
+          "kind": "reset",
+          "note_id": null
+        },
+        {
+          "output_frame": 8,
+          "timeline_frame": 4,
+          "kind": "note_on",
+          "note_id": "a"
+        }
+      ]
+    }
+  ]
+}

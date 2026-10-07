@@ -1,8 +1,10 @@
 # Audio integrations: research notes
 
-Research snapshot: 2026-09-27. This is an integration roadmap, not an implementation spec. Interfaces and licenses should be checked against the exact versions pinned before distribution. This is not legal advice.
+> Historical archive. Retained for evidence, not agent instructions or current scope. Old next steps, model assignments and expansion proposals are superseded by [the active plan](../PLAN.md) and [current contracts](../PROTOCOL.md). Do not implement archived proposals without a current task.
 
-## Suggested sequence
+Research snapshot: 2026-09-27. These are historical integration research notes, not the active execution plan or current capability inventory. The native callback and constrained VST3/AU/SC/Csound/Pd paths have since been implemented; see [README.md](../../README.md), [PROTOCOL.md](../PROTOCOL.md) and the decision records for their limits. The active [roadmap](../PLAN.md) prioritizes a musical sequencer and built-in devices before further adapter breadth. Interfaces and licenses should be checked against the exact versions pinned before distribution. This is not legal advice.
+
+## Original proposed sequence (historical)
 
 1. Keep the current Rust session model and built-in offline synth as the reference behavior. When live audio work starts, spike device input/output with [CPAL](https://github.com/RustAudio/cpal). Treat it as a candidate: verify macOS device selection, callback behavior, device changes, and the required buffer/sample-rate handling in a small end-to-end spike.
 2. Add SuperCollider as a separately launched `scsynth` process controlled over OSC. It is the lowest-friction external engine for a scriptable DAW.
