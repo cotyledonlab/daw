@@ -58,10 +58,13 @@
           <button class="button button-quiet apply-button" id="apply-button" type="button" disabled>Apply changes</button>
         </div>
       </section>
-      <details class="editing-help"><summary>Editing &amp; saving</summary>
+      <details class="editing-help"><summary>Help</summary>
       <p class="output-hint" id="persistence-help">Arrangement edits apply immediately. Device/effect drafts need Apply changes. Applied edits are in memory; Save session downloads a file to keep before closing.</p>
-      </details>
       <p class="output-hint" id="history-help" aria-live="polite"></p>
+      <p id="audio-import-hint" class="output-hint">Import PCM16/24/32 mono or stereo WAVs at the session rate, up to 32 MiB. Each import creates a new audio lane at Insert at (beat), or beat 0 in an empty session.</p>
+      <p class="output-hint">MIDI import: format 0/1, beat timing, up to 1 MiB. Imports notes into new lanes at project tempo; sounds, sustain, expression and source tempo maps stay outside the project. Drum channel 10 supports kick 36, snare 38 and closed hat 42.</p>
+      <p id="effects-hint" class="output-hint"></p>
+      </details>
 
       <section class="arrangement-section" aria-label="Arrangement workspace">
         <div class="arrangement-actions">
@@ -77,35 +80,35 @@
           <button class="button button-quiet" id="import-pd-button" type="button">Load Pd preset</button>
           <input id="pd-file" type="file" accept="application/json,.json" hidden>
           <button class="button button-quiet" id="import-audio-button" type="button" disabled>Import WAV</button>
+          <button class="button button-quiet" id="import-midi-button" type="button" title="Import note lanes at Insert at, using project tempo. MIDI sounds and expression are not imported.">Import MIDI</button>
+          <input id="midi-file" type="file" accept="audio/midi,.mid,.midi" hidden>
           <input id="audio-file" type="file" accept="audio/wav,.wav" hidden>
           <button class="button button-quiet" id="demo-arrangement-button" type="button">Open musical demo</button>
           <button class="button button-quiet" id="new-arrangement-button" type="button">New arrangement</button>
           <button class="button button-quiet" id="undo-button" type="button" disabled>Undo</button>
           <button class="button button-quiet" id="redo-button" type="button" disabled>Redo</button>
         </div>
-        <p id="audio-import-hint" class="output-hint">Import PCM16/24/32 mono or stereo WAVs at the session rate, up to 32 MiB. Each import creates a new audio lane at Insert at (beat), or beat 0 in an empty session.</p>
         <div id="arrangement" hidden></div>
         <section id="note-input" class="note-input-panel" aria-label="Play and enter notes" hidden>
           <div class="arrangement-controls">
             <label class="note-input-toggle"><input id="note-input-enabled" type="checkbox"> Play keyboard / MIDI notes</label>
             <label>Keyboard octave<select id="note-input-octave"><option value="36">C2</option><option value="48" selected>C3</option><option value="60">C4</option><option value="72">C5</option></select></label>
             <button id="note-preview-button" class="button button-quiet" type="button">Preview C3</button>
-            <button id="connect-midi-button" class="button button-quiet" type="button">Connect MIDI</button>
-            <label class="note-input-toggle"><input id="step-entry-enabled" type="checkbox"> Step entry</label>
-            <button id="record-notes-button" class="button button-quiet" type="button">Record notes</button>
+            <button id="connect-midi-button" title="Connect a MIDI keyboard through browser MIDI access." class="button button-quiet" type="button">Connect MIDI</button>
+            <label class="note-input-toggle"><input id="step-entry-enabled" title="Each note adds a gate at Step position and advances the cursor." type="checkbox"> Step entry</label>
+            <button id="record-notes-button" title="Record into the selected clip from song zero. Stop applies one take; input is not monitored during playback." class="button button-quiet" type="button">Record notes</button>
             <button id="apply-take-button" class="button button-quiet" type="button" hidden>Apply take</button>
             <button id="discard-take-button" class="button button-quiet" type="button" hidden>Discard take</button>
           </div>
-          <p id="note-input-help" class="output-hint">Select a note clip. A W S E D F T G Y H U J K play one octave; drum tracks use A / S / D. Each press previews a short note through the saved instrument and effects. Step entry adds one note and advances the clip cursor while stopped.</p>
+          <details class="editing-help"><summary>Keyboard &amp; MIDI help</summary><p id="note-input-help" class="output-hint">Select a note clip. A W S E D F T G Y H U J K play one octave; drum tracks use A / S / D. Each press previews a short note through the saved instrument and effects. Step entry adds one note and advances the clip cursor while stopped.</p></details>
           <p id="note-input-status" class="output-hint" role="status" aria-live="polite"></p>
-          <p id="record-notes-status" class="output-hint" role="status" aria-live="polite">Select a clip to overdub keyboard/MIDI notes. Recording starts from the arrangement beginning; Stop applies one undoable take. Input monitoring is available while stopped.</p>
-          <p id="midi-status" class="output-hint" role="status" aria-live="polite">MIDI disconnected. Connect explicitly in a browser with Web MIDI support.</p>
+          <p id="record-notes-status" class="output-hint" role="status" aria-live="polite">Select a clip to record.</p>
+          <p id="midi-status" class="output-hint" role="status" aria-live="polite">MIDI disconnected.</p>
         </section>
       </section>
 
       <section id="mixer" class="mixer-panel" aria-label="Mixing console" hidden></section>
 
-      <p id="effects-hint" class="output-hint"></p>
       <section id="tracks" class="tracks" aria-label="Track devices and effects"></section>
 
       <section id="empty-state" class="empty-state" aria-labelledby="empty-title" hidden>
@@ -214,6 +217,7 @@
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>
   <script src="/pd_instrument.js" defer></script>
+  <script src="/midi_file.js" defer></script>
   <script src="/editor.js" defer></script>
   <script src="/history.js" defer></script>
   <script src="/timeline.js" defer></script>

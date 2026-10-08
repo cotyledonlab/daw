@@ -57,10 +57,15 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 - [x] Download the applied selected note clip as a format-0 MIDI file with clip-relative timing, 960 PPQ, tempo, 4/4 and note gates/velocities. Keep project state/history exact; reject same-rounded-pitch overlaps and out-of-range pitches, preserve drafts and pending takes. Independent byte-decoding and actual app/timeline regressions passed in `gui/test_midi_export.cjs` and `gui/test_timeline.cjs`; browser checks covered the download action/status, draft rejection and 390-pixel layout. The browser tooling timed out waiting for the completed file event, so file-delivery and external-DAW acceptance are not claimed. Exact project saving remains separate; listening/microphone acceptance is still deferred.
 
+## Requested MIDI import and quieter workspace
+
+- [x] Import format-0/1 PPQ MIDI notes into new lanes at Insert at, using project tempo and one checked stopped edit with whole-import Undo/Redo. Preserve drafts, pending takes and existing project/audio data; bound/reject malformed or ambiguous files. Parser/editor/app regressions passed, including one-note, channels/tracks, running status, exact endpoint conversion, rollback and budgets. Browser file-picker import, placement, automatic selection, whole-import Undo/Redo, draft protection and malformed rejection passed. A mixed MIDI-note/PCM project saved and reopened in a fresh engine with byte-identical unclipped WAV exports.
+- [x] Reduce routine workspace copy: fold arrangement, clip, input, import and persistence explanations into keyboard-accessible help disclosures; add hover hints and remove repeated idle instructions/mixer prose. Keep inline validation and take/error status visible. Browser help expansion/keyboard collapse and 320/390/768/1440 layouts passed. System appearance still follows native CSS preferences; physical switching/listening/microphone acceptance remains open.
+
 ## After MVP
 
-MIDI-file import is the next feature slice when requested; selected-clip MIDI export is delivered above. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
+Requested MIDI note-file import and selected-clip export are delivered above. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** implement the next small MIDI-file import slice when requested; keep acoustic and microphone acceptance open for later. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** resume quiet end-to-end listening and microphone acceptance when the user is ready; those checks remain deferred, with no further feature slice started automatically. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).

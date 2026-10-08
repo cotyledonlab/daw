@@ -12,10 +12,10 @@
     const noteDevices = ['sine', 'drumkit', 'synth', 'pd_instrument'];
     container.innerHTML = `
       <div class="arrangement-heading"><div><p class="eyebrow">Arrange · 4 beats per bar</p><h2 class="arrangement-title">Note arrangement</h2></div><output class="position-readout" aria-label="Playhead position">Beat 0.00</output></div>
-      <p class="arrangement-help">Drag clips to move; drag their right edge to resize. Click or draw in the piano roll to add notes. Positions are measured from zero. Tempo changes the grid; saved notes keep their timing.</p>
+      <details class="editing-help arrangement-guide"><summary>Arrangement help</summary><p class="arrangement-help">Drag clips to move; drag their right edge to resize. Click or draw in the piano roll to add notes. Positions are measured from zero. Tempo changes the grid; saved notes keep their timing.</p></details>
       <div class="arrangement-controls">
-        <label>Tempo (BPM)<input data-field="tempo" type="number" min="20" max="300" step="0.001" value="120"></label><button data-action="tempo" class="button button-quiet">Set tempo</button>
-        <label>Grid<select data-field="grid"><option value="240">¼ beat</option><option value="480">½ beat</option><option value="960">1 beat</option><option value="0">No snap</option></select></label>
+        <label>Tempo (BPM)<input data-field="tempo" title="Changes the authoring grid; existing notes keep their saved timing." type="number" min="20" max="300" step="0.001" value="120"></label><button data-action="tempo" class="button button-quiet">Set tempo</button>
+        <label>Grid<select data-field="grid" title="Snap new positions and gestures to this beat grid."><option value="240">¼ beat</option><option value="480">½ beat</option><option value="960">1 beat</option><option value="0">No snap</option></select></label>
         <label>Seek (beat)<input data-field="seek" type="number" min="0" step="0.25" value="0"></label><button data-action="seek" class="button button-quiet">Seek</button>
         <label>Loop start<input data-field="loopStart" type="number" min="0" step="0.25" value="0"></label><label>Loop end<input data-field="loopEnd" type="number" min="0" step="0.25" value="4"></label>
         <button data-action="loop" class="button button-quiet">Set loop</button><button data-action="clearLoop" class="button button-quiet">Clear loop</button>
@@ -28,16 +28,16 @@
       <section class="clip-editor" hidden><h3 class="clip-heading"></h3>
         <div class="arrangement-controls"><label>Clip start (beat)<input data-field="clipStart" type="number" min="0" step="0.25"></label><button data-action="moveClip" class="button button-quiet">Move clip</button><label>Clip length (beats)<input data-field="clipLength" type="number" min="0.001" step="0.25"></label><button data-action="resizeClip" class="button button-quiet">Resize clip</button><button data-action="duplicateClip" class="button button-quiet">Duplicate clip</button><button data-action="deleteClip" class="button button-quiet">Delete clip</button></div>
         <div class="timeline-scroll note-roll"><svg class="piano-roll-svg" role="group" aria-label="Piano roll; select a note to edit"></svg></div>
-        <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button><button data-action="quantizeClip" class="button button-quiet" title="Move all note starts to the selected grid; preserve durations and pitch.">Quantize clip</button><button data-action="exportMidiClip" class="button button-quiet">Export clip MIDI</button></div>
+        <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" title="C4 = MIDI 60. Editing pitch uses equal temperament." type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button><button data-action="quantizeClip" class="button button-quiet" title="Snap note starts to Grid from clip zero; preserve durations. No snap disables this action.">Quantize clip</button><button data-action="exportMidiClip" class="button button-quiet" title="Download notes as MIDI. Pitch and velocity round; sounds and mix stay in the project.">Export clip MIDI</button></div>
         <p class="clip-edit-status note-edit-status" role="status" aria-live="polite" hidden></p>
         <div class="arrangement-controls step-controls"><label>Step position in clip (beat)<input data-field="stepBeat" type="number" min="0" step="0.25" value="0"></label><label>Gate (grid steps)<input data-field="stepGate" type="number" min="1" max="64" step="1" value="1"></label><output class="step-readout" aria-live="polite"></output></div>
         <div class="arrangement-controls audio-controls" hidden><label class="audio-source-info">Source<output class="audio-source-path"></output></label><label>Source offset (frames)<input data-field="audioOffset" type="number" min="0" step="1"></label><label>Clip gain<input data-field="audioGain" type="number" min="0" max="1" step="0.05"></label><label>Fade in (frames)<input data-field="audioFadeIn" type="number" min="0" step="1"></label><label>Fade out (frames)<input data-field="audioFadeOut" type="number" min="0" step="1"></label><button data-action="editAudioClip" class="button button-quiet">Update audio clip</button></div>
         <p class="clip-edit-status audio-edit-status" role="status" aria-live="polite" hidden></p>
-        <p class="audio-fade-help arrangement-help" hidden>Linear fades reach silence at the clip edges. 0 turns a fade off; the two fades together must fit inside the clip.</p>
+        <details class="editing-help clip-guide"><summary>Clip help</summary><p class="audio-fade-help arrangement-help" hidden>Linear fades reach silence at the clip edges. 0 turns a fade off; the two fades together must fit inside the clip.</p>
         <p class="quantize-help arrangement-help">Export clip MIDI downloads applied notes from clip zero at 960 ticks per beat. Pitches round to MIDI semitones and velocities to 1–127; silent notes are omitted. Sounds, effects and mix stay in the project. Quantize clip moves all note starts to the nearest Grid line from clip zero, with ties moved later. Durations, pitch and velocity stay exact. Choose a grid; No snap disables quantize. Notes must still fit inside the clip.</p>
         <p class="note-device-help arrangement-help"></p>
         <p class="note-pitch-detail arrangement-help" aria-live="polite"></p>
-        <p class="note-help arrangement-help">C4 = MIDI 60. Notes must fit inside the clip. Duplicate places a copy directly after the original. Native seek and loops do not retrigger notes that started before the destination; WAV exports ignore the live loop.</p>
+        <p class="note-help arrangement-help">C4 = MIDI 60. Notes must fit inside the clip. Duplicate places a copy directly after the original. Native seek and loops do not retrigger notes that started before the destination; WAV exports ignore the live loop.</p></details>
       </section>`;
     const find = selector => container.querySelector(selector);
     const field = name => find(`[data-field="${name}"]`);
@@ -124,8 +124,8 @@
       for (const [selector, audio] of [['.note-edit-status',false],['.audio-edit-status',true]]) {
         const feedback = find(selector); feedback.textContent = localMessage; feedback.hidden = !localMessage || (clip()?.kind === 'audio') !== audio;
       }
-      status.textContent = localMessage || (options.locked ? 'Editing is locked during playback or a session operation.' : 'Edits are checked and applied to the session before they appear here.');
-      if (!localMessage && options.transportAvailable === false) status.textContent += ' Start native playback or pause it to enable seek and loop controls.';
+      status.textContent = localMessage || (options.locked ? 'Editing locked.' : '');
+      status.hidden = !status.textContent || Boolean(clip() && localMessage);
     }
     function reportError(error) { localMessage = error?.message || String(error); showStatus(); }
     function rememberFocus() {
@@ -366,6 +366,7 @@
       find('.loop-status').textContent = region
         ? `Loop ${loopPending ? 'requested' : 'active'}: beat ${fmt(region.start_frame)}–${fmt(region.end_frame)}${loopPending ? ' · waiting for audio callback' : ''}`
         : (loopPending ? 'Loop off requested · waiting for audio callback' : 'Loop off');
+      find('.loop-status').hidden = !region && !loopPending;
       if (syncFields && key !== observedLoopKey && region) {
         field('loopStart').value = fmt(region.start_frame); field('loopEnd').value = fmt(region.end_frame);
       }
@@ -580,7 +581,7 @@
       const baseline = selected?.kind === 'audio' ? audioBaseline : noteBaseline;
       return Boolean(baseline && Object.entries(baseline).some(([key, text]) => String(field(key).value) !== text));
     }
-    return {hasDrafts,render,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
+    return {hasDrafts,render,selectClip,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
   }
   window.ArrangementView = {create};
 })();

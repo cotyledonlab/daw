@@ -17,7 +17,9 @@ The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass
 
 The editor follows your system’s light or dark appearance automatically. Select a note clip, choose **Grid**, and use **Quantize clip** to snap all note starts from clip zero as one undoable edit. Durations, pitch and velocity stay exact; No snap disables quantize. A gate that would extend past the clip end rejects the whole edit. Apply or revert pending drafts first.
 
-**Export clip MIDI** downloads the selected note clip as a format-0 `.mid` file from clip zero, at 960 ticks per beat with session tempo and 4/4 time. Pitch rounds to MIDI semitones, velocity to 1–127, and timing to ticks (gates stay at least one tick); silent notes are omitted. Drum clips use channel 10. Same-pitch overlaps after rounding reject export. Apply or revert drafts first. This download carries notes rather than instrument sounds, effects, audio assets or mix; save your project to retain those. MIDI-file import remains deferred.
+**Export clip MIDI** downloads the selected note clip as a format-0 `.mid` file from clip zero, at 960 ticks per beat with session tempo and 4/4 time. Pitch rounds to MIDI semitones, velocity to 1–127, and timing to ticks (gates stay at least one tick); silent notes are omitted. Drum clips use channel 10. Same-pitch overlaps after rounding reject export. Apply or revert drafts first. This download carries notes rather than instrument sounds, effects, audio assets or mix; save your project to retain those. **Import MIDI** reads format-0/1 PPQ files up to 1 MiB into new lanes at **Insert at** (beat 0 in an empty project). Notes follow the current project tempo; source tempo, sounds, controllers, pitch bend and SysEx are not applied. Each source track/channel becomes a lane, with channel 10 using the three-pad drum kit (36/38/42 only). Import requires stopped playback and no drafts or pending take, applies atomically, selects the first imported clip and supports whole-import Undo/Redo. Malformed/unfinished or ambiguous same-channel/pitch gates reject the whole file. Existing project limits still apply.
+
+The workspace keeps routine explanations in **Help**, **Arrangement help**, **Clip help** and **Keyboard & MIDI help**. Less obvious controls also have hover hints; inline validation remains visible beside the affected fields.
 
 Expand **Studio agents** for prompt controls and **Metronome & count-in** for listening-click settings. Overlapping clips have dashed amber borders and a lane count; use **Selected clip** to reach a covered clip.
 
@@ -71,7 +73,7 @@ Optional integrations are existing compatibility paths; they are not MVP prerequ
 | VST3 | Constrained macOS offline effects and experimental live effects; saved-effect metadata/parameter editing. No plugin editor, instrument hosting or GUI discovery. [Build notes](native/vst3/README.md). |
 | Audio Units | Apple's AULowpass offline only; no GUI or live playback. [Build notes](native/au/README.md). |
 
-Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, MIDI-file import, sampled instruments and broader studio features are outside the MVP.
+Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, sampled instruments and broader studio features are outside the MVP.
 
 ## Develop
 

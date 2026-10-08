@@ -57,7 +57,8 @@
       session = next; controls = []; numeric = []; meters = new Map();
       container.replaceChildren(); container.hidden = !session?.tracks?.length;
       const header = el('div', 'mixer-heading');
-      header.append(el('strong', '', 'Mixer'), el('span', 'mixer-help', 'Applied mix · faders apply on release · blur, Enter or Apply all numbers commits numeric drafts across every strip · download your project to keep'));
+      header.append(el('strong', '', 'Mixer'));
+      header.title = 'Faders apply on release. Enter, blur or Apply all numbers commits numeric drafts across all strips. Save to keep the mix.';
       container.append(header);
       if (!editor.mixerSupported(session)) {
         container.append(el('p','output-hint','Mixer requires built-in instruments/audio with supported effects. This session is preserved.'));

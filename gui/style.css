@@ -507,3 +507,9 @@ button:disabled, input:disabled, select:disabled { cursor: default; opacity: .52
 .studio-panel audio { width: 100%; margin-top: 12px; }
 
 .clip-edit-status { color: var(--danger); font-size: 14px; margin: 8px 0; }
+
+/* Contextual help stays available without occupying the editing workspace. */
+.arrangement-guide { margin: 0; }
+.clip-guide { margin: 8px 0 0; }
+.arrangement-status[hidden], .loop-status[hidden] { display: none; }
+.arrangement-guide .arrangement-help, .clip-guide .arrangement-help { margin: 8px 0; }
