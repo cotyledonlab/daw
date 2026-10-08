@@ -39,6 +39,11 @@ Existing automated export/reopen and muted native checks are complete. Listening
 
 The finishing and note-recording workflow demos passed ZIP/fresh-server reopen and byte-identical unclipped export; the finishing demo also passed muted native callbacks. This does not close acoustic listening acceptance. Agents currently inspect session data, not audio; runtime program/plugin-hosting expansion remains outside this slice.
 
+## Requested private phone UI access
+
+- [x] Add a loopback gateway for private Tailscale Serve access to the existing DAW UI without restarting or replacing its engine/session. Preserve token, revision, upload/download/CSP and Studio progress behavior; reject unrelated origins/hosts and invalid framing. Focused gateway, bridge and Studio regressions passed. WAV import and portable ZIP fresh-engine reopen through the gateway produced byte-identical WAV exports; required upload metadata is relayed with duplicate checks. Native playback remains on the Mac; viewing-device browser previews/downloads/voice retain existing behavior. See [setup](../README.md#private-phone-ui-through-tailscale).
+- [ ] Confirm the private HTTPS URL opens from the user's phone. The live gateway returned the existing session at unchanged revision 4 and Serve is configured without Funnel. Same-Mac HTTPS attempts failed at DNS/connection before reaching the gateway; physical phone acceptance is not claimed.
+
 ## Requested studio progress and diagnostics
 
 - [x] Show active role/model, elapsed time, producer delegation tasks and completed proposal summaries during inference; preserve visible proposals but apply nothing on specialist failure or a dropped stream. Add fixed HTTP/timeout/DNS/TLS/connection diagnostics with role/model context. Focused bridge and tracked JavaScript regressions passed. Live Space Bunny producer and two-specialist requests passed; the browser showed intermediate tasks, applied a 13-operation batch and passed whole-batch Undo/Redo. The original user failure was not reproduced outside the restricted test network; its cause remains unknown because the old error discarded the failure category.
@@ -77,4 +82,4 @@ Requested MIDI note-file import and selected-clip export are delivered above. Mu
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** use Studio with progress/diagnostics enabled and capture the role/model/failure category if the original provider error recurs. Jev routing evaluation is deferred until requested; quiet listening and microphone acceptance remain deferred until the user is ready. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** confirm the Tailscale UI URL on the phone; the gateway retains the existing DAW session. Capture Studio role/model/failure category if the original provider error recurs. Jev routing evaluation is deferred until requested; quiet listening and microphone acceptance remain deferred until the user is ready. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
