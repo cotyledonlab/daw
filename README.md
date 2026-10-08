@@ -55,6 +55,19 @@ The bridge binds to `127.0.0.1` and chooses a free port. For a fixed port or man
 python3 gui/server.py --port 8765 --no-open
 ```
 
+## Private phone UI through Tailscale
+
+Connect the Mac and phone to your tailnet. Keep the existing DAW running and note its loopback port. Start the gateway in another terminal (replace `8789` and the hostname with your actual values):
+
+```sh
+python3 gui/tailscale_ui.py --upstream-port 8789 --origin https://your-mac.your-tailnet.ts.net
+tailscale serve --bg http://127.0.0.1:8790
+```
+
+On macOS, if `tailscale` is absent from PATH, use `/Applications/Tailscale.app/Contents/MacOS/Tailscale`. Open the printed Tailscale HTTPS URL in the phone browser. Serve may require enabling HTTPS for the tailnet. The gateway accepts only that exact root HTTPS origin/host and retains the DAW's token checks; it owns no engine or project. Use private [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve), with access controlled by your tailnet policy. Anyone your policy allows to reach this URL can use the editor and its configured provider accounts. Stop this route with `tailscale serve --https=443 off`; Ctrl+C stops the gateway without stopping the DAW.
+
+Use one active editing window; the phone controls the same in-memory session, with existing revision checks. Native playback remains on the Mac. Browser previews, downloaded files and optional voice UI use the viewing device; this does not add live audio streaming or change phone MIDI/microphone support. The Mac, DAW and gateway must remain running. No server restart is needed to expose an existing session.
+
 ## Scripting and optional devices
 
 For portable headless use:
