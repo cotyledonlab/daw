@@ -15,6 +15,8 @@ python3 gui/server.py
 
 The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip on the timeline or in **Selected clip** (including overlapping copies) to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
 
+The editor follows your system’s light or dark appearance automatically.
+
 Expand **Studio agents** for prompt controls and **Metronome & count-in** for listening-click settings. Overlapping clips have dashed amber borders and a lane count; use **Selected clip** to reach a covered clip.
 
 **Play** starts native playback and pauses/resumes it; **Stop** or Escape releases playback. Native built-in arrangements support live mixer, sound/effect, automation, note and clip edits, including Undo/Redo. Edits reach playback after the short buffered queue and use a brief crossfade; held notes and compatible effect tails continue. Adding/removing tracks, changing device kind/rate, foreign runtimes and loading another project require Stop. Eligible arrangements play until stopped, with temporary seek/loop controls. Native note/audio playback requires the default device rate to match the session rate.
