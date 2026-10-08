@@ -501,7 +501,7 @@
     saveButton.disabled = unsupportedSession || busy || locked;
     loadButton.disabled = unsupportedSession || busy || structuralLocked;
     fileInput.disabled = unsupportedSession || busy || structuralLocked;
-    $('#import-midi-button').disabled = unsupportedSession || busy || structuralLocked || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    $('#import-midi-button').disabled = unsupportedSession || busy || structuralLocked || Boolean(player.context) || starting || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     $('#midi-file').disabled = $('#import-midi-button').disabled;
     const audioImport = $('#import-audio-button');
     audioImport.disabled = unsupportedSession || busy || structuralLocked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
@@ -1516,7 +1516,7 @@
   }
 
   async function importMidiFile(file) {
-    if (!file || busy || nativeLocked() || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    if (!file || busy || nativeLocked() || editLocked() || player.context || starting || recordingStarting || noteRecording?.take || noteRecording?.pending || historyAction || unsupportedSession) return false;
     let before = null;
     try {
       if (studioHasDrafts()) throw new Error('Apply or revert pending edits before importing MIDI.');
@@ -1528,7 +1528,7 @@
       const snapshot = JSON.stringify(draft), revision = sessionRevision;
       setBusy(true);
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (snapshot !== JSON.stringify(draft) || revision !== sessionRevision || studioHasDrafts() || nativeLocked() || editLocked() || noteRecording?.pending)
+      if (snapshot !== JSON.stringify(draft) || revision !== sessionRevision || studioHasDrafts() || nativeLocked() || editLocked() || player.context || starting || recordingStarting || noteRecording?.take || noteRecording?.pending)
         throw new Error('The project changed while reading MIDI. Import again when stopped.');
       const result = SessionEditor.importMidiFile(draft,bytes,file.name.replace(/\.[^.]+$/, ''),start);
       before = clone(draft); draft = result.session;

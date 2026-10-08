@@ -54,7 +54,7 @@ test('malformed, truncated, ambiguous, unsupported and oversized files reject wi
 function app(){
   let engine=E.createArrangementSession(),revision='1';const history=new History(),errors=[],calls=[];
   const ctx={draft:structuredClone(engine),applied:structuredClone(engine),SessionEditor:E,MidiFile:M,Uint8Array,clone:structuredClone,
-    busy:false,historyAction:false,unsupportedSession:false,noteRecording:null,nativeLocked:()=>false,editLocked:()=>false,nativeActive:()=>false,studioHasDrafts:()=>false,
+    busy:false,historyAction:false,unsupportedSession:false,noteRecording:null,player:{context:null},starting:false,recordingStarting:false,nativeLocked:()=>false,editLocked:()=>false,nativeActive:()=>false,studioHasDrafts:()=>false,
     sessionRevision:revision,$:()=>({value:'0'}),setBusy(v){ctx.busy=v;},setNotice(){},announceError:e=>errors.push(e),renderTracks(){},suggestArrangementDuration(){},arrangementView:{reportError(){}},
     validateSession:E.validate,liveParameterQueue:Promise.resolve(),capabilitiesLoading:Promise.resolve(),bridgeDiscovered:true,checkedReplacementAvailable:true,editHistory:history,
     invalidateEffectMetadata(){},rememberEffects(){},configureSessionMode(){},selectSampleRate(){},syncStatus(){},requestAppliedEffectMetadata(){},
@@ -66,11 +66,12 @@ function app(){
   return {ctx,calls,history,errors};
 }
 test('actual importer applies one stopped checked undoable transaction; drafts/takes/locks/stale/read race retain state',async()=>{
-  for(const mode of ['ok','draft','take','busy','native','locked','stale','race','bad']) {
+  for(const mode of ['ok','draft','take','activeTake','busy','native','browser','starting','recordStarting','readPlayback','locked','stale','race','bad']) {
     const a=app(),s=a.ctx;if(mode==='draft')s.studioHasDrafts=()=>true;if(mode==='take')s.noteRecording={pending:true};if(mode==='busy')s.busy=true;
+    if(mode==='browser')s.player.context={};if(mode==='starting')s.starting=true;if(mode==='recordStarting')s.recordingStarting=true;if(mode==='activeTake')s.noteRecording={take:{}};
     if(mode==='native')s.nativeLocked=()=>true;if(mode==='locked')s.editLocked=()=>true;if(mode==='stale')s.reject=true;
     const before=structuredClone(s.draft),applied=structuredClone(s.applied);
-    const f={name:'test.mid',size:phrase().length,arrayBuffer:async()=>{if(mode==='race')s.sessionRevision='2';return mode==='bad'?new ArrayBuffer(5):phrase().buffer;}};
+    const f={name:'test.mid',size:phrase().length,arrayBuffer:async()=>{if(mode==='race')s.sessionRevision='2';if(mode==='readPlayback')s.player.context={};return mode==='bad'?new ArrayBuffer(5):phrase().buffer;}};
     assert.equal(await s.importMidiFile(f),mode==='ok');assert.equal(a.history.undo.length,mode==='ok'?1:0);
     assert.deepEqual(a.calls,mode==='ok'||mode==='stale'?['/api/session']:[]);
     if(mode!=='ok'){assert.deepEqual(s.draft,before);assert.deepEqual(s.applied,applied);}else assert.deepEqual(a.history.undoTarget(s.applied),before);
