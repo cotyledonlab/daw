@@ -2166,17 +2166,49 @@
     if (!prompt) return;
     studioPending = true; $('#studio-send').disabled = true; $('#studio-clear').disabled = true;
     $('#studio-status').textContent = 'Studio agents are working…';
-    let resultText = '';
+    let resultText = '', progressText = 'Starting studio…';
+    const progressStarted = Date.now();
+    const progressTimer = setInterval(() => {
+      $('#studio-status').textContent = `${progressText} · ${Math.floor((Date.now() - progressStarted) / 1000)}s elapsed`;
+    }, 1000);
     try {
       if (!sessionRevision || busy || studioRecorder || studioMicStarting || studioTranscribing) throw Error('Wait for the current session or microphone operation.');
       const scope = studioScope(), revision = sessionRevision, before = JSON.stringify(draft), generation = noteProjectGeneration;
       studioMessage('You',prompt);
-      const response = await request('/api/studio/prompt', {method:'POST',body:JSON.stringify({prompt,role:$('#studio-role').value,scope,expected_revision:revision,history:studioHistory.slice(-6)})});
-      const plan = await response.json();
+      const response = await request('/api/studio/prompt', {method:'POST',headers:{Accept:'application/x-ndjson'},body:JSON.stringify({prompt,role:$('#studio-role').value,scope,expected_revision:revision,history:studioHistory.slice(-6)})});
+      let plan, streamed = false;
+      if (response.headers?.get('Content-Type')?.includes('application/x-ndjson')) {
+        streamed = true;
+        const reader = response.body.getReader(), decoder = new TextDecoder();
+        let pending = '', bytes = 0, terminal = false;
+        try {
+          while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            bytes += value.byteLength;
+            if (bytes > 2 * 1024 * 1024) throw Error('Studio progress exceeded the size limit. No studio edits applied.');
+            pending += decoder.decode(value, {stream:true});
+            let newline;
+            while ((newline = pending.indexOf('\n')) >= 0) {
+              const event = JSON.parse(pending.slice(0, newline)); pending = pending.slice(newline + 1);
+              if (terminal) throw Error('Invalid studio stream. No studio edits applied.');
+              if (event.type === 'error') throw Error(event.error);
+              if (event.type === 'result') { plan = event.plan; terminal = true; }
+              else if (['progress', 'summary', 'delegation'].includes(event.type) && typeof event.message === 'string') {
+                progressText = event.message;
+                $('#studio-status').textContent = progressText;
+                if (event.type !== 'progress') studioMessage(`${event.role} · proposal`, event.message);
+              } else throw Error('Invalid studio progress. No studio edits applied.');
+            }
+          }
+          if (!terminal || pending.trim()) throw Error('Studio connection ended before a complete result. No studio edits applied.');
+        } finally { await reader.cancel(); }
+      } else plan = await response.json();
+      clearInterval(progressTimer);
       if (plan.revision !== revision || sessionRevision !== revision || before !== JSON.stringify(draft) || generation !== noteProjectGeneration || JSON.stringify(scope) !== JSON.stringify(studioScope())) throw Error('Project or selection changed while agents were working. No studio edits applied; retry your prompt.');
       if (!Array.isArray(plan.parts)) throw Error('Invalid studio response.');
       const operations = plan.parts.flatMap(part=>part.operations);
-      for (const part of plan.parts) studioMessage(part.role,part.reply);
+      if (!streamed) for (const part of plan.parts) studioMessage(part.role,part.reply);
       if (operations.some(op=>op.op === 'command')) {
         if (operations.length !== 1 || plan.parts.length !== 1 || plan.parts[0].role !== 'producer' || scope) throw Error('A producer command must run alone at whole-session scope.');
         setNotice('');
@@ -2200,7 +2232,7 @@
         try { await speakStudio(`${resultText} ${reply}`); } catch (error) { $('#studio-status').textContent = `${resultText} Voice reply failed: ${error.message}`; }
       }
     } catch (error) { studioMessage('Studio',error.message); $('#studio-status').textContent = error.message; }
-    finally { studioPending = false; $('#studio-send').disabled = !studioConfig?.available; $('#studio-clear').disabled = false; }
+    finally { clearInterval(progressTimer); studioPending = false; $('#studio-send').disabled = !studioConfig?.available; $('#studio-clear').disabled = false; }
   }
 
   async function toggleStudioMic() {

@@ -13,7 +13,7 @@ function setup(){
   const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',disabled:false,textContent:'',checked:false,classList:{contains:()=>false}});return nodes.get(id);};
   $('#studio-prompt').value='Lower lead by 3 dB';$('#studio-role').value='engineer';
   const plan={revision:'7',parts:[{role:'engineer',reply:'Reduce lead.',operations:[{op:'gainDb',track_id:'lead',db:-3}]}]};
-  const ctx={$,studioConfig:{available:true,operations:contract},studioPending:false,studioHistory:[],sessionRevision:'7',applied:song,draft:structuredClone(song),noteProjectGeneration:0,
+  const ctx={Date,TextDecoder,setInterval:()=>1,clearInterval(){},$,studioConfig:{available:true,operations:contract},studioPending:false,studioHistory:[],sessionRevision:'7',applied:song,draft:structuredClone(song),noteProjectGeneration:0,
     busy:false,nativeLocked:()=>false,editLocked:()=>false,player:{context:null},starting:false,noteRecording:null,historyAction:false,unsupportedSession:false,studioRecorder:null,studioMicStarting:false,studioTranscribing:false,
     SessionEditor:E,StudioActions:Studio,clone:structuredClone,noticeEl:{textContent:'',classList:{contains:()=>false}},
     studioScope:()=>null,studioHasDrafts:()=>false,studioMessage:(...args)=>messages.push(args),syncStatus(){},
@@ -71,4 +71,27 @@ test('actual microphone transcription preserves newer typing and releases microp
 test('actual prompt handler applies relative edits during supported native playback',async()=>{
   const s=setup();s.ctx.nativeLocked=()=>true;s.ctx.editLocked=()=>false;await s.ctx.sendStudioPrompt();
   assert.equal(s.history.undo.length,1);assert.notDeepEqual(s.ctx.applied,s.song);
+});
+
+function streamResponse(events, cut=17) {
+  const wire = Buffer.from(events.map(e=>JSON.stringify(e)).join('\n')+'\n'); let offset=0;
+  return {headers:{get:()=> 'application/x-ndjson'},body:{getReader:()=>({
+    async read(){ if(offset===wire.length)return {done:true};const value=wire.subarray(offset,offset+cut);offset+=value.length;return {value,done:false};},
+    async cancel(){} })}};
+}
+test('streamed delegation snippets appear before completion and failed child preserves project',async()=>{
+  const s=setup();s.ctx.request=async()=>streamResponse([
+    {type:'summary',role:'producer',message:'I propose a quieter lead.'},
+    {type:'delegation',role:'producer',message:'To engineer: lower lead'},
+    {type:'error',error:'Engineer · model: Timed out. No studio edits applied.'}]);
+  await s.ctx.sendStudioPrompt();assert.deepEqual(s.ctx.applied,s.song);assert.equal(s.history.undo.length,0);
+  assert.equal(s.messages[1][1],'I propose a quieter lead.');assert.match(s.messages[2][1],/To engineer/);
+  assert.match(s.$('#studio-status').textContent,/Timed out/);assert.equal(s.$('#studio-prompt').value,'Lower lead by 3 dB');
+});
+test('fragmented UTF-8 stream applies only a complete result and rejects dropped connections',async()=>{
+  const s=setup();s.ctx.request=async()=>streamResponse([{type:'summary',role:'engineer',message:'Réduire 🎵'}, {type:'result',plan:s.plan}],1);
+  await s.ctx.sendStudioPrompt();assert.equal(s.history.undo.length,1);assert.equal(s.messages[1][1],'Réduire 🎵');
+  const dropped=setup();dropped.ctx.request=async()=>streamResponse([{type:'summary',role:'engineer',message:'Proposal'}]);
+  await dropped.ctx.sendStudioPrompt();assert.equal(dropped.history.undo.length,0);assert.deepEqual(dropped.ctx.applied,dropped.song);
+  assert.match(dropped.$('#studio-status').textContent,/before a complete result/);
 });
