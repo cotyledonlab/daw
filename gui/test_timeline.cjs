@@ -46,12 +46,12 @@ class Element {
     }
   }
 }
-function setup(kind = 'sine', onEdit = null) {
+function setup(kind = 'sine', onEdit = null, onExportMidi = null) {
   const document = { activeElement: null, createElementNS: (_, tag) => new Element(tag, document), createElement: tag => new Element(tag, document) };
   const container = new Element('div', document), window = {};
   vm.runInNewContext(fs.readFileSync(`${__dirname}/timeline.js`, 'utf8'), { window, document });
   const edits = [];
-  const view = window.ArrangementView.create(container, { onEdit: edit => { edits.push(edit); return onEdit?.(edit); } });
+  const view = window.ArrangementView.create(container, { onEdit: edit => { edits.push(edit); return onEdit?.(edit); }, onExportMidi });
   const session = { sample_rate: 48000, tempo_milli_bpm: 120000, tracks: [{ id: 'track', mode: 'sequenced', device: { kind }, clips: [{ id: 'clip', kind: 'notes', start_frame: 0, length_frames: 96000, notes: [{ id: 'note', start_frame: 1234, duration_frames: 7777, frequency_hz: kind === 'drumkit' ? 440 * Math.pow(2, (36 - 69) / 12) : 443.12345, velocity: 0.6 }] }] }] };
   if (kind === 'audio') { session.tracks[0].device = {kind:'audio',gain:0.8}; session.tracks[0].clips = [{id:'clip',kind:'audio',start_frame:1234,length_frames:7777,source_path:'assets/recording.wav',source_offset_frames:99,gain:0.67}]; }
   view.render(session, { transportAvailable: true });
@@ -391,4 +391,15 @@ test('quantize sends selected clip/grid only, rejects typed drafts and disables 
   s.view.setState({locked:true});assert.equal(s.button('quantizeClip').disabled,true);
   const a=setup('audio');assert.equal(a.button('quantizeClip').disabled,true);assert.equal(a.container.querySelector('.quantize-help').hidden,true);
   const e=setup();e.session.tracks[0].clips[0].notes=[];e.view.render(e.session);assert.equal(e.button('quantizeClip').disabled,true);
+});
+
+test('selected note MIDI export reports selection and preserves/rejects typed drafts, locked and audio clips',()=>{
+  let target=null;const env=setup('sine',null,value=>{target=value;});
+  const view=env.view;
+  env.action('exportMidiClip');assert.deepEqual(JSON.parse(JSON.stringify(target)),{trackIndex:0,clipId:'clip'});assert.equal(env.edits.length,0);target=null;
+  env.field('velocity').value='0.7';env.action('exportMidiClip');assert.equal(env.field('velocity').value,'0.7');assert.equal(target,null);
+  assert.match(env.container.querySelector('.note-edit-status').textContent,/before exporting MIDI/);
+  env.field('velocity').value='0.6';env.action('exportMidiClip');assert.equal(env.container.querySelector('.note-edit-status').hidden,true);
+  view.setState({locked:true});assert.equal(env.button('exportMidiClip').disabled,true);
+  const audio=setup('audio');assert.equal(audio.button('exportMidiClip').disabled,true);
 });

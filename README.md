@@ -17,6 +17,8 @@ The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass
 
 The editor follows your system’s light or dark appearance automatically. Select a note clip, choose **Grid**, and use **Quantize clip** to snap all note starts from clip zero as one undoable edit. Durations, pitch and velocity stay exact; No snap disables quantize. A gate that would extend past the clip end rejects the whole edit. Apply or revert pending drafts first.
 
+**Export clip MIDI** downloads the selected note clip as a format-0 `.mid` file from clip zero, at 960 ticks per beat with session tempo and 4/4 time. Pitch rounds to MIDI semitones, velocity to 1–127, and timing to ticks (gates stay at least one tick); silent notes are omitted. Drum clips use channel 10. Same-pitch overlaps after rounding reject export. Apply or revert drafts first. This download carries notes rather than instrument sounds, effects, audio assets or mix; save your project to retain those. MIDI-file import remains deferred.
+
 Expand **Studio agents** for prompt controls and **Metronome & count-in** for listening-click settings. Overlapping clips have dashed amber borders and a lane count; use **Selected clip** to reach a covered clip.
 
 **Play** starts native playback and pauses/resumes it; **Stop** or Escape releases playback. Native built-in arrangements support live mixer, sound/effect, automation, note and clip edits, including Undo/Redo. Edits reach playback after the short buffered queue and use a brief crossfade; held notes and compatible effect tails continue. Adding/removing tracks, changing device kind/rate, foreign runtimes and loading another project require Stop. Eligible arrangements play until stopped, with temporary seek/loop controls. Native note/audio playback requires the default device rate to match the session rate.
@@ -69,7 +71,7 @@ Optional integrations are existing compatibility paths; they are not MVP prerequ
 | VST3 | Constrained macOS offline effects and experimental live effects; saved-effect metadata/parameter editing. No plugin editor, instrument hosting or GUI discovery. [Build notes](native/vst3/README.md). |
 | Audio Units | Apple's AULowpass offline only; no GUI or live playback. [Build notes](native/au/README.md). |
 
-Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, MIDI files, sampled instruments and broader studio features are outside the MVP.
+Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, MIDI-file import, sampled instruments and broader studio features are outside the MVP.
 
 ## Develop
 

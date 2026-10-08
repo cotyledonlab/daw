@@ -1613,6 +1613,17 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function exportSelectedMidi({trackIndex, clipId}) {
+    if (busy || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    try {
+      if (studioHasDrafts()) throw new Error('Apply or revert pending edits before exporting MIDI; your drafts are preserved.');
+      const bytes = SessionEditor.exportMidiClip(applied, trackIndex, clipId);
+      download(new Blob([bytes], {type:'audio/midi'}), `daw-clip-${timestamp()}.mid`);
+      setNotice('Clip MIDI downloaded: 960 ticks/beat, rounded pitches/velocities; silent notes omitted. Sounds, effects and mix are saved in your project.');
+      return true;
+    } catch (error) { arrangementView?.reportError(error); announceError(error.message); return false; }
+  }
+
   function timestamp() {
     return new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', 'Z');
   }
@@ -1860,6 +1871,7 @@
     onSeek: frame => { void timelineCommand('/api/transport/seek', {frame}); },
     onLoop: region => { void timelineCommand('/api/transport/loop', {region}); },
     onEdit: action => editArrangement(action),
+    onExportMidi: selection => exportSelectedMidi(selection),
     onSelectionChange: () => { syncNoteInput(); syncRecordingControls(); },
   });
   noteInput = new NoteInput({
