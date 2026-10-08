@@ -115,7 +115,7 @@ test('project input reset clears obsolete messages but preserves a rejected take
   s.$('#record-notes-status').textContent='2 recorded notes applied.';
   s.ctx.resetNoteProject();
   assert.equal(s.$('#note-input-status').textContent,'');assert.equal(cleared,true);
-  assert.match(s.$('#record-notes-status').textContent,/Select a clip/);
+  assert.equal(s.$('#record-notes-status').textContent,'');
   await captured(s);s.ctx.validateSession=()=> 'invalid gate';await s.ctx.toggleNative();
   const pending=s.ctx.noteRecording.pending,message=s.$('#record-notes-status').textContent;
   s.ctx.resetNoteProject();

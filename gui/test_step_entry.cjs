@@ -38,7 +38,7 @@ class Element {
   focus() { this.document.activeElement = this; }
   set innerHTML(html) {
     this.children = [];
-    for (const match of html.matchAll(/<(input|select|button|p|svg|section|h2|h3|output|div)\b([^>]*)>/g)) {
+    for (const match of html.matchAll(/<(input|select|button|p|svg|section|h2|h3|output|div|span)\b([^>]*)>/g)) {
       const el = new Element(match[1], this.document);
       for (const attr of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) { el.setAttribute(attr[1], attr[2]); if (attr[1] === 'value') el.value = attr[2]; }
       if (el.dataset.field === 'grid') el.value = '240';

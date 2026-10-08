@@ -4,7 +4,7 @@
   function create(container, {editor, onEdit, onError}) {
     const doc = container.ownerDocument;
     let session = null, locked = false, pending = false;
-    let controls = [], numeric = [], meters = new Map(), master;
+    let controls = [], numeric = [], meters = new Map(), master, applyNumbers;
     const el = (tag, className, text) => {
       const node = doc.createElement(tag); node.className = className || '';
       if (text !== undefined) node.textContent = text;
@@ -29,10 +29,22 @@
     }
     function setState(state = {}) {
       locked = state.locked === true;
+      if (applyNumbers) applyNumbers.hidden = !hasDrafts();
       for (const control of controls) control.disabled = locked || pending || !editor.mixerSupported(session);
     }
     async function edit(index, patch = {}) {
       if (locked || pending || !editor.mixerSupported(session)) return false;
+      const drafts = numeric.map(row => ({index:row.index,gain:String(row.gain.value),pan:String(row.pan.value)}));
+      const retain = message => {
+        for (const row of numeric) for (const key of ['gain','pan']) {
+          row[key].value = drafts.find(draft => draft.index === row.index)[key];
+          const saved = session.tracks[row.index].mixer?.[key] ?? (key === 'gain' ? 1 : 0);
+          const dirty = !String(row[key].value).trim() || Number(row[key].value) !== saved;
+          row[key].setAttribute('data-draft',String(dirty));
+          if (dirty) { row[key].setAttribute('aria-invalid','true'); row[key].title = message; }
+        }
+      };
+      for (const row of numeric) for (const key of ['gain','pan']) { row[key].setAttribute('aria-invalid','false'); row[key].title = key === 'gain' ? 'Gain 0–2. Enter or leave the field to apply number drafts.' : 'Pan −1–1. Enter or leave the field to apply number drafts.'; }
       pending = true; setState({locked});
       try {
         let next = session;
@@ -48,28 +60,33 @@
         }
         if (Object.keys(patch).length) next = editor.editMixer(next,index,patch);
         if (next === session) return true;
-        if (await onEdit(next) === false) return false;
+        if (await onEdit(next) === false) { retain('Mix update rejected; these number drafts are kept. See the error status.'); return false; }
         return true;
-      } catch (error) { onError(error.message); return false; }
+      } catch (error) { retain(error.message); onError(error.message); return false; }
       finally { pending = false; setState({locked}); }
     }
     function render(next, state = {}) {
       session = next; controls = []; numeric = []; meters = new Map();
+      applyNumbers = null;
       container.replaceChildren(); container.hidden = !session?.tracks?.length;
       const header = el('div', 'mixer-heading');
       header.append(el('strong', '', 'Mixer'));
-      header.title = 'Faders apply on release. Enter, blur or Apply all numbers commits numeric drafts across all strips. Save to keep the mix.';
+      header.title = 'Faders apply on release. Enter, blur or Apply numbers commits gain/pan drafts across all strips.';
       container.append(header);
       if (!editor.mixerSupported(session)) {
         container.append(el('p','output-hint','Mixer requires built-in instruments/audio with supported effects. This session is preserved.'));
         master = null; setState(state); updateMeters(null, 'stopped'); return;
       }
+      const apply = el('button','button button-quiet mixer-apply','Apply numbers'); apply.type = 'button';
+      apply.title = 'Apply gain and pan number drafts across every mixer strip.';
+      apply.setAttribute('aria-label','Apply mixer values'); apply.hidden = true; applyNumbers = apply;
+      apply.addEventListener('click',()=>edit(0)); controls.push(apply); header.append(apply);
       const bank = el('div', 'mixer-bank'); container.append(bank);
       // Master is metering only: saved track levels determine the exported mix.
       const masterStrip = el('div', 'mixer-strip mixer-master');
       masterStrip.append(el('span','mixer-track','Master'),el('span','mixer-channel-type','PRE-MONITOR'));
       master = meter('Master peak'); masterStrip.append(master.box);
-      masterStrip.append(el('span','mixer-master-note','Mix output'),el('span','mixer-master-note','Listening volume is separate'));
+      masterStrip.title = 'Saved mix output before listening volume.';
       bank.append(masterStrip);
       session.tracks.forEach((track, index) => {
         const row = el('div', 'mixer-strip');
@@ -95,10 +112,6 @@
         const panScale = el('span','mixer-pan-scale'); panScale.append(el('span','','L'),el('span','','PAN'),el('span','','R'));
         panLabel.append(panScale,pan); row.append(panLabel);
         const toggles = el('div','mixer-toggles');
-        const apply = el('button','button button-quiet mixer-apply','Apply all numbers'); apply.type = 'button';
-        apply.title = 'Apply gain and pan number drafts across every mixer strip.';
-        apply.setAttribute('aria-label', `${track.id} apply mixer values`);
-        apply.addEventListener('click',()=>edit(index)); controls.push(apply);
         for (const key of ['mute','solo']) {
           const button = el('button', `button button-quiet mixer-toggle mixer-${key}${mix[key] ? ' active' : ''}`, key === 'mute' ? 'M' : 'S'); button.type = 'button';
           button.title = key === 'mute' ? 'Mute' : 'Solo';
@@ -120,6 +133,8 @@
             if (event.key === 'Enter') { event.preventDefault(); return edit(index); }
           });
           numbers[key].addEventListener('input',()=> {
+            apply.hidden = !hasDrafts();
+            numbers[key].setAttribute('data-draft',String(String(numbers[key].value) !== String(mix[key])));
             const value = Number(numbers[key].value);
             if (String(numbers[key].value).trim() && Number.isFinite(value) && value >= Number(slider.min) && value <= Number(slider.max)) slider.value = value;
           });
@@ -130,7 +145,7 @@
         scale.append(el('span','','2'),el('span','','1'),el('span','','0'));
         const trackMeter = meter(`${track.id} peak`); meters.set(track.id, trackMeter);
         level.append(scale,gain,trackMeter.box);
-        row.append(toggles,level,exact,apply); bank.append(row);
+        row.append(toggles,level,exact); bank.append(row);
       });
       setState(state); updateMeters(null, 'stopped');
     }
