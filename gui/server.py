@@ -233,6 +233,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/studio.js": ("studio.js", "text/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
+                  "/midi_file.js": ("midi_file.js", "text/javascript; charset=utf-8"),
                   "/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
                   "/mixer.js": ("mixer.js", "text/javascript; charset=utf-8"),
                   "/automation.js": ("automation.js", "text/javascript; charset=utf-8"),

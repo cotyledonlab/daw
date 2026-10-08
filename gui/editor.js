@@ -18,6 +18,7 @@
     return bytes >= (allowEmpty ? 0 : 1) && bytes <= maxBytes && !value.includes('\0');
   };
   const PdInstrument = typeof module !== 'undefined' ? require('./pd_instrument.js') : root.PdInstrument;
+  const MidiFile = typeof module !== 'undefined' ? require('./midi_file.js') : root.MidiFile;
   const noteKinds = ['sine', 'drumkit', 'synth', 'pd_instrument'];
   const arrangement = session => [2, 3, 9, 10, 11, 12].includes(session?.schema_version) ||
     (session?.schema_version === 4 && session.tracks?.some(track => track?.mode === 'sequenced'));
@@ -253,6 +254,33 @@
   function framesToTicks(session, frames) {
     conversionBase(session); if (!frame(frames)) throw new Error('Frames must be nonnegative safe integers.');
     return roundedRatio(BigInt(frames) * 960n * BigInt(session.tempo_milli_bpm), BigInt(session.sample_rate) * 60000n);
+  }
+  function importMidiFile(session, bytes, stem = 'MIDI', startFrame = 0) {
+    const error = validate(session); if (error) throw new Error(error);
+    const parsed = MidiFile.parse(bytes);
+    if (session.tracks.length + parsed.groups.length > 64) throw new Error('A session can contain up to 64 tracks.');
+    if (!frame(startFrame)) throw new Error('MIDI placement must be a nonnegative safe frame count.');
+    let next = session;
+    const ids = new Set(session.tracks.map(track => track.id));
+    const tempo = session.tempo_milli_bpm || 120000;
+    const toFrame = tick => roundedRatio(BigInt(tick) * BigInt(session.sample_rate) * 60000n, BigInt(parsed.division) * BigInt(tempo));
+    const name = String(stem).replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0,60) || 'MIDI';
+    for (const [number, group] of parsed.groups.entries()) {
+      let id = parsed.groups.length === 1 ? name : `${name} ${number+1}`, suffix = 2;
+      const base = id; while (ids.has(id)) id = `${base}-${suffix++}`; ids.add(id);
+      // The built-in drum kit has exactly three pads; never silently remap other pitches.
+      const drums = group.channel === 9;
+      if (drums && group.notes.some(note => ![36,38,42].includes(note.pitch)))
+        throw new Error('Drum MIDI import supports kick 36, snare 38 and closed hat 42. Other drum pitches need a sampled instrument.');
+      next = addNoteTrack(next, id, drums ? 'drumkit' : 'synth');
+      const notes = group.notes.sort((a,b) => a.start-b.start || a.pitch-b.pitch).map((note,i) => {
+        const start = toFrame(note.start), end = Math.max(start+1,toFrame(note.end));
+        return {id:`n-${i+1}`,start_frame:start,duration_frames:end-start,frequency_hz:midiToHz(note.pitch),velocity:note.velocity/127};
+      });
+      const length = Math.max(1,toFrame(group.end),...notes.map(note => note.start_frame+note.duration_frames));
+      next = addNoteClip(next,next.tracks.length-1,{id:'midi-1',start_frame:startFrame,length_frames:length,notes});
+    }
+    return {session:next,ignored:parsed.ignored,notes:parsed.groups.reduce((sum,g) => sum+g.notes.length,0)};
   }
   // Standard MIDI File format 0, one clip-relative track at the author's 960 PPQ.
   // MIDI is a musical interchange download; the source session is never modified.
@@ -593,7 +621,7 @@
     const builtin = tracks.every(track => ['sine','synth','drumkit','audio'].includes(track.device?.kind) && (track.effects || []).every(effect => ['gain', 'lowpass', 'delay'].includes(effect.kind)));
     return builtin ? bound(limits.builtin_max_seconds ?? limits.max_seconds, 60) : bound(limits.runtime_max_seconds, 60);
   }
-  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, quantizeClip, exportMidiClip, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
+  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, quantizeClip, exportMidiClip, importMidiFile, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
   api.insertStepNote = insertStepNote;
   if (typeof module !== 'undefined') module.exports = api;
   else root.SessionEditor = api;

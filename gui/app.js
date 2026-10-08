@@ -501,6 +501,8 @@
     saveButton.disabled = unsupportedSession || busy || locked;
     loadButton.disabled = unsupportedSession || busy || structuralLocked;
     fileInput.disabled = unsupportedSession || busy || structuralLocked;
+    $('#import-midi-button').disabled = unsupportedSession || busy || structuralLocked || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
+    $('#midi-file').disabled = $('#import-midi-button').disabled;
     const audioImport = $('#import-audio-button');
     audioImport.disabled = unsupportedSession || busy || structuralLocked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     audioImport.title = audioProjectsAvailable ? 'Import WAV into a new audio lane at Insert at (beat).' : 'Restart the local server to enable WAV imports.';
@@ -558,7 +560,10 @@
     $('#import-pd-button').title = draft.sample_rate !== 48000 ? 'Pd instruments require a 48 kHz session.' : 'Load a portable Pd Filtered Sine device JSON package.';
     $('#pd-file').disabled = $('#import-pd-button').disabled;
     if ($('#stop-edit-button')) { $('#stop-edit-button').hidden = !locked; $('#stop-edit-button').disabled = busy; }
-    if ($('#undo-button')) $('#undo-button').disabled = busy || locked || isDirty() || !editHistory.canUndo;
+    if ($('#undo-button')) {
+      $('#undo-button').disabled = busy || locked || isDirty() || !editHistory.canUndo;
+      $('#undo-button').title = dirty ? 'Apply or revert device/effect drafts to use Undo.' : 'Undo the last applied edit (⌘/Ctrl Z).';
+    }
     if ($('#redo-button')) $('#redo-button').disabled = busy || locked || isDirty() || !editHistory.canRedo;
     if ($('#stop-button')) $('#stop-button').disabled = !nativeActive() && !player.context && !starting;
     arrangementView?.updateTransport({...nativeSnapshot, loop_region: nativeActive() ? nativeSnapshot.loop_region : null, locked: busy || locked, pending: timelineBusy || nativeSnapshot.timeline_command_pending === true,
@@ -615,7 +620,7 @@
     $('#step-entry-enabled').checked = false;
     $('#note-input-status').textContent = '';
     $('#note-input-status').classList.remove('error');
-    if (!noteRecording?.take) $('#record-notes-status').textContent = 'Select a clip to record notes. Stop applies one undoable take.';
+    if (!noteRecording?.take) $('#record-notes-status').textContent = 'Select a clip to record.';
   }
 
   function noteInputError(error) {
@@ -1510,6 +1515,32 @@
     suggestArrangementDuration(); arrangementView?.reportError(''); renderTracks();
   }
 
+  async function importMidiFile(file) {
+    if (!file || busy || nativeLocked() || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
+    let before = null;
+    try {
+      if (studioHasDrafts()) throw new Error('Apply or revert pending edits before importing MIDI.');
+      if (!file.size || file.size > MidiFile.limits.bytes) throw new Error('MIDI files must be nonempty and at most 1 MiB.');
+      const beatText = $('#arrangement [data-field="insertBeat"]')?.value ?? '0';
+      const beat = Number(beatText);
+      if (!beatText.trim() || !Number.isFinite(beat) || beat < 0) throw new Error('Enter a nonnegative Insert at beat.');
+      const start = SessionEditor.ticksToFrames({...draft,tempo_milli_bpm:draft.tempo_milli_bpm || 120000},Math.round(beat*960));
+      const snapshot = JSON.stringify(draft), revision = sessionRevision;
+      setBusy(true);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (snapshot !== JSON.stringify(draft) || revision !== sessionRevision || studioHasDrafts() || nativeLocked() || editLocked() || noteRecording?.pending)
+        throw new Error('The project changed while reading MIDI. Import again when stopped.');
+      const result = SessionEditor.importMidiFile(draft,bytes,file.name.replace(/\.[^.]+$/, ''),start);
+      before = clone(draft); draft = result.session;
+      if (!await applyDraft({readControls:false})) { draft = before; renderTracks(); return false; }
+      suggestArrangementDuration(); arrangementView?.reportError('');
+      arrangementView?.selectClip?.(before.tracks.length, 'midi-1');
+      setNotice(`Imported ${result.notes} ${result.notes === 1 ? 'note' : 'notes'}.${result.ignored ? ' MIDI sounds and expression omitted.' : ''}`);
+      return true;
+    } catch (error) { if (before) { draft = before; renderTracks(); } announceError(`MIDI import failed. ${error.message}`); return false; }
+    finally { setBusy(false); }
+  }
+
   async function importAudioFile(file) {
     if (!file || busy || nativeLocked() || unsupportedSession) return;
     try {
@@ -1619,7 +1650,7 @@
       if (studioHasDrafts()) throw new Error('Apply or revert pending edits before exporting MIDI; your drafts are preserved.');
       const bytes = SessionEditor.exportMidiClip(applied, trackIndex, clipId);
       download(new Blob([bytes], {type:'audio/midi'}), `daw-clip-${timestamp()}.mid`);
-      setNotice('Clip MIDI downloaded: 960 ticks/beat, rounded pitches/velocities; silent notes omitted. Sounds, effects and mix are saved in your project.');
+      setNotice('Clip MIDI downloaded.');
       return true;
     } catch (error) { arrangementView?.reportError(error); announceError(error.message); return false; }
   }
@@ -1940,6 +1971,8 @@
   $('#pd-file').addEventListener('change', event => {
     const file = event.target.files[0]; event.target.value = ''; void importPdPreset(file);
   });
+  $('#import-midi-button').addEventListener('click', () => $('#midi-file').click());
+  $('#midi-file').addEventListener('change', event => { const file = event.target.files[0]; event.target.value = ''; void importMidiFile(file); });
   $('#import-audio-button').addEventListener('click', () => $('#audio-file').click());
   $('#audio-file').addEventListener('change', event => {
     const file = event.target.files[0]; event.target.value = ''; void importAudioFile(file);

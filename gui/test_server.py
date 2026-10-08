@@ -629,9 +629,11 @@ class ServerIntegrationTests(unittest.TestCase):
             with self.subTest(path=path):
                 status, body, _ = self.request("GET", path)
                 self.assertEqual(status, 404, body)
-        status, body, headers = self.request("GET", "/editor.js")
-        self.assertEqual(status, 200, body)
-        self.assertIn("text/javascript", dict(headers)["Content-Type"])
+        for path in ("/editor.js", "/midi_file.js"):
+            with self.subTest(path=path):
+                status, body, headers = self.request("GET", path)
+                self.assertEqual(status, 200, body)
+                self.assertIn("text/javascript", dict(headers)["Content-Type"])
 
 
 if __name__ == "__main__":
