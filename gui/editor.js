@@ -254,6 +254,50 @@
     conversionBase(session); if (!frame(frames)) throw new Error('Frames must be nonnegative safe integers.');
     return roundedRatio(BigInt(frames) * 960n * BigInt(session.tempo_milli_bpm), BigInt(session.sample_rate) * 60000n);
   }
+  // Standard MIDI File format 0, one clip-relative track at the author's 960 PPQ.
+  // MIDI is a musical interchange download; the source session is never modified.
+  function exportMidiClip(session, index, clipId) {
+    const error = validate(session); if (error) throw new Error(error);
+    const clip = noteClip(session, index, clipId), track = session.tracks[index];
+    const channel = track.device.kind === 'drumkit' ? 9 : 0;
+    const events = [], gates = new Map();
+    for (const note of clip.notes) {
+      if (note.velocity === 0) continue; // MIDI note-on velocity zero means note-off.
+      const pitch = Math.round(hzToMidi(note.frequency_hz));
+      if (pitch < 0 || pitch > 127) throw new Error(`Note ${note.id} is outside MIDI pitches 0–127.`);
+      const start = framesToTicks(session, note.start_frame);
+      const end = Math.max(start + 1, framesToTicks(session, note.start_frame + note.duration_frames));
+      const velocity = Math.max(1, Math.round(note.velocity * 127));
+      if (!gates.has(pitch)) gates.set(pitch, []);
+      gates.get(pitch).push({start, end});
+      events.push({tick:start, off:false, pitch, bytes:[0x90 | channel, pitch, velocity]},
+        {tick:end, off:true, pitch, bytes:[0x80 | channel, pitch, 0]});
+    }
+    // Same-pitch overlapping gates are ambiguous in MIDI 1.0; do not shorten them silently.
+    for (const notes of gates.values()) {
+      notes.sort((a,b) => a.start - b.start);
+      for (let i = 1; i < notes.length; i++) if (notes[i].start < notes[i-1].end)
+        throw new Error('MIDI export cannot represent overlapping notes of the same rounded pitch. Separate those notes first.');
+    }
+    events.sort((a,b) => a.tick - b.tick || Number(b.off) - Number(a.off) || a.pitch - b.pitch);
+    const vlq = value => {
+      if (!Number.isSafeInteger(value) || value < 0 || value > 0x0fffffff) throw new Error('Clip timing exceeds the MIDI file delta-time limit.');
+      const bytes = [value & 127];
+      while ((value = Math.floor(value / 128))) bytes.unshift((value & 127) | 128);
+      return bytes;
+    };
+    const tempo = Math.round(60000000000 / session.tempo_milli_bpm);
+    const body = [0, 0xff, 0x51, 3, (tempo >>> 16) & 255, (tempo >>> 8) & 255, tempo & 255,
+      0, 0xff, 0x58, 4, 4, 2, 24, 8];
+    let previous = 0;
+    for (const event of events) { body.push(...vlq(event.tick - previous), ...event.bytes); previous = event.tick; }
+    body.push(...vlq(Math.max(previous, framesToTicks(session, clip.length_frames)) - previous), 0xff, 0x2f, 0);
+    const size = body.length;
+    const header = [0x4d,0x54,0x68,0x64,0,0,0,6,0,0,0,1,3,0xc0,
+      0x4d,0x54,0x72,0x6b,(size >>> 24) & 255,(size >>> 16) & 255,(size >>> 8) & 255,size & 255];
+    const result = new Uint8Array(header.length + size);
+    result.set(header); result.set(body, header.length); return result;
+  }
   function snapFrame(session, frames, gridTicks = 240) {
     if (!frame(gridTicks) || !gridTicks) throw new Error('Grid ticks must be positive safe integers.');
     return ticksToFrames(session, Math.round(framesToTicks(session, frames) / gridTicks) * gridTicks);
@@ -549,7 +593,7 @@
     const builtin = tracks.every(track => ['sine','synth','drumkit','audio'].includes(track.device?.kind) && (track.effects || []).every(effect => ['gain', 'lowpass', 'delay'].includes(effect.kind)));
     return builtin ? bound(limits.builtin_max_seconds ?? limits.max_seconds, 60) : bound(limits.runtime_max_seconds, 60);
   }
-  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, quantizeClip, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
+  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, quantizeClip, exportMidiClip, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
   api.insertStepNote = insertStepNote;
   if (typeof module !== 'undefined') module.exports = api;
   else root.SessionEditor = api;

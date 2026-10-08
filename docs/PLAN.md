@@ -53,10 +53,14 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 - [x] Quantize note starts in the selected clip to its current clip-relative grid as one checked, undoable edit. Preserve durations, Hz/velocity, clip placement, other clips and drafts; reject the entire edit if a gate no longer fits or validation fails. Focused regressions in `gui/test_quantize.cjs` and `gui/test_timeline.cjs` passed; desktop/narrow browser checks covered quantize, whole-clip Undo/Redo, draft protection, No snap and transactional clip-end rejection. A mixed note/PCM session saved/reopened in a fresh engine with byte-identical unclipped WAV exports. Listening and microphone acceptance remain open and are deferred at the user’s request.
 
+## Requested selected-clip MIDI export
+
+- [x] Download the applied selected note clip as a format-0 MIDI file with clip-relative timing, 960 PPQ, tempo, 4/4 and note gates/velocities. Keep project state/history exact; reject same-rounded-pitch overlaps and out-of-range pitches, preserve drafts and pending takes. Independent byte-decoding and actual app/timeline regressions passed in `gui/test_midi_export.cjs` and `gui/test_timeline.cjs`; browser checks covered the download action/status, draft rejection and 390-pixel layout. The browser tooling timed out waiting for the completed file event, so file-delivery and external-DAW acceptance are not claimed. Exact project saving remains separate; listening/microphone acceptance is still deferred.
+
 ## After MVP
 
-MIDI-file import/export can be the next feature slice when requested. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
+MIDI-file import is the next feature slice when requested; selected-clip MIDI export is delivered above. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** choose the next small MIDI-file import/export slice when requested; keep acoustic and microphone acceptance open for later. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** implement the next small MIDI-file import slice when requested; keep acoustic and microphone acceptance open for later. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
