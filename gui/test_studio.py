@@ -182,6 +182,16 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(events[2]['message'], 'Ask the engineer.')
         self.assertFalse(self.studio.lock.locked())
 
+    def test_inference_has_longer_socket_timeout_and_remains_transactional(self):
+        before = copy.deepcopy(SNAPSHOT)
+        with patch('gui.studio.urllib.request.OpenerDirector.open', side_effect=TimeoutError('secret')) as send:
+            with self.assertRaisesRegex(StudioError, 'Producer.*Timed out after 120s.*No studio edits applied'):
+                self.studio.prompt(data(), SNAPSHOT)
+        self.assertEqual(send.call_args.kwargs['timeout'], 120)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(SNAPSHOT, before)
+        self.assertFalse(self.studio.lock.locked())
+
     def test_voice_upload_and_speech_do_not_expose_keys(self):
         with patch('gui.studio.remote', return_value=b'{"text":"Lower bass"}') as send:
             self.assertEqual(self.studio.transcribe(b'audio', 'audio/webm'), {'text': 'Lower bass'})

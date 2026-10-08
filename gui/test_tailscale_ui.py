@@ -52,6 +52,22 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.request('/api/session/inspect', token=False)[0], 403)
         self.assertEqual(self.request('/api/session/inspect')[0], 200)
 
+    def test_json_studio_wait_covers_delegation_and_correction_budget(self):
+        before = self.daw.engine.call('session.inspect')
+        data = {'prompt': 'Ready?', 'role': 'producer', 'scope': None,
+                'expected_revision': before['revision'], 'history': []}
+        plan = {'revision': before['revision'], 'scope': None, 'parts': []}
+        connection = http.client.HTTPConnection
+        with patch.object(self.daw.studio, 'prompt', return_value=plan), patch(
+                'gui.tailscale_ui.http.client.HTTPConnection', wraps=connection) as connect:
+            status, body, _ = self.request('/api/studio/prompt', json.dumps(data))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), plan)
+        upstream = [call for call in connect.call_args_list if call.args[1] == self.daw.server_port]
+        self.assertEqual(len(upstream), 1)
+        self.assertGreater(upstream[0].kwargs['timeout'], 6 * 120 + 10)
+        self.assertEqual(self.daw.engine.call('session.inspect'), before)
+
     def test_root_preserves_csp_token_and_exact_downloads(self):
         status, root, headers = self.request('/', token=False)
         self.assertEqual(status, 200)
