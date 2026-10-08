@@ -170,7 +170,8 @@ At most {MAX_OPERATIONS} operations. Do not mix a command with edits or delegati
                           f'{role.capitalize()} · {self.model} · {"correcting the plan" if attempt else "requesting a plan"}…'})
             try:
                 raw = remote('https://opencode.ai/zen/v1/chat/completions', wire,
-                             {'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json'})
+                             {'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json'},
+                             timeout=120)
             except StudioError as error:
                 raise StudioError(f'{role.capitalize()} · {self.model}: {error} No studio edits applied.') from None
             envelope = json_object(raw)
