@@ -527,6 +527,7 @@
         if (selected.kind === 'audio') return;
         if (action === 'exportMidiClip') {
           if (hasDrafts()) throw new Error('Apply or revert typed note, clip and tempo edits before exporting MIDI.');
+          localMessage = ''; showStatus();
           return callbacks.onExportMidi?.({...selection});
         }
         if (action === 'quantizeClip') {

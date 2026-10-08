@@ -399,6 +399,7 @@ test('selected note MIDI export reports selection and preserves/rejects typed dr
   env.action('exportMidiClip');assert.deepEqual(JSON.parse(JSON.stringify(target)),{trackIndex:0,clipId:'clip'});assert.equal(env.edits.length,0);target=null;
   env.field('velocity').value='0.7';env.action('exportMidiClip');assert.equal(env.field('velocity').value,'0.7');assert.equal(target,null);
   assert.match(env.container.querySelector('.note-edit-status').textContent,/before exporting MIDI/);
+  env.field('velocity').value='0.6';env.action('exportMidiClip');assert.equal(env.container.querySelector('.note-edit-status').hidden,true);
   view.setState({locked:true});assert.equal(env.button('exportMidiClip').disabled,true);
   const audio=setup('audio');assert.equal(audio.button('exportMidiClip').disabled,true);
 });
