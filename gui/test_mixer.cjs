@@ -14,8 +14,9 @@ class Node {
 }
 function numberInputs(container) { return container.all('input').filter(n => n.type === 'number'); }
 function mixerButtons(container) {
-  const buttons = container.all('button'), ids = [...new Set(buttons.map(n => n.attrs['aria-label'].split(' ')[0]))];
-  return ids.flatMap(id => ['apply mixer values','mute','solo'].map(label => buttons.find(n => n.attrs['aria-label'] === `${id} ${label}`)));
+  const buttons = container.all('button'), apply = buttons.find(n => n.attrs['aria-label'] === 'Apply mixer values');
+  const ids = [...new Set(buttons.filter(n => n.attrs['aria-label'] !== 'Apply mixer values').map(n => n.attrs['aria-label'].split(' ')[0]))];
+  return ids.flatMap(id => [apply, ...['mute','solo'].map(label => buttons.find(n => n.attrs['aria-label'] === `${id} ${label}`))]);
 }
 function masterReadout(container) { return container.all('span').find(n => n.attrs['aria-label'] === 'Master peak').children[1]; }
 function setup() {
@@ -65,7 +66,7 @@ test('actual numeric and toggle handlers apply transactionally with independent 
   await mixerButtons(s.container)[1].fire('click'); assert.equal(s.current.tracks[0].mixer.mute,true);
   const before = structuredClone(s.current); s.fail = true;
   numberInputs(s.container)[0].value = '0.1'; await mixerButtons(s.container)[0].fire('click');
-  assert.deepEqual(s.current,before); assert.equal(numberInputs(s.container)[0].value,1.5); assert.match(s.errors.at(-1),/Could not apply/);
+  assert.deepEqual(s.current,before); assert.equal(numberInputs(s.container)[0].value,'0.1'); assert.match(s.errors.at(-1),/Could not apply/);
   const count = s.edits.length; s.view.setState({locked:true}); await mixerButtons(s.container)[0].fire('click'); assert.equal(s.edits.length,count);
 });
 test('polling updates stereo/clipping readouts without rebuilding controls, consuming drafts or clearing focus', async () => {
@@ -138,13 +139,23 @@ test('pan slider supports Enter, locks during playback and preserves invalid dra
   pan.value='1'; await pan.fire('input'); await pan.fire('change');
   assert.equal(numberInputs(s.container)[1].value,-0.4); assert.equal(s.edits.length,1);
 });
-test('failed fader replacement restores saved values and numeric typing synchronizes sliders without saving', async () => {
+test('failed fader replacement retains number drafts and restores the applied fader', async () => {
   const s=setup(); const original=structuredClone(s.current);
   const number=numberInputs(s.container)[0], fader=s.container.all('input').find(n => n.attrs['aria-label'] === 'lead gain fader');
   number.value='1.234567'; await number.fire('input');
   assert.equal(fader.value,1.234567); assert.equal(s.edits.length,0);
   number.value=''; await number.fire('input'); assert.equal(fader.value,1.234567);
   s.fail=true; fader.value='0.3'; await fader.fire('change');
-  assert.deepEqual(s.current,original); assert.equal(numberInputs(s.container)[0].value,1);
+  assert.deepEqual(s.current,original); assert.equal(numberInputs(s.container)[0].value,'0.3');
+  assert.equal(numberInputs(s.container)[0].attrs['aria-invalid'],'true');
   assert.equal(s.container.all('input').find(n => n.attrs['aria-label'] === 'lead gain fader').value,1);
+});
+
+test('mixer has one contextual apply control for numeric drafts across all strips', async()=>{
+  const s=setup(), buttons=s.container.all('button').filter(n=>n.attrs['aria-label']==='Apply mixer values');
+  assert.equal(buttons.length,1); assert.equal(buttons[0].hidden,true);
+  const values=numberInputs(s.container); values[0].value='0.7'; await values[0].fire('input');
+  assert.equal(buttons[0].hidden,false);
+  await buttons[0].fire('click'); assert.equal(s.current.tracks[0].mixer.gain,0.7);
+  assert.equal(s.container.all('button').find(n=>n.attrs['aria-label']==='Apply mixer values').hidden,true);
 });

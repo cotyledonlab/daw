@@ -38,7 +38,7 @@ class Element {
   focus() { this.document.activeElement = this; }
   set innerHTML(html) {
     this.children = [];
-    for (const match of html.matchAll(/<(input|select|button|p|svg|section|h2|h3|output|div)\b([^>]*)>/g)) {
+    for (const match of html.matchAll(/<(input|select|button|p|svg|section|h2|h3|output|div|span)\b([^>]*)>/g)) {
       const el = new Element(match[1], this.document);
       for (const attr of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) { el.setAttribute(attr[1], attr[2]); if (attr[1] === 'value') el.value = attr[2]; }
       if (el.dataset.field === 'grid') el.value = '240';
@@ -57,7 +57,7 @@ function setup(kind = 'sine', onEdit = null, onExportMidi = null) {
   view.render(session, { transportAvailable: true });
   const field = name => container.querySelector(`[data-field="${name}"]`);
   const button = name => container.querySelector(`button[data-action="${name}"]`);
-  const action = name => button(name).dispatch('click');
+  const action = name => { const input = {tempo:'tempo',seek:'seek',loop:'loopStart',moveClip:'clipStart',resizeClip:'clipLength'}[name]; if (input) field(input).dispatch('keydown',{key:'Enter'}); else button(name).dispatch('click'); };
   const clip = () => container.querySelector('[data-focus-key="clip:0:clip"]');
   const note = () => container.querySelector('[data-focus-key="note:note"]');
   clip().dispatch('click'); if (kind !== 'audio') note().dispatch('click');
@@ -161,8 +161,7 @@ test('audio UI rejects fractional/unsafe offsets, invalid gain and empty length 
 
 test('audio no-op fields remain exact across tempo redraw, focus persists and rejected edit errors remain visible', () => {
   const env = setup('audio');
-  assert.equal(env.container.querySelector('.arrangement-title').textContent, 'Arrangement');
-  assert.equal(setup().container.querySelector('.arrangement-title').textContent, 'Note arrangement');
+  assert.equal(env.container.querySelector('.arrangement-title'), undefined);
   env.clip().focus(); env.session.tempo_milli_bpm = 137000; env.view.render(env.session);
   assert.equal(env.document.activeElement, env.clip());
   for (const action of ['editAudioClip','moveClip','resizeClip']) env.action(action);
@@ -285,6 +284,7 @@ test('audio fade updates preserve exact untouched frames and gain, defaults rema
   env.view.render(env.session); assert.equal(env.field('audioFadeIn').value,'17');
   env.field('audioFadeIn').value='0'; env.field('audioFadeOut').value='7777'; env.action('editAudioClip');
   assert.deepEqual(JSON.parse(JSON.stringify(env.edits[1].patch)),{fade_out_frames:7777});
+  env.field('audioFadeOut').value='0'; // Revert the retained numeric draft before a separate applied update.
   Object.assign(env.session.tracks[0].clips[0],{fade_in_frames:31,fade_out_frames:59}); env.view.render(env.session);
   env.field('audioGain').value='0.25'; env.action('editAudioClip');
   assert.deepEqual(JSON.parse(JSON.stringify(env.edits[2].patch)),{gain:0.25});
@@ -339,7 +339,7 @@ test('actual audio fade Update commits checked editor/history and undo retains e
   const message=env.container.querySelector('.arrangement-status').textContent; assert.match(message,/fit/);
   env.view.updateTransport({frame:1000}); assert.equal(env.container.querySelector('.arrangement-status').textContent,message);
   const undo=history.undoTarget(applied); assert.equal(history.acceptUndo(applied),true); applied=undo; env.view.render(applied);
-  assert.equal(env.field('audioFadeIn').value,'0'); assert.equal(env.field('audioFadeOut').value,'0');
+  assert.equal(env.field('audioFadeIn').value,'0'); assert.equal(env.field('audioFadeOut').value,'7777');
   assert.deepEqual(applied,before); assert.equal(E.validate(applied),null);
 });
 
@@ -402,4 +402,56 @@ test('selected note MIDI export reports selection and preserves/rejects typed dr
   env.field('velocity').value='0.6';env.action('exportMidiClip');assert.equal(env.container.querySelector('.note-edit-status').hidden,true);
   view.setState({locked:true});assert.equal(env.button('exportMidiClip').disabled,true);
   const audio=setup('audio');assert.equal(audio.button('exportMidiClip').disabled,true);
+});
+
+test('note inspector separates creation from selection and Enter preserves untouched saved data', () => {
+  const s=setup();
+  assert.equal(s.button('addNote').hidden,true); assert.equal(s.button('editNote').hidden,true); assert.equal(s.button('deleteNote').hidden,false);
+  s.field('velocity').value='0.75'; s.field('velocity').dispatch('input');
+  assert.equal(s.button('editNote').hidden,false); assert.equal(s.field('velocity').getAttribute('data-draft'),'true');
+  s.field('velocity').dispatch('keydown',{key:'Enter'});
+  assert.deepEqual(JSON.parse(JSON.stringify(s.edits[0].patch)),{velocity:0.75});
+  s.clip().dispatch('click'); assert.equal(s.button('addNote').hidden,false); assert.equal(s.button('deleteNote').hidden,true);
+});
+
+test('rejected tempo survives candidate/rollback redraw; accepted Enter avoids duplicate blur edits', async () => {
+  let s, reject=true;
+  s=setup('sine', action => {
+    assert.equal(action.type,'setTempo');
+    s.view.render({...s.session,tempo_milli_bpm:action.tempo_milli_bpm});
+    if (reject) { s.view.render(s.session); s.view.reportError('Tempo must be 20–300 BPM.'); return Promise.resolve(false); }
+    s.session.tempo_milli_bpm=action.tempo_milli_bpm; s.view.render(s.session); return Promise.resolve(true);
+  });
+  s.field('tempo').value='400'; s.field('tempo').dispatch('keydown',{key:'Enter'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(s.field('tempo').value,'400'); assert.equal(s.session.tempo_milli_bpm,120000);
+  assert.equal(s.field('tempo').getAttribute('aria-invalid'),'true'); assert.match(s.field('tempo').title,/20–300/);
+  reject=false; s.field('tempo').value='137'; s.field('tempo').dispatch('keydown',{key:'Enter'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(s.session.tempo_milli_bpm,137000); assert.equal(s.field('tempo').value,'137');
+  assert.equal(s.field('tempo').getAttribute('aria-invalid'),'false'); assert.equal(s.field('tempo').getAttribute('data-draft'),'false');
+  s.field('tempo').dispatch('change'); assert.equal(s.edits.length,2);
+});
+
+test('Enter clip no-ops preserve off-grid note clip frames and unrelated drafts survive accepted note updates', async () => {
+  let s;
+  s=setup('sine', action => {
+    s.session.tracks[0].clips[0].notes[0].velocity=action.patch.velocity; s.view.render(s.session); return Promise.resolve(true);
+  });
+  s.session.tracks[0].clips[0].start_frame=1234; s.view.render(s.session);
+  s.action('moveClip'); s.action('resizeClip'); assert.equal(s.edits.length,0);
+  s.field('tempo').value='137.5'; s.field('clipStart').value='3.25'; s.field('velocity').value='0.9'; s.field('velocity').dispatch('keydown',{key:'Enter'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(s.field('tempo').value,'137.5'); assert.equal(s.field('clipStart').value,'3.25');
+  assert.equal(s.field('velocity').value,'0.9'); assert.equal(s.button('editNote').hidden,true);
+  assert.equal(s.session.tracks[0].clips[0].start_frame,1234); assert.equal(s.session.tracks[0].clips[0].notes[0].frequency_hz,443.12345);
+});
+
+test('field feedback stays attached after a rejected numeric entry, and step controls appear only when enabled', () => {
+  const s=setup(); s.field('velocity').value=''; s.field('velocity').dispatch('keydown',{key:'Enter'});
+  assert.equal(s.field('velocity').getAttribute('aria-invalid'),'true'); assert.match(s.field('velocity').title,/Enter a number/);
+  s.view.render(s.session); assert.equal(s.field('velocity').value,''); assert.equal(s.field('velocity').getAttribute('aria-invalid'),'true');
+  assert.equal(s.container.querySelector('.step-controls').hidden,true);
+  s.view.setStepEnabled(true); assert.equal(s.container.querySelector('.step-controls').hidden,false);
+  s.view.setStepEnabled(false); assert.equal(s.container.querySelector('.step-controls').hidden,true);
 });

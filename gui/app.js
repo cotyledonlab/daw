@@ -492,11 +492,13 @@
     if ($('#studio-spoken')) $('#studio-spoken').disabled = !studioConfig?.voice_available;
     saveState.classList.toggle('dirty', dirty && !error);
     saveState.classList.toggle('error', error);
-    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Device/effect drafts · Apply changes' : 'Applied to engine · download to keep';
+    text.textContent = unsupportedSession ? 'Timeline/effects · scripting only' : error ? 'Apply failed' : dirty ? 'Device/effect drafts · Apply device changes' : 'Applied to engine · download to keep';
     const historyHelp = $('#history-help');
     if (historyHelp) historyHelp.textContent = dirty ? 'Undo/Redo paused: apply device/effect drafts first. Applied edits are in memory; download your project to keep them.' : 'Undo/Redo restores applied edits. Save session downloads the current project; it does not autosave.';
     const locked = editLocked() || Boolean(noteRecording?.pending) || recordingStarting;
     const structuralLocked = nativeLocked() || Boolean(noteRecording?.pending) || recordingStarting;
+    applyButton.hidden = !dirty;
+    saveState.title = text.textContent;
     applyButton.disabled = unsupportedSession || busy || locked || !dirty;
     saveButton.disabled = unsupportedSession || busy || locked;
     loadButton.disabled = unsupportedSession || busy || structuralLocked;
@@ -507,7 +509,7 @@
     audioImport.disabled = unsupportedSession || busy || structuralLocked || !audioProjectsAvailable || hasSources() || SessionEditor.plugins(draft).length > 0 || draft.tracks.length >= 64;
     audioImport.title = audioProjectsAvailable ? 'Import WAV into a new audio lane at Insert at (beat).' : 'Restart the local server to enable WAV imports.';
     $('#audio-file').disabled = audioImport.disabled;
-    saveButton.textContent = hasAudio() ? 'Save project ZIP' : 'Save session';
+    saveButton.textContent = hasAudio() ? 'Save ZIP' : 'Save';
     saveButton.title = hasAudio() ? 'Download session and referenced WAV assets together.' : 'Download session JSON.';
     renderButton.disabled = unsupportedSession || busy || locked;
     outputMode.disabled = unsupportedSession || busy || nativeModeChange;
@@ -596,6 +598,7 @@
     $('#note-input').hidden = !SessionEditor.arrangement(draft);
     $('#note-input-enabled').disabled = !target;
     $('#step-entry-enabled').disabled = !target || Boolean(performanceTarget);
+    arrangementView?.setStepEnabled?.($('#step-entry-enabled').checked);
     $('#note-input-octave').disabled = !target || target.drum;
     $('#note-preview-button').disabled = !target || stepCapturing || Boolean(performanceTarget);
     $('#connect-midi-button').disabled = !notePreviewAvailable || busy || nativeLocked();
@@ -620,7 +623,7 @@
     $('#step-entry-enabled').checked = false;
     $('#note-input-status').textContent = '';
     $('#note-input-status').classList.remove('error');
-    if (!noteRecording?.take) $('#record-notes-status').textContent = 'Select a clip to record.';
+    if (!noteRecording?.take) $('#record-notes-status').textContent = '';
   }
 
   function noteInputError(error) {
@@ -668,6 +671,7 @@
     $('#metronome-enabled').disabled = !eligible || nativeLocked() || busy || recordingStarting;
     $('#count-in-bars').disabled = $('#metronome-enabled').disabled;
     $('#beat-controls-help').textContent = eligible ? '4/4 click and count-in for native playback; listening only.' : 'Click/count-in currently require built-in instruments/audio and native output.';
+    $('#record-notes-button').title = !noteInputTarget() ? 'Select a note clip and apply pending device changes to record.' : 'Record from song zero; Stop applies one take. Input is not monitored during playback.';
     $('#record-notes-button').disabled = !nativeAvailable || !checkedReplacementAvailable || !noteInputTarget() || nativeLocked() || busy || active || pending || recordingStarting;
     $('#apply-take-button').hidden = !pending;
     $('#apply-take-button').disabled = busy || nativeLocked() || takeApplying;
@@ -1335,6 +1339,7 @@
     tracksEl.hidden = empty;
     $('#track-count').textContent = `${draft.tracks.length} ${draft.tracks.length === 1 ? 'track' : 'tracks'}`;
     $('#arrangement').hidden = !SessionEditor.arrangement(draft);
+    $('#timeline-transport').hidden = $('#arrangement').hidden;
     arrangementView?.render(draft, {locked: busy || editLocked(), frame: nativeSnapshot.timeline_frame || 0, loop: nativeActive() ? nativeSnapshot.loop_region : null, transportAvailable: nativeAvailable && ['playing', 'paused'].includes(nativeSnapshot.state), pending: timelineBusy});
     syncStatus();
   }
@@ -1495,8 +1500,8 @@
       if (generation === nativeCommandGeneration) applyNativeSnapshot(accepted);
     });
     nativeCommandTail = operation.catch(() => {});
-    try { await operation; }
-    catch (error) { announceError(error.message); }
+    try { await operation; return true; }
+    catch (error) { arrangementView?.reportError(error); announceError(error.message); return false; }
     finally { timelineBusy = false; nativeCommandsPending -= 1; syncStatus(); }
   }
 
@@ -1899,8 +1904,9 @@
 
   mixerView = MixerView.create($('#mixer'), {editor: SessionEditor, onEdit: applyMixerEdit, onError: announceError});
   arrangementView = ArrangementView.create($('#arrangement'), {
-    onSeek: frame => { void timelineCommand('/api/transport/seek', {frame}); },
-    onLoop: region => { void timelineCommand('/api/transport/loop', {region}); },
+    transportContainer: $('#timeline-transport'), stepContainer: $('#step-input-controls'),
+    onSeek: frame => timelineCommand('/api/transport/seek', {frame}),
+    onLoop: region => timelineCommand('/api/transport/loop', {region}),
     onEdit: action => editArrangement(action),
     onExportMidi: selection => exportSelectedMidi(selection),
     onSelectionChange: () => { syncNoteInput(); syncRecordingControls(); },
@@ -1921,9 +1927,11 @@
     },
     onError: noteInputError,
     onMIDIStatus: status => {
-      const messages = {connecting: 'Requesting MIDI access…', connected: 'MIDI connected. Enable Play keyboard / MIDI notes to preview or enter notes.',
+      const messages = {connecting: 'Requesting MIDI access…', connected: 'MIDI connected. Enable Keys to preview or enter notes.',
         unsupported: 'Web MIDI is unavailable in this browser. Computer-keyboard notes still work.', unavailable: 'MIDI access was unavailable. Computer-keyboard notes still work.'};
       $('#midi-status').textContent = messages[status] || 'MIDI disconnected.';
+      $('#connect-midi-button').textContent = status === 'connected' ? 'MIDI · on' : status === 'connecting' ? 'MIDI · …' : 'MIDI · off';
+      $('#connect-midi-button').title = $('#midi-status').textContent;
     },
   });
   noteRecording = new NoteRecording({onStatus: message => { $('#record-notes-status').textContent = message; }});

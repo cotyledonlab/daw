@@ -8,29 +8,28 @@
     let observedLoopKey = null, confirmedLoopKey = 'off';
     let noteBaseline = null, baselineNoteKey = null, audioBaseline = null, baselineAudioKey = null, localMessage = '';
     let gesture = null, rollLayout = null, suppressClick = false;
-    let stepSelectionKey = null;
+    let stepSelectionKey = null, stepEnabled = false, errorFields = [];
     const noteDevices = ['sine', 'drumkit', 'synth', 'pd_instrument'];
     container.innerHTML = `
-      <div class="arrangement-heading"><div><p class="eyebrow">Arrange · 4 beats per bar</p><h2 class="arrangement-title">Note arrangement</h2></div><output class="position-readout" aria-label="Playhead position">Beat 0.00</output></div>
-      <details class="editing-help arrangement-guide"><summary>Arrangement help</summary><p class="arrangement-help">Drag clips to move; drag their right edge to resize. Click or draw in the piano roll to add notes. Positions are measured from zero. Tempo changes the grid; saved notes keep their timing.</p></details>
-      <div class="arrangement-controls">
-        <label>Tempo (BPM)<input data-field="tempo" title="Changes the authoring grid; existing notes keep their saved timing." type="number" min="20" max="300" step="0.001" value="120"></label><button data-action="tempo" class="button button-quiet">Set tempo</button>
-        <label>Grid<select data-field="grid" title="Snap new positions and gestures to this beat grid."><option value="240">¼ beat</option><option value="480">½ beat</option><option value="960">1 beat</option><option value="0">No snap</option></select></label>
-        <label>Seek (beat)<input data-field="seek" type="number" min="0" step="0.25" value="0"></label><button data-action="seek" class="button button-quiet">Seek</button>
-        <label>Loop start<input data-field="loopStart" type="number" min="0" step="0.25" value="0"></label><label>Loop end<input data-field="loopEnd" type="number" min="0" step="0.25" value="4"></label>
-        <button data-action="loop" class="button button-quiet">Set loop</button><button data-action="clearLoop" class="button button-quiet">Clear loop</button>
+      <div class="transport-authoring arrangement-controls">
+        <label>Tempo<input data-field="tempo" title="BPM · Enter or leave the field to apply. Changes the grid without moving saved notes." type="number" min="20" max="300" step="0.001" value="120"></label>
+        <label>Position<input data-field="seek" title="Beat position from zero. Enter or leave the field to seek during native playback." type="number" min="0" step="0.25" value="0"></label>
+        <button data-action="toggleLoop" class="button button-quiet loop-toggle" title="Enable or disable the live loop during native playback." aria-pressed="false">Loop</button>
+        <label>From<input data-field="loopStart" aria-label="Loop start beat" title="Loop start in beats. Enter applies both endpoints." type="number" min="0" step="0.25" value="0"></label><label>To<input data-field="loopEnd" aria-label="Loop end beat" title="Loop end in beats. Enter applies both endpoints." type="number" min="0" step="0.25" value="4"></label>
+        <label>Grid<select data-field="grid" title="Snap positions and gestures; No snap disables quantize."><option value="240">¼ beat</option><option value="480">½ beat</option><option value="960">1 beat</option><option value="0">No snap</option></select></label>
+        <output class="position-readout" aria-label="Playhead position">Beat 0.00</output>
+        <p class="loop-status sr-only" role="status" aria-live="polite">Loop off</p>
       </div>
-      <p class="arrangement-status" role="status" aria-live="polite"></p>
-      <p class="loop-status" role="status" aria-live="polite">Loop off</p>
-      <div class="timeline-scroll"><svg class="arrangement-svg" role="group" aria-label="Track lanes and beat ruler"></svg></div>
-      <div class="arrangement-controls"><label>Selected clip<select data-field="selectedClip" aria-label="Select any clip, including overlapping copies"></select></label></div>
-      <div class="arrangement-controls clip-creator"><label>Note track<select data-field="track"></select></label><label>Insert at (beat)<input data-field="insertBeat" type="number" min="0" step="0.25" value="0"></label><button data-action="addClip" class="button button-quiet">Add 4-beat clip</button></div>
+      <p class="arrangement-status" role="status" aria-live="polite" hidden></p>
+      <div class="timeline-scroll"><svg class="arrangement-svg" title="Drag clips to move; drag the right edge to resize. Use Selected clip for overlapping copies." role="group" aria-label="Track lanes and beat ruler"></svg></div>
+      <div class="arrangement-controls clip-selector"><label>Selected clip<select data-field="selectedClip" aria-label="Select any clip, including overlapping copies"></select></label></div>
+      <div class="arrangement-controls clip-creator"><label>Note track<select data-field="track"></select></label><label>Insert at<input data-field="insertBeat" type="number" min="0" step="0.25" value="0"></label><button data-action="addClip" class="button button-quiet">Add 4-beat clip</button></div>
       <section class="clip-editor" hidden><h3 class="clip-heading"></h3>
-        <div class="arrangement-controls"><label>Clip start (beat)<input data-field="clipStart" type="number" min="0" step="0.25"></label><button data-action="moveClip" class="button button-quiet">Move clip</button><label>Clip length (beats)<input data-field="clipLength" type="number" min="0.001" step="0.25"></label><button data-action="resizeClip" class="button button-quiet">Resize clip</button><button data-action="duplicateClip" class="button button-quiet">Duplicate clip</button><button data-action="deleteClip" class="button button-quiet">Delete clip</button></div>
+        <div class="arrangement-controls"><label>Start<input data-field="clipStart" title="Start beat from zero. Enter applies; saved off-grid frames stay exact when unchanged." type="number" min="0" step="0.25"></label><label>Length<input data-field="clipLength" title="Length in beats. Enter applies; notes and fades must fit inside the clip." type="number" min="0.001" step="0.25"></label><button data-action="duplicateClip" class="button button-quiet">Duplicate clip</button><button data-action="deleteClip" class="button button-quiet">Delete clip</button></div>
         <div class="timeline-scroll note-roll"><svg class="piano-roll-svg" role="group" aria-label="Piano roll; select a note to edit"></svg></div>
-        <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" title="C4 = MIDI 60. Editing pitch uses equal temperament." type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button><button data-action="quantizeClip" class="button button-quiet" title="Snap note starts to Grid from clip zero; preserve durations. No snap disables this action.">Quantize clip</button><button data-action="exportMidiClip" class="button button-quiet" title="Download notes as MIDI. Pitch and velocity round; sounds and mix stay in the project.">Export clip MIDI</button></div>
+        <div class="arrangement-controls note-controls"><span class="note-inspector-state"></span><label class="pitch-field">Pitch<input data-field="pitch" title="C4 = MIDI 60. Editing pitch uses equal temperament." type="number" min="0" max="127" step="1" value="60"><span class="pitch-name" aria-hidden="true"></span></label><label>Start<input data-field="noteStart" title="Beat from clip zero. Enter applies selected-note changes." type="number" min="0" step="0.25" value="0"></label><label>Length<input data-field="noteLength" title="Gate length in beats; must fit inside the clip. Enter applies selected-note changes." type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" title="Velocity from 0 to 1. Enter applies selected-note changes." type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-quiet">+ Note</button><button data-action="editNote" class="button button-quiet" hidden>Apply note</button><button data-action="deleteNote" class="button button-quiet" hidden>Delete note</button><button data-action="quantizeClip" class="button button-quiet" title="Snap note starts to Grid from clip zero; preserve durations. No snap disables this action.">Quantize clip</button><button data-action="exportMidiClip" class="button button-quiet" title="Download notes as MIDI. Pitch and velocity round; sounds and mix stay in the project.">Export clip MIDI</button></div>
         <p class="clip-edit-status note-edit-status" role="status" aria-live="polite" hidden></p>
-        <div class="arrangement-controls step-controls"><label>Step position in clip (beat)<input data-field="stepBeat" type="number" min="0" step="0.25" value="0"></label><label>Gate (grid steps)<input data-field="stepGate" type="number" min="1" max="64" step="1" value="1"></label><output class="step-readout" aria-live="polite"></output></div>
+        <div class="arrangement-controls step-controls" hidden><label>Step at<input data-field="stepBeat" type="number" min="0" step="0.25" value="0"></label><label>Gate<input data-field="stepGate" type="number" min="1" max="64" step="1" value="1"></label><output class="step-readout" aria-live="polite"></output></div>
         <div class="arrangement-controls audio-controls" hidden><label class="audio-source-info">Source<output class="audio-source-path"></output></label><label>Source offset (frames)<input data-field="audioOffset" type="number" min="0" step="1"></label><label>Clip gain<input data-field="audioGain" type="number" min="0" max="1" step="0.05"></label><label>Fade in (frames)<input data-field="audioFadeIn" type="number" min="0" step="1"></label><label>Fade out (frames)<input data-field="audioFadeOut" type="number" min="0" step="1"></label><button data-action="editAudioClip" class="button button-quiet">Update audio clip</button></div>
         <p class="clip-edit-status audio-edit-status" role="status" aria-live="polite" hidden></p>
         <details class="editing-help clip-guide"><summary>Clip help</summary><p class="audio-fade-help arrangement-help" hidden>Linear fades reach silence at the clip edges. 0 turns a fade off; the two fades together must fit inside the clip.</p>
@@ -39,13 +38,38 @@
         <p class="note-pitch-detail arrangement-help" aria-live="polite"></p>
         <p class="note-help arrangement-help">C4 = MIDI 60. Notes must fit inside the clip. Duplicate places a copy directly after the original. Native seek and loops do not retrigger notes that started before the destination; WAV exports ignore the live loop.</p></details>
       </section>`;
-    const find = selector => container.querySelector(selector);
+    const transportRoot = callbacks.transportContainer || container, stepRoot = callbacks.stepContainer || container;
+    if (transportRoot !== container) transportRoot.append(container.querySelector('.transport-authoring'));
+    if (stepRoot !== container) stepRoot.append(container.querySelector('.step-controls'));
+    const roots = [...new Set([container, transportRoot, stepRoot])];
+    const all = selector => roots.flatMap(root => [...root.querySelectorAll(selector)]);
+    const find = selector => all(selector)[0];
     const field = name => find(`[data-field="${name}"]`);
     const value = name => {
       const text = field(name).value;
-      if (!text.trim() || !Number.isFinite(Number(text))) throw new Error('Enter a number for every field used by this action.');
+      if (!text.trim() || !Number.isFinite(Number(text))) { errorFields = [name]; throw new Error('Enter a number for this field.'); }
       return Number(text);
     };
+    function syncNumeric(name, saved, preserve = true) {
+      const input = field(name), old = input.dataset.saved;
+      const dirty = old !== undefined && String(input.value) !== old;
+      if (!preserve || !dirty) input.value = saved;
+      input.dataset.saved = String(saved);
+    }
+    function syncDrafts() {
+      all('input[data-field]').forEach(input => {
+        input.setAttribute('data-draft', String(input.dataset.saved !== undefined && String(input.value) !== input.dataset.saved));
+      });
+      const editing = Boolean(selectedNote);
+      find('.note-inspector-state').textContent = editing ? 'Note' : 'New note';
+      find('[data-action="addNote"]').hidden = editing;
+      find('[data-action="editNote"]').hidden = !editing || !noteBaseline || !Object.entries(noteBaseline).some(([name, saved]) => String(field(name).value) !== saved);
+      find('[data-action="deleteNote"]').hidden = !editing;
+      const pitch = Number(field('pitch').value);
+      const names = ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+      find('.pitch-name').textContent = Number.isInteger(pitch) && pitch >= 0 && pitch <= 127 ? names[pitch % 12] + (Math.floor(pitch / 12) - 1) : '';
+      if (field('pitch').getAttribute('data-invalid') !== 'true') field('pitch').title = `${Number.isInteger(pitch) && pitch >= 0 && pitch <= 127 ? names[pitch % 12] + (Math.floor(pitch / 12) - 1) + ' · ' : ''}MIDI pitch. Enter applies selected-note changes; untouched saved Hz stay exact.`;
+    }
     const status = find('.arrangement-status');
     const svg = find('.arrangement-svg'), roll = find('.piano-roll-svg');
     roll.setAttribute('tabindex','0');
@@ -98,7 +122,7 @@
       try {
         const target = stepTarget(); if (!target) return;
         const x = 60 + target.start_frame / selected.length_frames * 930;
-        node(roll,'line',{x1:x,x2:x,y1:24,y2:height,stroke:'currentColor','stroke-width':2,'pointer-events':'none','aria-hidden':'true'});
+        node(roll,'line',{x1:x,x2:x,y1:24,y2:height,class:'step-cursor','stroke-width':2,'pointer-events':'none','aria-hidden':'true'});
         find('.step-readout').textContent = `Next: beat ${target.start_frame === 0 ? 0 : beats(target.start_frame).toFixed(3)} · gate ${beats(target.duration_frames).toFixed(3)} beats${value('grid') ? '' : ' · No snap uses ¼-beat steps'}`;
       } catch (error) { find('.step-readout').textContent = error.message; }
     }
@@ -127,23 +151,28 @@
       status.textContent = localMessage || (options.locked ? 'Editing locked.' : '');
       status.hidden = !status.textContent || Boolean(clip() && localMessage);
     }
-    function reportError(error) { localMessage = error?.message || String(error); showStatus(); }
+    function reportError(error) {
+      localMessage = error?.message || String(error);
+      for (const name of errorFields) { field(name).setAttribute('aria-invalid', String(Boolean(localMessage))); field(name).setAttribute('data-invalid', String(Boolean(localMessage))); if (localMessage) { field(name).dataset.hint ??= field(name).title || ''; field(name).title = localMessage; } }
+      showStatus();
+    }
     function rememberFocus() {
       const active = document.activeElement;
-      if (!container.contains(active)) return null;
+      if (!roots.some(root => root.contains(active))) return null;
       return active?.getAttribute?.('data-focus-key');
     }
     function restoreFocus(key) {
       if (!key) return;
-      [...container.querySelectorAll('[data-focus-key]')].find(el => el.getAttribute('data-focus-key') === key)?.focus();
+      all('[data-focus-key]').find(el => el.getAttribute('data-focus-key') === key)?.focus();
     }
-    function loadNoteFields(n) {
-      field('pitch').value = Math.round(69 + 12 * Math.log2(n.frequency_hz / 440));
-      field('noteStart').value = fmt(n.start_frame); field('noteLength').value = fmt(n.duration_frames); field('velocity').value = n.velocity;
-      noteBaseline = Object.fromEntries(['pitch','noteStart','noteLength','velocity'].map(key => [key, String(field(key).value)]));
+    function loadNoteFields(n, preserve = false) {
+      const values = {pitch:Math.round(69 + 12 * Math.log2(n.frequency_hz / 440)), noteStart:fmt(n.start_frame), noteLength:fmt(n.duration_frames), velocity:n.velocity};
+      for (const [name, saved] of Object.entries(values)) syncNumeric(name, saved, preserve);
+      noteBaseline = Object.fromEntries(Object.entries(values).map(([name, saved]) => [name, String(saved)]));
       baselineNoteKey = JSON.stringify([selection, session.tempo_milli_bpm, n]);
     }
     function selectClip(trackIndex, clipId) { selection = { trackIndex, clipId }; selectedNote = null; noteBaseline = null; baselineNoteKey = null; audioBaseline = null; baselineAudioKey = null;
+      for (const name of ['clipStart','clipLength','pitch','noteStart','noteLength','velocity','audioOffset','audioGain','audioFadeIn','audioFadeOut']) { delete field(name).dataset.saved; field(name).setAttribute('data-invalid','false'); field(name).setAttribute('aria-invalid','false'); }
       const drums = session.tracks[trackIndex].device?.kind === 'drumkit';
       field('pitch').value = drums ? 36 : 60;
       field('noteLength').value = drums ? 0.25 : 0.5; render(session, options); callbacks.onSelectionChange?.(getNoteTarget()); }
@@ -264,7 +293,8 @@
       rollLayout = null;
       const selected = clip(); field('selectedClip').value = selection ? `${selection.trackIndex}:${selection.clipId}` : ''; find('.clip-editor').hidden = !selected;
       const audio = selected?.kind === 'audio';
-      for (const selector of ['.note-roll', '.note-controls', '.step-controls', '.note-device-help', '.note-pitch-detail', '.quantize-help', '.note-help']) find(selector).hidden = audio;
+      for (const selector of ['.note-roll', '.note-controls', '.note-device-help', '.note-pitch-detail', '.quantize-help', '.note-help']) find(selector).hidden = audio;
+      find('.step-controls').hidden = audio || !selected || !stepEnabled;
       find('.audio-controls').hidden = !audio;
       find('.audio-fade-help').hidden = !audio;
       find('.clip-creator').hidden = audio;
@@ -276,15 +306,14 @@
         find('.audio-source-path').textContent = selected.source_path;
         const key = JSON.stringify([selection, session.tempo_milli_bpm, selected]);
         if (baselineAudioKey !== key) {
-          field('clipStart').value = fmt(selected.start_frame); field('clipLength').value = fmt(selected.length_frames);
-          field('audioOffset').value = selected.source_offset_frames; field('audioGain').value = selected.gain;
-          field('audioFadeIn').value = selected.fade_in_frames ?? 0; field('audioFadeOut').value = selected.fade_out_frames ?? 0;
-          audioBaseline = Object.fromEntries(['clipStart','clipLength','audioOffset','audioGain','audioFadeIn','audioFadeOut'].map(name => [name, String(field(name).value)]));
+          const values = {clipStart:fmt(selected.start_frame), clipLength:fmt(selected.length_frames), audioOffset:selected.source_offset_frames, audioGain:selected.gain, audioFadeIn:selected.fade_in_frames ?? 0, audioFadeOut:selected.fade_out_frames ?? 0};
+          for (const [name, saved] of Object.entries(values)) syncNumeric(name, saved);
+          audioBaseline = Object.fromEntries(Object.entries(values).map(([name, saved]) => [name, String(saved)]));
           baselineAudioKey = key;
         }
         return;
       }
-      field('clipStart').value = fmt(selected.start_frame); field('clipLength').value = fmt(selected.length_frames);
+      syncNumeric('clipStart', fmt(selected.start_frame)); syncNumeric('clipLength', fmt(selected.length_frames));
       const stepKey = JSON.stringify([selection.trackIndex, selection.clipId]);
       if (stepSelectionKey !== stepKey) { field('stepBeat').value = 0; stepSelectionKey = stepKey; }
       const notes = selected.notes || [];
@@ -295,7 +324,7 @@
         const cents = 1200 * Math.log2(activeNote.frequency_hz / (440 * Math.pow(2, (midi - 69) / 12)));
         find('.note-pitch-detail').textContent = `Saved pitch: ${activeNote.frequency_hz} Hz · ${cents >= 0 ? '+' : ''}${cents.toFixed(2)} cents from MIDI ${midi}. Changing MIDI pitch sets an exact equal-tempered pitch.`;
       } else find('.note-pitch-detail').textContent = '';
-      if (activeNote && baselineNoteKey !== JSON.stringify([selection, session.tempo_milli_bpm, activeNote])) loadNoteFields(activeNote);
+      if (activeNote && baselineNoteKey !== JSON.stringify([selection, session.tempo_milli_bpm, activeNote])) loadNoteFields(activeNote, true);
       const pitches = notes.map(n => Math.round(69 + 12 * Math.log2(n.frequency_hz / 440)));
       const displayPitches = pitches.map(p => Math.max(0, Math.min(127, p)));
       const low = Math.min(48, ...displayPitches), high = Math.max(72, ...displayPitches);
@@ -308,8 +337,9 @@
       rowPitches.forEach(pitch => {
         const y = rowY(pitch);
         node(roll, 'rect', { x: 0, y, width: 1000, height: rowHeight, class: !drums && [1,3,6,8,10].includes(pitch % 12) ? 'roll-row roll-black' : 'roll-row' });
+        if (!drums) node(roll,'rect',{x:0,y,width:[1,3,6,8,10].includes(pitch % 12) ? 38 : 58,height:rowHeight,class:[1,3,6,8,10].includes(pitch % 12) ? 'piano-key black-key' : 'piano-key'});
         if (drums) node(roll, 'text', {x: 4,y: y + 16,class: 'ruler-text'}, `${({36:'Kick',38:'Snare',42:'Hat'})[pitch]} ${pitch}`);
-        else if (pitch % 12 === 0) node(roll, 'text', {x: 8,y: y + 10,class: 'ruler-text'}, `C${Math.floor(pitch / 12) - 1}`);
+        else if (pitch % 12 === 0) node(roll, 'text', {x: 8,y: y + 10,class: 'key-label'}, `C${Math.floor(pitch / 12) - 1}`);
       });
       const beatLength = beats(selected.length_frames), step = Math.max(1, Math.ceil(beatLength / 64));
       for (let b = 0; b <= beatLength; b += step) {
@@ -331,20 +361,22 @@
           restoreFocus(`note:${n.id}`); callbacks.onSelectionChange?.(getNoteTarget());
         });
       });
-      drawStepCursor(height, selected);
+      if (stepEnabled) drawStepCursor(height, selected);
+      syncDrafts();
       restoreFocus(focusKey);
     }
     function syncDisabled() {
-      container.querySelectorAll('button').forEach(button => {
+      all('button[data-action]').forEach(button => {
         const action = button.dataset.action;
-        const transport = ['seek','loop','clearLoop'].includes(action);
+        const transport = ['seek','loop','toggleLoop','clearLoop'].includes(action);
         button.disabled = transport ? options.transportAvailable === false || !!options.pending : !!options.locked;
         if (['editNote','deleteNote'].includes(action) && !selectedNote) button.disabled = true;
         if (action === 'exportMidiClip' && clip()?.kind !== 'notes') button.disabled = true;
         if (action === 'quantizeClip' && (clip()?.kind !== 'notes' || !clip()?.notes?.length || !Number(field('grid').value))) button.disabled = true;
         if (action === 'addClip' && !session?.tracks.some(t => t.mode === 'sequenced' && noteDevices.includes(t.device?.kind))) button.disabled = true;
       });
-      container.querySelectorAll('input, select').forEach(input => { input.disabled = !!options.locked && !['seek','loopStart','loopEnd'].includes(input.dataset.field); });
+      all('input, select').forEach(input => { input.disabled = ['seek','loopStart','loopEnd'].includes(input.dataset.field) ? options.transportAvailable === false || !!options.pending : !!options.locked; });
+      syncDrafts();
     }
     function setState(state = {}) {
       const previousLocked = options.locked; options = {...options,...state}; if (options.locked && gesture) cancelGesture(); syncDisabled();
@@ -366,9 +398,10 @@
       find('.loop-status').textContent = region
         ? `Loop ${loopPending ? 'requested' : 'active'}: beat ${fmt(region.start_frame)}–${fmt(region.end_frame)}${loopPending ? ' · waiting for audio callback' : ''}`
         : (loopPending ? 'Loop off requested · waiting for audio callback' : 'Loop off');
-      find('.loop-status').hidden = !region && !loopPending;
-      if (syncFields && key !== observedLoopKey && region) {
-        field('loopStart').value = fmt(region.start_frame); field('loopEnd').value = fmt(region.end_frame);
+      find('[data-action="toggleLoop"]').setAttribute('aria-pressed', String(Boolean(region)));
+      find('[data-action="toggleLoop"]').title = find('.loop-status').textContent;
+      if (syncFields && key !== observedLoopKey && region && ![field('loopStart'),field('loopEnd')].some(input => input.getAttribute('data-draft') === 'true')) {
+        syncNumeric('loopStart', fmt(region.start_frame)); syncNumeric('loopEnd', fmt(region.end_frame));
       }
       observedLoopKey = key;
     }
@@ -378,6 +411,8 @@
       options.frame = Number(frame) || 0;
       if ('loop_region' in transport || 'loop' in transport) updateLoop(transport.loop_region ?? transport.loop ?? null, transport.timeline_command_pending === true, true);
       else if ('timeline_command_pending' in transport) updateLoop(options.loop || null, transport.timeline_command_pending === true);
+      const seek = field('seek');
+      if (document.activeElement !== seek) syncNumeric('seek', fmt(options.frame));
       find('.position-readout').textContent = `Beat ${beats(options.frame).toFixed(2)} · frame ${options.frame}`;
       if (playhead) { const x = 150 + options.frame / spanFrames * 840; playhead.setAttribute('x1', x); playhead.setAttribute('x2', x); }
     }
@@ -387,9 +422,8 @@
       session = next; options = { ...state }; if (!session) return;
       if (!clip()) { const hadSelection = !!selection; selection = null; selectedNote = null; stepSelectionKey = null; if (hadSelection) callbacks.onSelectionChange?.(null); }
       if (selectedNote && !clip()?.notes?.some(n => n.id === selectedNote)) selectedNote = null;
-      field('tempo').value = (session.tempo_milli_bpm || 120000) / 1000;
+      syncNumeric('tempo', (session.tempo_milli_bpm || 120000) / 1000);
       showStatus();
-      find('.arrangement-title').textContent = session.tracks.some(track => track.device?.kind === 'audio') ? 'Arrangement' : 'Note arrangement';
       svg.replaceChildren();
       const end = Math.max(0, ...session.tracks.flatMap(t => (t.clips || []).map(c => c.start_frame + c.length_frames)));
       const totalBeats = Math.max(16, Math.ceil(beats(end) / 4) * 4);
@@ -407,7 +441,7 @@
         const x = 150 + b / totalBeats * 840;
         node(svg, 'line', {x1:x,x2:x,y1:32,y2:height,class:'beat-grid'});
         // The endpoint grid line remains; a label here clips or overlaps its neighbour.
-        if (x <= 960) node(svg, 'text', {x:x+4,y:21,class:'ruler-text'}, b % 4 === 0 ? `${Math.floor(b / 4) + 1} · ${b}` : String(b));
+        if (x <= 960) node(svg, 'text', {x:x+4,y:21,class:'ruler-text'}, b % 4 === 0 ? String(Math.floor(b / 4) + 1) : '');
       }
       session.tracks.forEach((track, trackIndex) => {
         const y = 36 + trackIndex * 64;
@@ -430,7 +464,13 @@
           const clipRect = node(group,'rect',{x,y:y+8,width,height:48,rx:5});
           const clipLabel = c.id;
           node(group,'text',{x:x+7,y:y+28,class:'clip-label'}, clipLabel.slice(0,Math.max(0,Math.floor(width/7)-2)));
-          (c.notes || []).slice(0,128).forEach(n => node(group,'line',{x1:x+n.start_frame/spanFrames*840,x2:x+(n.start_frame+n.duration_frames)/spanFrames*840,y1:y+41,y2:y+41,class:'clip-note-preview'}));
+          const previewNotes = (c.notes || []).slice(0,128);
+          const pitches = previewNotes.map(n => 69 + 12 * Math.log2(n.frequency_hz / 440));
+          const low = Math.min(...pitches), range = Math.max(12, Math.max(...pitches) - low);
+          previewNotes.forEach((n,i) => {
+            const previewY = y + 51 - (pitches[i] - low) / range * 15;
+            node(group,'line',{x1:x+n.start_frame/spanFrames*840,x2:x+(n.start_frame+n.duration_frames)/spanFrames*840,y1:previewY,y2:previewY,class:'clip-note-preview'});
+          });
           if (c.kind === 'audio') {
             const fadeAttrs = {stroke:'currentColor','stroke-width':1.5,'pointer-events':'none','aria-hidden':'true'};
             if (c.fade_in_frames > 0) node(group,'line',{...fadeAttrs,x1:x,y1:y+54,x2:x+width*c.fade_in_frames/c.length_frames,y2:y+10});
@@ -466,22 +506,25 @@
       if ([...field('track').options].some(o=>o.value===oldTrack)) field('track').value = oldTrack;
       drawRoll(); syncDisabled(); updateTransport({frame:options.frame}); restoreFocus(focusKey);
     }
-    container.addEventListener('change', event => {
+    roots.forEach(root => root.addEventListener('change', event => {
       if (event.target.dataset?.field === 'selectedClip') {
         const key = event.target.value, separator = key.indexOf(':');
         const index = Number(key.slice(0,separator)), id = key.slice(separator+1);
         if (separator >= 0 && session?.tracks[index]?.clips?.some(clip=>clip.id === id)) selectClip(index,id);
         return;
       }
-      if (['stepBeat','stepGate','grid'].includes(event.target.dataset?.field)) { drawRoll(); syncDisabled(); }
-    });
-    container.addEventListener('click', event => {
-      const button = event.target.closest('button[data-action]'); if (!button || button.disabled || !session) return;
+      const name = event.target.dataset?.field;
+      if (['tempo','seek'].includes(name)) void runAction(name);
+      if (['stepBeat','stepGate','grid'].includes(name)) { drawRoll(); syncDisabled(); }
+    }));
+    roots.forEach(root => root.addEventListener('input', () => { syncDrafts(); }));
+    function performAction(action) {
       try {
-        const action = button.dataset.action, selected = clip();
-        if (action === 'tempo') return edit('setTempo',{tempo_milli_bpm:Math.round(value('tempo')*1000)});
+        const selected = clip();
+        if (action === 'tempo') { const tempo = Math.round(value('tempo')*1000); if (tempo === (session.tempo_milli_bpm || 120000)) return true; return edit('setTempo',{tempo_milli_bpm:tempo}); }
         if (action === 'seek') return callbacks.onSeek?.(frames(value('seek')));
-        if (action === 'loop') {
+        if (action === 'toggleLoop' && options.loop) return callbacks.onLoop?.(null);
+        if (action === 'loop' || action === 'toggleLoop') {
           const start_frame = frames(value('loopStart')), end_frame = frames(value('loopEnd'));
           if (end_frame <= start_frame) throw new Error('Loop end must be after its start.');
           return callbacks.onLoop?.({start_frame,end_frame});
@@ -490,11 +533,11 @@
         if (action === 'addClip') return edit('addClip',{trackIndex:value('track'),start_frame:frames(value('insertBeat')),length_frames:frames(4)});
         if (!selected) return;
         if (action === 'moveClip') {
-          if (selected.kind === 'audio' && String(field('clipStart').value) === audioBaseline?.clipStart) return;
+          if (String(field('clipStart').value) === String(fmt(selected.start_frame))) return true;
           return edit(action,{start_frame:frames(value('clipStart'))});
         }
         if (action === 'resizeClip') {
-          if (selected.kind === 'audio' && String(field('clipLength').value) === audioBaseline?.clipLength) return;
+          if (String(field('clipLength').value) === String(fmt(selected.length_frames))) return true;
           const length_frames = frames(value('clipLength'));
           if (selected.kind === 'audio') checkAudioFades(selected,{length_frames});
           return edit(action,{length_frames});
@@ -563,9 +606,42 @@
           if (note.duration_frames <= 0 || start_frame < 0 || end_frame > selected.length_frames) throw new Error('Note gates must have positive duration and end inside the clip.');
           return edit(action,{note});
         }
-      } catch (error) { reportError(error); }
+      } catch (error) { reportError(error); return false; }
+    }
+    const commits = {tempo:['tempo'], seek:['seek'], loop:['loopStart','loopEnd'], toggleLoop:['loopStart','loopEnd'], moveClip:['clipStart'], resizeClip:['clipLength'], editNote:['pitch','noteStart','noteLength','velocity'], editAudioClip:['clipLength','audioOffset','audioGain','audioFadeIn','audioFadeOut']};
+    function runAction(action) {
+      if (!session) return;
+      if (['seek','loop','toggleLoop','clearLoop'].includes(action) ? options.transportAvailable === false || options.pending : options.locked) return;
+      errorFields = commits[action] || [];
+      const before = Object.fromEntries(all('input[data-field]').filter(input => input.dataset.saved !== undefined || errorFields.includes(input.dataset.field)).map(input => [input.dataset.field, String(input.value)]));
+      const dirty = Object.keys(before).filter(name => field(name).dataset.saved !== undefined && before[name] !== field(name).dataset.saved);
+      const committedFields = [...errorFields];
+      const changedFields = errorFields.filter(name => dirty.includes(name));
+      for (const name of errorFields) { field(name).setAttribute('aria-invalid','false'); field(name).setAttribute('data-invalid','false'); if (field(name).dataset.hint !== undefined) field(name).title = field(name).dataset.hint; }
+      errorFields = changedFields.length ? changedFields : committedFields;
+      localMessage = ''; showStatus();
+      const finish = accepted => {
+        for (const name of accepted === false ? Object.keys(before) : dirty.filter(name => !committedFields.includes(name))) field(name).value = before[name];
+        if (accepted === true && action === 'seek') field('seek').dataset.saved = before.seek;
+        if (accepted === true) for (const name of committedFields) if (field(name).dataset.saved !== undefined) field(name).value = field(name).dataset.saved;
+        syncDrafts();
+        return accepted;
+      };
+      try {
+        const result = performAction(action);
+        return result?.then ? result.then(finish).catch(error => { reportError(error); return finish(false); }) : finish(result);
+      } catch (error) { reportError(error); return finish(false); }
+    }
+    container.addEventListener('click', event => {
+      const button = event.target.closest('button[data-action]'); if (button && !button.disabled) void runAction(button.dataset.action);
     });
-    container.addEventListener('keydown', event => {
+    if (transportRoot !== container) transportRoot.addEventListener('click', event => { const button = event.target.closest('button[data-action]'); if (button && !button.disabled) void runAction(button.dataset.action); });
+    roots.forEach(root => root.addEventListener('keydown', event => {
+      const name = event.target.dataset?.field;
+      if (event.key === 'Enter' && name) {
+        const action = {tempo:'tempo',seek:'seek',loopStart:'loop',loopEnd:'loop',clipStart:'moveClip',clipLength:'resizeClip',pitch:'editNote',noteStart:'editNote',noteLength:'editNote',velocity:'editNote',audioOffset:'editAudioClip',audioGain:'editAudioClip',audioFadeIn:'editAudioClip',audioFadeOut:'editAudioClip'}[name];
+        if (action) { event.preventDefault(); void runAction(action); return; }
+      }
       if (event.key === 'Escape' && gesture) { event.preventDefault(); cancelGesture(); return; }
       if (options.locked || event.target.closest('input,select,button,textarea,[contenteditable]')) return;
       if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -573,7 +649,7 @@
         else if (clip()) { event.preventDefault(); edit('deleteClip'); }
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd' && clip()) { event.preventDefault(); edit('duplicateClip',{start_frame:clip().start_frame+clip().length_frames}); }
-    });
+    }));
     function hasDrafts() {
       if (session && Number(field('tempo').value) !== (session.tempo_milli_bpm || 120000) / 1000) return true;
       const selected = clip();
@@ -581,7 +657,7 @@
       const baseline = selected?.kind === 'audio' ? audioBaseline : noteBaseline;
       return Boolean(baseline && Object.entries(baseline).some(([key, text]) => String(field(key).value) !== text));
     }
-    return {hasDrafts,render,selectClip,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
+    return {setStepEnabled: enabled => { if (stepEnabled === Boolean(enabled)) return; stepEnabled = Boolean(enabled); drawRoll(); },hasDrafts,render,selectClip,updateTransport,setState,reportError,getNoteTarget,getStepTarget,acceptStepAdvance,getSelection:()=>selection && {...selection,noteId:selectedNote},clearSelection:()=>{selection=null;selectedNote=null;stepSelectionKey=null;callbacks.onSelectionChange?.(null);}};
   }
   window.ArrangementView = {create};
 })();
