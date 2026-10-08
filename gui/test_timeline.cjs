@@ -46,12 +46,12 @@ class Element {
     }
   }
 }
-function setup(kind = 'sine', onEdit = null, onExportMidi = null) {
+function setup(kind = 'sine', onEdit = null, onExportMidi = null, onLoop = null) {
   const document = { activeElement: null, createElementNS: (_, tag) => new Element(tag, document), createElement: tag => new Element(tag, document) };
   const container = new Element('div', document), window = {};
   vm.runInNewContext(fs.readFileSync(`${__dirname}/timeline.js`, 'utf8'), { window, document });
   const edits = [];
-  const view = window.ArrangementView.create(container, { onEdit: edit => { edits.push(edit); return onEdit?.(edit); }, onExportMidi });
+  const view = window.ArrangementView.create(container, { onEdit: edit => { edits.push(edit); return onEdit?.(edit); }, onExportMidi, onLoop });
   const session = { sample_rate: 48000, tempo_milli_bpm: 120000, tracks: [{ id: 'track', mode: 'sequenced', device: { kind }, clips: [{ id: 'clip', kind: 'notes', start_frame: 0, length_frames: 96000, notes: [{ id: 'note', start_frame: 1234, duration_frames: 7777, frequency_hz: kind === 'drumkit' ? 440 * Math.pow(2, (36 - 69) / 12) : 443.12345, velocity: 0.6 }] }] }] };
   if (kind === 'audio') { session.tracks[0].device = {kind:'audio',gain:0.8}; session.tracks[0].clips = [{id:'clip',kind:'audio',start_frame:1234,length_frames:7777,source_path:'assets/recording.wav',source_offset_frames:99,gain:0.67}]; }
   view.render(session, { transportAvailable: true });
@@ -454,4 +454,26 @@ test('field feedback stays attached after a rejected numeric entry, and step con
   assert.equal(s.container.querySelector('.step-controls').hidden,true);
   s.view.setStepEnabled(true); assert.equal(s.container.querySelector('.step-controls').hidden,false);
   s.view.setStepEnabled(false); assert.equal(s.container.querySelector('.step-controls').hidden,true);
+});
+
+test('accepted active-loop edits keep canonical endpoints through toggles; rejection retains drafts and applied range', async () => {
+  let s, reject=false; const loops=[];
+  s=setup('sine',null,null,region=>{
+    loops.push(region && {...region});
+    if (reject) { s.view.updateTransport({loop_region:{start_frame:24000,end_frame:192000}}); s.view.reportError('Loop rejected by bridge.'); return Promise.resolve(false); }
+    s.view.updateTransport({loop_region:region}); return Promise.resolve(true);
+  });
+  const settle=()=>new Promise(resolve=>setImmediate(resolve));
+  s.view.updateTransport({loop_region:{start_frame:0,end_frame:96000}});
+  s.field('loopStart').value='1'; s.field('loopStart').dispatch('input');
+  s.field('loopEnd').value='8'; s.field('loopEnd').dispatch('input');
+  s.action('loop'); await settle();
+  assert.deepEqual(loops[0],{start_frame:24000,end_frame:192000});
+  for (const [name,expected] of [['loopStart','1'],['loopEnd','8']]) { assert.equal(s.field(name).value,expected); assert.equal(s.field(name).dataset.saved,expected); assert.equal(s.field(name).getAttribute('data-draft'),'false'); }
+  s.action('toggleLoop'); await settle(); s.action('toggleLoop'); await settle();
+  assert.equal(loops[1],null); assert.deepEqual(loops[2],loops[0]);
+  reject=true; s.field('loopEnd').value='12'; s.field('loopEnd').dispatch('input'); s.action('loop'); await settle();
+  assert.equal(s.field('loopEnd').value,'12'); assert.equal(s.field('loopEnd').dataset.saved,'8');
+  assert.equal(s.field('loopEnd').getAttribute('data-draft'),'true'); assert.equal(s.field('loopEnd').getAttribute('aria-invalid'),'true');
+  assert.match(s.container.querySelector('.loop-status').textContent,/beat 1–8/);
 });

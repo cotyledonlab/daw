@@ -400,7 +400,7 @@
         : (loopPending ? 'Loop off requested · waiting for audio callback' : 'Loop off');
       find('[data-action="toggleLoop"]').setAttribute('aria-pressed', String(Boolean(region)));
       find('[data-action="toggleLoop"]').title = find('.loop-status').textContent;
-      if (syncFields && key !== observedLoopKey && region && ![field('loopStart'),field('loopEnd')].some(input => input.getAttribute('data-draft') === 'true')) {
+      if (syncFields && key !== observedLoopKey && region) {
         syncNumeric('loopStart', fmt(region.start_frame)); syncNumeric('loopEnd', fmt(region.end_frame));
       }
       observedLoopKey = key;
