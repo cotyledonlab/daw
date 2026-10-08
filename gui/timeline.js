@@ -28,12 +28,13 @@
       <section class="clip-editor" hidden><h3 class="clip-heading"></h3>
         <div class="arrangement-controls"><label>Clip start (beat)<input data-field="clipStart" type="number" min="0" step="0.25"></label><button data-action="moveClip" class="button button-quiet">Move clip</button><label>Clip length (beats)<input data-field="clipLength" type="number" min="0.001" step="0.25"></label><button data-action="resizeClip" class="button button-quiet">Resize clip</button><button data-action="duplicateClip" class="button button-quiet">Duplicate clip</button><button data-action="deleteClip" class="button button-quiet">Delete clip</button></div>
         <div class="timeline-scroll note-roll"><svg class="piano-roll-svg" role="group" aria-label="Piano roll; select a note to edit"></svg></div>
-        <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button></div>
+        <div class="arrangement-controls note-controls"><label>MIDI pitch<input data-field="pitch" type="number" min="0" max="127" step="1" value="60"></label><label>Note start (beat)<input data-field="noteStart" type="number" min="0" step="0.25" value="0"></label><label>Duration (beats)<input data-field="noteLength" type="number" min="0.001" step="0.25" value="0.5"></label><label>Velocity<input data-field="velocity" type="number" min="0" max="1" step="0.05" value="0.8"></label><button data-action="addNote" class="button button-primary">Add note</button><button data-action="editNote" class="button button-quiet">Update selected note</button><button data-action="deleteNote" class="button button-quiet">Delete selected note</button><button data-action="quantizeClip" class="button button-quiet" title="Move all note starts to the selected grid; preserve durations and pitch.">Quantize clip</button></div>
         <p class="clip-edit-status note-edit-status" role="status" aria-live="polite" hidden></p>
         <div class="arrangement-controls step-controls"><label>Step position in clip (beat)<input data-field="stepBeat" type="number" min="0" step="0.25" value="0"></label><label>Gate (grid steps)<input data-field="stepGate" type="number" min="1" max="64" step="1" value="1"></label><output class="step-readout" aria-live="polite"></output></div>
         <div class="arrangement-controls audio-controls" hidden><label class="audio-source-info">Source<output class="audio-source-path"></output></label><label>Source offset (frames)<input data-field="audioOffset" type="number" min="0" step="1"></label><label>Clip gain<input data-field="audioGain" type="number" min="0" max="1" step="0.05"></label><label>Fade in (frames)<input data-field="audioFadeIn" type="number" min="0" step="1"></label><label>Fade out (frames)<input data-field="audioFadeOut" type="number" min="0" step="1"></label><button data-action="editAudioClip" class="button button-quiet">Update audio clip</button></div>
         <p class="clip-edit-status audio-edit-status" role="status" aria-live="polite" hidden></p>
         <p class="audio-fade-help arrangement-help" hidden>Linear fades reach silence at the clip edges. 0 turns a fade off; the two fades together must fit inside the clip.</p>
+        <p class="quantize-help arrangement-help">Quantize clip moves all note starts to the nearest Grid line from clip zero, with ties moved later. Durations, pitch and velocity stay exact. Choose a grid; No snap disables quantize. Notes must still fit inside the clip.</p>
         <p class="note-device-help arrangement-help"></p>
         <p class="note-pitch-detail arrangement-help" aria-live="polite"></p>
         <p class="note-help arrangement-help">C4 = MIDI 60. Notes must fit inside the clip. Duplicate places a copy directly after the original. Native seek and loops do not retrigger notes that started before the destination; WAV exports ignore the live loop.</p>
@@ -263,7 +264,7 @@
       rollLayout = null;
       const selected = clip(); field('selectedClip').value = selection ? `${selection.trackIndex}:${selection.clipId}` : ''; find('.clip-editor').hidden = !selected;
       const audio = selected?.kind === 'audio';
-      for (const selector of ['.note-roll', '.note-controls', '.step-controls', '.note-device-help', '.note-pitch-detail', '.note-help']) find(selector).hidden = audio;
+      for (const selector of ['.note-roll', '.note-controls', '.step-controls', '.note-device-help', '.note-pitch-detail', '.quantize-help', '.note-help']) find(selector).hidden = audio;
       find('.audio-controls').hidden = !audio;
       find('.audio-fade-help').hidden = !audio;
       find('.clip-creator').hidden = audio;
@@ -339,6 +340,7 @@
         const transport = ['seek','loop','clearLoop'].includes(action);
         button.disabled = transport ? options.transportAvailable === false || !!options.pending : !!options.locked;
         if (['editNote','deleteNote'].includes(action) && !selectedNote) button.disabled = true;
+        if (action === 'quantizeClip' && (clip()?.kind !== 'notes' || !clip()?.notes?.length || !Number(field('grid').value))) button.disabled = true;
         if (action === 'addClip' && !session?.tracks.some(t => t.mode === 'sequenced' && noteDevices.includes(t.device?.kind))) button.disabled = true;
       });
       container.querySelectorAll('input, select').forEach(input => { input.disabled = !!options.locked && !['seek','loopStart','loopEnd'].includes(input.dataset.field); });
@@ -469,7 +471,7 @@
         if (separator >= 0 && session?.tracks[index]?.clips?.some(clip=>clip.id === id)) selectClip(index,id);
         return;
       }
-      if (['stepBeat','stepGate','grid'].includes(event.target.dataset?.field)) drawRoll();
+      if (['stepBeat','stepGate','grid'].includes(event.target.dataset?.field)) { drawRoll(); syncDisabled(); }
     });
     container.addEventListener('click', event => {
       const button = event.target.closest('button[data-action]'); if (!button || button.disabled || !session) return;
@@ -522,6 +524,10 @@
           localMessage = 'Selected audio clip is unchanged.'; showStatus(); return;
         }
         if (selected.kind === 'audio') return;
+        if (action === 'quantizeClip') {
+          if (hasDrafts()) throw new Error('Apply or revert typed note, clip and tempo edits before quantizing.');
+          return edit(action,{gridTicks:value('grid')});
+        }
         if (action === 'deleteNote') return edit(action,{noteId:selectedNote});
         if (action === 'editNote') {
           const saved = selected.notes.find(n => n.id === selectedNote);

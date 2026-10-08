@@ -15,7 +15,7 @@ python3 gui/server.py
 
 The server opens the editor. Choose **Open musical demo** for a 16-bar drum/bass/lead arrangement, or **New arrangement** to start from scratch. Select a clip on the timeline or in **Selected clip** (including overlapping copies) to edit notes; drag clips/notes to move or resize them, or use exact numeric fields. Completed edits support Undo/Redo.
 
-The editor follows your system’s light or dark appearance automatically.
+The editor follows your system’s light or dark appearance automatically. Select a note clip, choose **Grid**, and use **Quantize clip** to snap all note starts from clip zero as one undoable edit. Durations, pitch and velocity stay exact; No snap disables quantize. A gate that would extend past the clip end rejects the whole edit. Apply or revert pending drafts first.
 
 Expand **Studio agents** for prompt controls and **Metronome & count-in** for listening-click settings. Overlapping clips have dashed amber borders and a lane count; use **Selected clip** to reach a covered clip.
 
@@ -69,7 +69,7 @@ Optional integrations are existing compatibility paths; they are not MVP prerequ
 | VST3 | Constrained macOS offline effects and experimental live effects; saved-effect metadata/parameter editing. No plugin editor, instrument hosting or GUI discovery. [Build notes](native/vst3/README.md). |
 | Audio Units | Apple's AULowpass offline only; no GUI or live playback. [Build notes](native/au/README.md). |
 
-Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, quantize/MIDI files, sampled instruments and broader studio features are outside the MVP.
+Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, MIDI files, sampled instruments and broader studio features are outside the MVP.
 
 ## Develop
 

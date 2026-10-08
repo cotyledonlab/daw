@@ -49,10 +49,14 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 - [x] Follow system light/dark appearance with native CSS preference detection, including controls, timeline, piano roll, statuses and mixer. Verified the current light preference in the browser and visually inspected the dark palette using an isolated static fixture; physical OS switching was not exercised.
 
+## Requested selected-clip quantize
+
+- [x] Quantize note starts in the selected clip to its current clip-relative grid as one checked, undoable edit. Preserve durations, Hz/velocity, clip placement, other clips and drafts; reject the entire edit if a gate no longer fits or validation fails. Focused regressions in `gui/test_quantize.cjs` and `gui/test_timeline.cjs` passed; desktop/narrow browser checks covered quantize, whole-clip Undo/Redo, draft protection, No snap and transactional clip-end rejection. A mixed note/PCM session saved/reopened in a fresh engine with byte-identical unclipped WAV exports. Listening and microphone acceptance remain open and are deferred at the user’s request.
+
 ## After MVP
 
-Quantize/MIDI-file import/export can be the next feature slice when requested. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
+MIDI-file import/export can be the next feature slice when requested. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** review the refreshed visual treatment in the browser, then listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; verify browser push-to-talk with a physical microphone using the working ElevenLabs credential. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** choose the next small MIDI-file import/export slice when requested; keep acoustic and microphone acceptance open for later. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).

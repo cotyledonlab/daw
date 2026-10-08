@@ -1382,6 +1382,10 @@
   async function editArrangement(action) {
     if (busy || editLocked() || noteRecording?.pending || historyAction || unsupportedSession) return false;
     if (nativeLocked() && ['addTrack', 'deleteTrack', 'editPdInstrument'].includes(action.type)) return false;
+    if (action.type === 'quantizeClip' && studioHasDrafts()) {
+      const message = 'Apply or revert pending edits before quantizing; your drafts are preserved.';
+      arrangementView?.reportError(message); announceError(message); return false;
+    }
     const before = clone(draft);
     try {
       const index = action.trackIndex;
@@ -1403,6 +1407,11 @@
         case 'deleteClip': draft = SessionEditor.deleteClip(draft, index, action.clipId); break;
         case 'addNote': draft = SessionEditor.addNote(draft, index, action.clipId, {...action.note, id: nextId('n', draft.tracks[index]?.clips.find(clip => clip.id === action.clipId)?.notes)}); break;
         case 'editNote': draft = SessionEditor.editNote(draft, index, action.clipId, action.noteId, action.patch); break;
+        case 'quantizeClip': {
+          const next = SessionEditor.quantizeClip(draft, index, action.clipId, action.gridTicks);
+          if (next === draft) { setNotice('Clip notes are already aligned to this grid.'); return true; }
+          draft = next; break;
+        }
         case 'deleteNote': draft = SessionEditor.deleteNote(draft, index, action.clipId, action.noteId); break;
         case 'setTempo': draft = {...clone(draft), tempo_milli_bpm: action.tempo_milli_bpm}; break;
         default: throw new Error('Unknown arrangement edit.');
