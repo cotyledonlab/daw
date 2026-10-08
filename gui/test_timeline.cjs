@@ -381,3 +381,14 @@ test('overlapping clips are visibly marked and described; touching clips are not
   assert.doesNotMatch(s.container.querySelector('[data-focus-key="clip:0:next"]').getAttribute('class'),/overlapping/);
   assert.equal(JSON.stringify(s.session),before);assert.equal(s.edits.length,0);
 });
+
+test('quantize sends selected clip/grid only, rejects typed drafts and disables for No snap/audio/empty clips',()=>{
+  const s=setup();s.action('quantizeClip');assert.deepEqual(JSON.parse(JSON.stringify(s.edits[0])),{type:'quantizeClip',trackIndex:0,clipId:'clip',gridTicks:240});
+  s.field('grid').value='0';s.field('grid').dispatch('change');assert.equal(s.button('quantizeClip').disabled,true);s.action('quantizeClip');assert.equal(s.edits.length,1);
+  s.field('grid').value='480';s.field('grid').dispatch('change');assert.equal(s.button('quantizeClip').disabled,false);
+  s.field('velocity').value='';s.action('quantizeClip');assert.equal(s.edits.length,1);assert.equal(s.field('velocity').value,'');assert.match(s.container.querySelector('.note-edit-status').textContent,/typed/);
+  s.view.updateTransport({frame:100});assert.match(s.container.querySelector('.note-edit-status').textContent,/typed/);
+  s.view.setState({locked:true});assert.equal(s.button('quantizeClip').disabled,true);
+  const a=setup('audio');assert.equal(a.button('quantizeClip').disabled,true);assert.equal(a.container.querySelector('.quantize-help').hidden,true);
+  const e=setup();e.session.tracks[0].clips[0].notes=[];e.view.render(e.session);assert.equal(e.button('quantizeClip').disabled,true);
+});

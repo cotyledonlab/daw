@@ -379,6 +379,25 @@
       Object.assign(note, structuredClone(patch));
     });
   }
+  function quantizeClip(session, index, clipId, gridTicks) {
+    if (![240, 480, 960].includes(gridTicks)) throw new Error('Choose a snapping grid before quantizing.');
+    const next = mutateArrangement(session, next => {
+      const clip = noteClip(next, index, clipId);
+      for (const note of clip.notes) {
+        // Round once in exact rational time; converting to integer ticks first
+        // can push a note just below a grid midpoint to the later grid line.
+        const step = roundedRatio(BigInt(note.start_frame) * 960n * BigInt(next.tempo_milli_bpm),
+          BigInt(gridTicks) * BigInt(next.sample_rate) * 60000n);
+        const start = ticksToFrames(next, step * gridTicks);
+        if (start > clip.length_frames - note.duration_frames) {
+          throw new Error(`Quantize would move note ${note.id} past the clip end. Lengthen the clip or choose a finer grid; no notes were changed.`);
+        }
+        note.start_frame = start;
+      }
+    });
+    const before = noteClip(session, index, clipId).notes;
+    return noteClip(next, index, clipId).notes.some((note, i) => note.start_frame !== before[i].start_frame) ? next : session;
+  }
   function deleteNote(session, index, clipId, noteId) {
     return mutateArrangement(session, next => {
       const clip = noteClip(next, index, clipId);
@@ -530,7 +549,7 @@
     const builtin = tracks.every(track => ['sine','synth','drumkit','audio'].includes(track.device?.kind) && (track.effects || []).every(effect => ['gain', 'lowpass', 'delay'].includes(effect.kind)));
     return builtin ? bound(limits.builtin_max_seconds ?? limits.max_seconds, 60) : bound(limits.runtime_max_seconds, 60);
   }
-  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
+  const api = {addPdInstrument, editPdInstrument, automationLimits, addGainAutomationPoint, editGainAutomationPoint, deleteGainAutomationPoint, effectPresets, effectPreset, editEffect, exportMaximum, mixerSupported, editMixer,addAudioTrack, addAudioClip, editAudioClip, noteKinds, createMusicalDemoSession, arrangement, createArrangementSession, createDemoSession, addNoteTrack, addNoteClip, moveClip, resizeClip, duplicateClip, deleteClip, addNote, editNote, quantizeClip, deleteNote, midiToHz, hzToMidi, ticksToFrames, framesToTicks, snapFrame, supported, plugins, sources, sourceControlsEditable, validate, addEffect, addCsound, addCsoundControl, removeEffect};
   api.insertStepNote = insertStepNote;
   if (typeof module !== 'undefined') module.exports = api;
   else root.SessionEditor = api;
