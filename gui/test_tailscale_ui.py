@@ -66,11 +66,57 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(len(wire), int(headers['Content-Length']))
         self.assertIn('Content-Disposition', headers)
         before = self.request('/api/session/inspect')[1]
-        self.assertEqual(self.request('/api/project', b'not a zip', extra={'Content-Type': 'application/zip'})[0], 422)
+        metadata = json.dumps({'expected_revision': json.loads(before)['revision']})
+        status, body, _ = self.request('/api/project', b'not a zip', extra={
+            'Content-Type': 'application/zip', 'X-DAW-Metadata': metadata})
+        self.assertEqual(status, 422, body)
+        self.assertNotIn(b'Metadata', body)
         self.assertEqual(self.request('/api/session/inspect')[1], before)
         # Stopping the gateway leaves the existing engine and its revision intact.
         self.gateway.shutdown()
         self.assertEqual(self.daw.engine.call('session.inspect'), json.loads(before))
+
+    def test_wav_import_and_zip_fresh_reopen_preserve_metadata_assets_and_export(self):
+        from gui.test_audio_projects import wav
+        meta = {'expected_revision': '0', 'track_id': 'audio', 'clip_id': 'take', 'start_frame': 37}
+        status, body, _ = self.request('/api/audio/import', wav(), extra={
+            'Content-Type': 'audio/wav', 'X-DAW-Metadata': json.dumps(meta)})
+        self.assertEqual(status, 200, body)
+        snapshot = json.loads(self.request('/api/session/inspect')[1])
+        status, first_wav, _ = self.request('/api/render', json.dumps({'seconds': 0.01}))
+        self.assertEqual(status, 200)
+        status, project, headers = self.request('/api/project')
+        self.assertEqual(status, 200)
+        self.assertIn('session.daw.zip', headers['Content-Disposition'])
+        reopened = Server(ROOT / 'target/debug/daw')
+        gateway = Gateway(reopened.server_port, ORIGIN)
+        threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (reopened, gateway)]
+        for thread in threads:
+            thread.start()
+        old_daw, old_gateway = self.daw, self.gateway
+        try:
+            self.daw, self.gateway = reopened, gateway
+            status, body, _ = self.request('/api/project', project, extra={
+                'Content-Type': 'application/zip', 'X-DAW-Metadata': json.dumps({'expected_revision': '0'})})
+            self.assertEqual(status, 200, body)
+            restored = json.loads(self.request('/api/session/inspect')[1])['session']
+            expected = json.loads(json.dumps(snapshot['session']))
+            # Fresh project imports intentionally remap owned asset paths.
+            old_path = expected['tracks'][0]['clips'][0]['source_path']
+            new_path = restored['tracks'][0]['clips'][0]['source_path']
+            self.assertEqual((old_daw.asset_root / old_path).read_bytes(),
+                             (reopened.asset_root / new_path).read_bytes())
+            expected['tracks'][0]['clips'][0]['source_path'] = new_path
+            self.assertEqual(restored, expected)
+            status, second_wav, _ = self.request('/api/render', json.dumps({'seconds': 0.01}))
+            self.assertEqual(status, 200)
+            self.assertEqual(second_wav, first_wav)
+        finally:
+            self.daw, self.gateway = old_daw, old_gateway
+            for server, thread in zip((gateway, reopened), reversed(threads)):
+                server.shutdown()
+                thread.join(5)
+                server.server_close()
 
     def test_stream_progress_is_not_buffered_and_failed_batch_changes_nothing(self):
         release = threading.Event()

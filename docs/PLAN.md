@@ -41,7 +41,7 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 ## Requested private phone UI access
 
-- [x] Add a loopback gateway for private Tailscale Serve access to the existing DAW UI without restarting or replacing its engine/session. Preserve token, revision, upload/download/CSP and Studio progress behavior; reject unrelated origins/hosts and invalid framing. Focused gateway, bridge and Studio regressions passed. Native playback remains on the Mac; viewing-device browser previews/downloads/voice retain existing behavior. See [setup](../README.md#private-phone-ui-through-tailscale).
+- [x] Add a loopback gateway for private Tailscale Serve access to the existing DAW UI without restarting or replacing its engine/session. Preserve token, revision, upload/download/CSP and Studio progress behavior; reject unrelated origins/hosts and invalid framing. Focused gateway, bridge and Studio regressions passed. WAV import and portable ZIP fresh-engine reopen through the gateway produced byte-identical WAV exports; required upload metadata is relayed with duplicate checks. Native playback remains on the Mac; viewing-device browser previews/downloads/voice retain existing behavior. See [setup](../README.md#private-phone-ui-through-tailscale).
 - [ ] Confirm the private HTTPS URL opens from the user's phone. The live gateway returned the existing session at unchanged revision 4 and Serve is configured without Funnel. Same-Mac HTTPS attempts failed at DNS/connection before reaching the gateway; physical phone acceptance is not claimed.
 
 ## Requested studio progress and diagnostics

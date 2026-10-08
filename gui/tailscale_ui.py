@@ -83,7 +83,7 @@ class Relay(BaseHTTPRequestHandler):
         started = False
         try:
             connection.putrequest(self.command, self.path, skip_accept_encoding=True)
-            for name in ('Content-Type', 'Accept', 'X-DAW-Token'):
+            for name in ('Content-Type', 'Accept', 'X-DAW-Token', 'X-DAW-Metadata'):
                 values = self.headers.get_all(name, [])
                 if len(values) > 1:
                     self.fail(400, 'Duplicate request control header.')
