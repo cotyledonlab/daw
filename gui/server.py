@@ -285,7 +285,31 @@ class Handler(BaseHTTPRequestHandler):
             # A slow provider must never block Stop, saves or engine polling.
             with self.server.project_lock:
                 snapshot = self.server.engine.call("session.inspect")
-            self.send_json(200, self.server.studio.prompt(data, snapshot))
+            if self.headers.get("Accept") == "application/x-ndjson":
+                # Close-delimited HTTP/1.0 stream. No project lock during inference.
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                def emit(event):
+                    self.wfile.write(json.dumps(event).encode() + b"\n")
+                    self.wfile.flush()
+                try:
+                    plan = self.server.studio.prompt(data, snapshot, progress=emit)
+                    emit({"type": "result", "plan": plan})
+                except ValueError as error:
+                    try:
+                        emit({"type": "error", "error": str(error)})
+                    except OSError:
+                        return
+                except OSError:
+                    # A disconnected browser cannot apply a partial proposal.
+                    return
+            else:
+                self.send_json(200, self.server.studio.prompt(data, snapshot))
         except (ValueError, EngineError) as error:
             self.send_json(422, {"error": str(error)})
 

@@ -4,6 +4,8 @@ import math
 import os
 import re
 import secrets
+import socket
+import ssl
 import threading
 import urllib.error
 import urllib.request
@@ -37,9 +39,28 @@ def remote(url, body, headers, limit=MAX_RESPONSE, *, method='POST', timeout=60)
             raise StudioError('Provider response exceeded the size limit.')
         return result
     except (urllib.error.URLError, TimeoutError, OSError) as error:
-        # Do not echo upstream bodies, authorization headers or user content.
+        # Fixed diagnostics only: never reflect provider bodies or exception text.
         code = getattr(error, 'code', None)
-        raise StudioError(f'Provider request failed{f" (HTTP {code})" if code else ""}. Check server credentials, credits and network.') from None
+        reason = getattr(error, 'reason', error)
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
+        if code:
+            hint = {401: 'Credentials rejected; check the server API key and restart.',
+                    402: 'Payment required; check provider credits and billing.',
+                    403: 'Access denied; check model access and account permissions.',
+                    404: 'Endpoint or model unavailable; check DAW_STUDIO_MODEL.',
+                    429: 'Rate or quota limit; wait or check account limits.'}.get(
+                        code, 'Provider HTTP failure; retry later or check provider status.')
+            detail = f'HTTP {code}. {hint}'
+        elif isinstance(reason, (TimeoutError, socket.timeout)):
+            detail = f'Timed out after {timeout}s; retry or ask for a smaller task.'
+        elif isinstance(reason, socket.gaierror):
+            detail = 'DNS lookup failed; check the server network and DNS.'
+        elif isinstance(reason, ssl.SSLError):
+            detail = 'TLS connection failed; check server certificates and network.'
+        else:
+            detail = 'Connection failed; check the server network or provider status.'
+        raise StudioError(f'Provider request failed. {detail}') from None
 
 
 def model_catalog():
@@ -127,7 +148,7 @@ class Studio:
         return {'available': bool(self.key), 'voice_available': bool(self.voice_key),
                 'model': self.model, 'roles': list(ROLES), 'operations': CONTRACT}
 
-    def infer(self, role, prompt, session, scope, history, proposed=None):
+    def infer(self, role, prompt, session, scope, history, proposed=None, progress=None):
         rules = f'''You are the studio {role}, controlling an arrangement DAW. Return only JSON:
 {{"reply":"concise explanation of the proposed action, not a claim it has already happened", "operations":[{{"op":"name", ...fields}}], "delegations":[]}}.
 Producer may delegate up to two tasks to engineer/musician using {{"role":"engineer|musician","prompt":"task"}}. Specialists cannot delegate.
@@ -144,8 +165,14 @@ At most {MAX_OPERATIONS} operations. Do not mix a command with edits or delegati
                                'max_tokens': 8000, 'response_format': {'type': 'json_object'}}, allow_nan=False).encode()
             if len(wire) > 1024 * 1024:
                 raise StudioError('Session is too large for studio context.')
-            raw = remote('https://opencode.ai/zen/v1/chat/completions', wire,
-                         {'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json'})
+            if progress:
+                progress({'type': 'progress', 'role': role, 'message':
+                          f'{role.capitalize()} · {self.model} · {"correcting the plan" if attempt else "requesting a plan"}…'})
+            try:
+                raw = remote('https://opencode.ai/zen/v1/chat/completions', wire,
+                             {'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json'})
+            except StudioError as error:
+                raise StudioError(f'{role.capitalize()} · {self.model}: {error} No studio edits applied.') from None
             envelope = json_object(raw)
             try:
                 choice = envelope['choices'][0]
@@ -163,7 +190,7 @@ At most {MAX_OPERATIONS} operations. Do not mix a command with edits or delegati
                     {'role': 'assistant', 'content': content},
                     {'role': 'user', 'content': f'Invalid plan: {error}. Correct the JSON once. Each operation uses exactly op plus its listed fields at the TOP LEVEL (no args/fields wrapper except command.args). Preserve the role and scope boundaries. Return the complete corrected plan.'}])
 
-    def prompt(self, data, snapshot):
+    def prompt(self, data, snapshot, progress=None):
         if not self.key:
             raise StudioError('Set OPENCODE_API_KEY in the server environment and restart.')
         if set(data) != {'prompt', 'role', 'scope', 'expected_revision', 'history'}:
@@ -188,19 +215,31 @@ At most {MAX_OPERATIONS} operations. Do not mix a command with edits or delegati
         if not self.lock.acquire(blocking=False):
             raise StudioError('Studio is handling another prompt; try again when it finishes.')
         try:
+            if progress:
+                progress({'type': 'progress', 'role': role, 'message': 'Checking model availability…'})
             if not self.model_override:
                 try:
                     available = model_catalog()
                 except StudioError:
+                    if progress:
+                        progress({'type': 'progress', 'role': role, 'message':
+                                  f'Model catalog unavailable; using {self.model}.'})
                     # A catalog outage must not prevent trying the last selection.
                     pass
                 else:
                     self.model = next((model for model in STEALTH_MODELS if model in available), FALLBACK_MODEL)
-            plan = self.infer(role, prompt, snapshot['session'], scope, history)
+            plan = self.infer(role, prompt, snapshot['session'], scope, history, progress=progress)
             parts = [{'role': role, 'reply': plan['reply'], 'operations': plan['operations']}]
+            if progress:
+                progress({'type': 'summary', 'role': role, 'message': plan['reply']})
             for task in plan['delegations']:
-                child = self.infer(task['role'], task['prompt'], snapshot['session'], scope, history, proposed=parts)
+                if progress:
+                    progress({'type': 'delegation', 'role': role, 'message':
+                              f'To {task["role"]}: {task["prompt"]}'})
+                child = self.infer(task['role'], task['prompt'], snapshot['session'], scope, history, proposed=parts, progress=progress)
                 parts.append({'role': task['role'], 'reply': child['reply'], 'operations': child['operations']})
+                if progress:
+                    progress({'type': 'summary', 'role': task['role'], 'message': child['reply']})
             count = sum(len(p['operations']) for p in parts)
             commands = [op for p in parts for op in p['operations'] if op['op'] == 'command']
             if count > MAX_OPERATIONS or (commands and (count != 1 or len(parts) != 1)):

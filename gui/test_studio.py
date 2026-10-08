@@ -2,11 +2,14 @@
 import copy
 import http.client
 import json
+import io
+import socket
+import urllib.error
 import threading
 import unittest
 from unittest.mock import patch
 
-from gui.studio import Studio, StudioError, json_object, model_catalog, validate_plan
+from gui.studio import Studio, StudioError, json_object, model_catalog, remote, validate_plan
 from gui.server import ROOT, Server
 
 SESSION = {'schema_version': 1, 'sample_rate': 48000, 'tracks': [
@@ -153,6 +156,32 @@ class StudioTests(unittest.TestCase):
         finally:
             self.studio.lock.release()
 
+    def test_safe_provider_diagnostics_distinguish_network_and_http_failures(self):
+        errors = [
+            (urllib.error.URLError(socket.gaierror('secret')), 'DNS'),
+            (urllib.error.URLError(TimeoutError('secret')), 'Timed out after 60s'),
+            (urllib.error.URLError(ConnectionError('secret')), 'Connection failed'),
+            (urllib.error.HTTPError('https://secret', 401, 'secret', {}, io.BytesIO(b'secret')), 'Credentials rejected'),
+            (urllib.error.HTTPError('https://secret', 429, 'secret', {}, io.BytesIO(b'secret')), 'quota'),
+        ]
+        for error, expected in errors:
+            with patch('gui.studio.urllib.request.OpenerDirector.open', side_effect=error):
+                with self.assertRaises(StudioError) as caught:
+                    remote('https://opencode.ai/zen/v1/chat/completions', b'{}', {})
+                self.assertIn(expected, str(caught.exception))
+                self.assertNotIn('secret', str(caught.exception))
+
+    def test_progress_preserves_producer_summary_when_specialist_fails(self):
+        events = []
+        producer = {'reply': 'Ask the engineer.', 'operations': [],
+                    'delegations': [{'role': 'engineer', 'prompt': 'Lower tone'}]}
+        with patch('gui.studio.remote', side_effect=[response(producer), StudioError('Timed out')]):
+            with self.assertRaisesRegex(StudioError, 'Engineer.*space-bunny-free.*Timed out'):
+                self.studio.prompt(data(), SNAPSHOT, progress=events.append)
+        self.assertEqual([e['type'] for e in events], ['progress', 'progress', 'summary', 'delegation', 'progress'])
+        self.assertEqual(events[2]['message'], 'Ask the engineer.')
+        self.assertFalse(self.studio.lock.locked())
+
     def test_voice_upload_and_speech_do_not_expose_keys(self):
         with patch('gui.studio.remote', return_value=b'{"text":"Lower bass"}') as send:
             self.assertEqual(self.studio.transcribe(b'audio', 'audio/webm'), {'text': 'Lower bass'})
@@ -216,6 +245,31 @@ class StudioBridgeTests(unittest.TestCase):
             finally:
                 release.set()
                 worker.join(5)
+
+    def test_ndjson_progress_arrives_before_completion_and_error_is_terminal(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_prompt(_data, snapshot, progress):
+            progress({'type': 'summary', 'role': 'producer', 'message': 'Proposal'})
+            entered.set()
+            release.wait(3)
+            raise StudioError('Engineer timed out. No studio edits applied.')
+        before = self.request('/api/session/inspect')[1]
+        with patch.object(self.server.studio, 'prompt', side_effect=slow_prompt):
+            client = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+            client.request('POST', '/api/studio/prompt', json.dumps({**data(), 'expected_revision': '0'}),
+                           {'X-DAW-Token': self.server.token, 'Content-Type': 'application/json', 'Accept': 'application/x-ndjson'})
+            result = client.getresponse()
+            try:
+                self.assertEqual(result.status, 200)
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(json.loads(result.readline())['message'], 'Proposal')
+                self.assertEqual(self.request('/api/session/inspect')[1], before)
+            finally:
+                release.set()
+            self.assertEqual(json.loads(result.readline())['type'], 'error')
+            self.assertEqual(result.read(), b'')
+            client.close()
+        self.assertEqual(self.request('/api/session/inspect')[1], before)
 
     def test_malformed_provider_operation_returns_422_without_mutation(self):
         before = self.request('/api/session/inspect')[1]
