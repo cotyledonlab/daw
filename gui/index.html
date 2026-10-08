@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>DAW — Track studio</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -49,27 +49,6 @@
         </details>
       </section>
 
-      <details class="studio-panel" aria-labelledby="studio-heading">
-        <summary><h2 id="studio-heading">Studio agents</h2></summary>
-        <p class="output-hint">Direct the producer, sound engineer or studio musician. Prompts and session data go to OpenCode Zen; microphone recordings and spoken replies use ElevenLabs. Built-in note, clip and mix edits apply during native playback as one Undo entry. Track changes require Stop.</p>
-        <div class="arrangement-controls">
-          <label>Talk to<select id="studio-role"><option value="producer">Producer · coordinate the studio</option><option value="engineer">Sound engineer · mix and processing</option><option value="musician">Studio musician · parts and takes</option></select></label>
-          <label>Scope<select id="studio-scope"><option value="session">Whole session</option><option value="track">Selected track</option><option value="clip">Selected clip</option></select></label>
-          <label class="note-input-toggle"><input type="checkbox" id="studio-spoken">Speak replies</label>
-          <button type="button" class="button button-quiet" id="studio-mic" disabled>Record voice prompt</button>
-        </div>
-        <label class="studio-prompt-label" for="studio-prompt">Your direction</label>
-        <textarea id="studio-prompt" rows="2" maxlength="4000" placeholder="Make a four-bar drum and bass groove, then have the engineer balance it."></textarea>
-        <div class="arrangement-controls">
-          <button type="button" class="button button-primary" id="studio-send" disabled>Send to studio</button>
-          <button type="button" class="button button-quiet" id="studio-file-action" hidden>Choose file</button>
-          <button type="button" class="button button-quiet" id="studio-clear">Clear conversation</button>
-          <span class="output-hint" id="studio-status" role="status" aria-live="polite">Connecting to studio agents…</span>
-        </div>
-        <div id="studio-conversation" class="studio-conversation" role="log" aria-label="Studio conversation" aria-live="polite"></div>
-        <audio id="studio-audio" controls hidden aria-label="Spoken studio reply"></audio>
-      </details>
-
       <section class="toolbar" aria-label="Session actions">
         <div class="toolbar-left">
           <span class="track-count" id="track-count">0 tracks</span>
@@ -79,7 +58,9 @@
           <button class="button button-quiet apply-button" id="apply-button" type="button" disabled>Apply changes</button>
         </div>
       </section>
+      <details class="editing-help"><summary>Editing &amp; saving</summary>
       <p class="output-hint" id="persistence-help">Arrangement edits apply immediately. Device/effect drafts need Apply changes. Applied edits are in memory; Save session downloads a file to keep before closing.</p>
+      </details>
       <p class="output-hint" id="history-help" aria-live="polite"></p>
 
       <section class="arrangement-section" aria-label="Arrangement workspace">
@@ -134,6 +115,27 @@
         <p>Choose an instrument above and add a note track, or open the musical demo to start with a phrase.</p>
         <button class="button button-primary" id="empty-add-button" type="button"><span class="plus" aria-hidden="true">+</span> Add your first note track</button>
       </section>
+
+      <details class="studio-panel" aria-labelledby="studio-heading">
+        <summary><h2 id="studio-heading">Studio agents</h2></summary>
+        <p class="output-hint">Direct the producer, sound engineer or studio musician. Prompts and session data go to OpenCode Zen; microphone recordings and spoken replies use ElevenLabs. Built-in note, clip and mix edits apply during native playback as one Undo entry. Track changes require Stop.</p>
+        <div class="arrangement-controls">
+          <label>Talk to<select id="studio-role"><option value="producer">Producer · coordinate the studio</option><option value="engineer">Sound engineer · mix and processing</option><option value="musician">Studio musician · parts and takes</option></select></label>
+          <label>Scope<select id="studio-scope"><option value="session">Whole session</option><option value="track">Selected track</option><option value="clip">Selected clip</option></select></label>
+          <label class="note-input-toggle"><input type="checkbox" id="studio-spoken">Speak replies</label>
+          <button type="button" class="button button-quiet" id="studio-mic" disabled>Record voice prompt</button>
+        </div>
+        <label class="studio-prompt-label" for="studio-prompt">Your direction</label>
+        <textarea id="studio-prompt" rows="2" maxlength="4000" placeholder="Make a four-bar drum and bass groove, then have the engineer balance it."></textarea>
+        <div class="arrangement-controls">
+          <button type="button" class="button button-primary" id="studio-send" disabled>Send to studio</button>
+          <button type="button" class="button button-quiet" id="studio-file-action" hidden>Choose file</button>
+          <button type="button" class="button button-quiet" id="studio-clear">Clear conversation</button>
+          <span class="output-hint" id="studio-status" role="status" aria-live="polite">Connecting to studio agents…</span>
+        </div>
+        <div id="studio-conversation" class="studio-conversation" role="log" aria-label="Studio conversation" aria-live="polite"></div>
+        <audio id="studio-audio" controls hidden aria-label="Spoken studio reply"></audio>
+      </details>
 
       <details class="workspace-disclosure">
         <summary>Audio settings &amp; playback help</summary>

@@ -1,6 +1,6 @@
 # MVP checklist
 
-Updated 2026-10-07. This is the only plan. Ship a small macOS arrangement DAW in which someone can make a phrase, record notes, mix a song, save/reopen it and export WAV. The arrangement implementation is delivered. The user also requested integrated studio prompt control; keep acoustic listening acceptance distinct from the delivered implementation.
+Updated 2026-10-08. This is the only plan. Ship a small macOS arrangement DAW in which someone can make a phrase, record notes, mix a song, save/reopen it and export WAV. The arrangement implementation is delivered. The user also requested integrated studio prompt control; keep acoustic listening acceptance distinct from the delivered implementation.
 
 ## Completed
 
@@ -43,10 +43,16 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 - [x] Keep built-in native playback running while applying mixer, sound/effect, automation, note and clip edits. Prepared worker updates retain untouched voice/effect state; stale/unsupported/queue-full failures preserve the applied project. Focused DSP/callback/bridge/editor regressions and the browser passed live note/clip/mixer edits, Undo and a real engineer prompt. The muted live-editing workflow passed snapshot Undo/Redo, pause/resume, rejected updates and ZIP/fresh-server byte-identical unclipped exports with no callback budget overruns or steady worker underruns. Track/device-kind/rate/runtime replacement remains stopped; acoustic listening remains open.
 
+## Requested visual polish
+
+- [x] Refresh the editor with an early Ableton-inspired light gray workspace, flat panels, restrained orange accents, consistent range handles and horizontal mixer fader caps. Keep transport prominent, move Studio agents below the editing workspace, tuck persistence guidance into Editing & saving, and let the timeline fill wide screens while keeping narrow scrolling local. Browser inspection passed at 320, 390, 768 and 1440 pixels, including clip selection, piano roll, expanded help/Studio controls and keyboard fader edits; focused mixer/timeline/recording regressions passed. Acoustic and physical-input acceptance remain open above.
+
+- [x] Follow system light/dark appearance with native CSS preference detection, including controls, timeline, piano roll, statuses and mixer. Verified the current light preference in the browser and visually inspected the dark palette using an isolated static fixture; physical OS switching was not exercised.
+
 ## After MVP
 
-Quantize/MIDI-file import/export can be the next feature slice when requested. Broader UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
+Quantize/MIDI-file import/export can be the next feature slice when requested. Further UI regrouping/labels, multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
-**Next action:** listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; verify browser push-to-talk with a physical microphone using the working ElevenLabs credential. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** review the refreshed visual treatment in the browser, then listen quietly to the reopened live-editing WAV and audition note/clip/mix adjustments during playback for clicks or silence; verify browser push-to-talk with a physical microphone using the working ElevenLabs credential. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
