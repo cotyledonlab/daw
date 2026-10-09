@@ -10,6 +10,7 @@
   "editNote": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","note_id":"string","patch":"subset of start_frame,duration_frames,frequency_hz,velocity"}},
   "deleteNote": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","note_id":"string"}},
   "transpose": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","semitones":"number"}},
+  "copyNotes": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"existing source clip","target_clip_ids":"1..64 existing note clips with originally identical notes (ignoring IDs); preserves clip positions/lengths"}},
   "mixer": {"roles":["producer","engineer"],"fields":{"track_id":"string","patch":"subset of gain,pan,mute,solo"}},
   "gainDb": {"roles":["producer","engineer"],"fields":{"track_id":"string","db":"number (relative to current mixer gain)"}},
   "device": {"roles":["producer","engineer","musician"],"fields":{"track_id":"string","patch":"built-in device numeric controls; synth waveform; Pd gain/controls. No kind/program changes"}},

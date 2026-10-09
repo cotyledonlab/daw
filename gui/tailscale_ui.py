@@ -79,9 +79,9 @@ class Relay(BaseHTTPRequestHandler):
             return
         # A fixed upstream, no forwarded-host trust and no token minting. The DAW
         # remains responsible for API token authentication and project validation.
-        # JSON Studio replies send headers only after up to six inference calls
+        # JSON Studio replies send headers only after up to ten inference calls
         # (120s each) and the 10s catalog lookup. Keep their upstream wait longer.
-        timeout = 800 if self.path == '/api/studio/prompt' else 400
+        timeout = 1300 if self.path == '/api/studio/prompt' else 400
         connection = http.client.HTTPConnection('127.0.0.1', self.server.upstream_port, timeout=timeout)
         started = False
         try:

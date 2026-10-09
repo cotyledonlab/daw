@@ -26,6 +26,17 @@ function setup(){
 test('actual prompt handler applies one checked batch with controls excluded and one Undo entry',async()=>{
   const s=setup();await s.ctx.sendStudioPrompt();assert.equal(s.history.undo.length,1);assert.deepEqual(s.history.undoTarget(s.ctx.applied),s.song);assert.equal(s.ctx.studioPending,false);assert.match(s.$('#studio-status').textContent,/one Undo/);
 });
+test('one producer request streams four task summaries and commits only the final batch',async()=>{
+  const s=setup();s.$('#studio-role').value='producer';s.$('#studio-prompt').value='French-house whole song';
+  s.plan.parts=[{role:'producer',reply:'Filtered disco.',operations:[]},
+    ...['lead','bass','drums'].map(track_id=>({role:'musician',reply:`Revoice ${track_id}.`,operations:[{op:'device',track_id,patch:{gain:0.1}}]})),
+    {role:'engineer',reply:'Balance.',operations:[{op:'gainDb',track_id:'lead',db:-3}]}];
+  let requests=0;s.ctx.request=async()=>{requests++;return streamResponse([
+    ...s.plan.parts.map(part=>({type:'summary',role:part.role,message:part.reply})),{type:'result',plan:s.plan}]);};
+  await s.ctx.sendStudioPrompt();assert.equal(requests,1);assert.equal(s.history.undo.length,1);
+  assert.deepEqual(s.history.undoTarget(s.ctx.applied),s.song);assert.equal(s.ctx.applied.tracks[2].device.gain,0.1);
+  assert.equal(s.messages.filter(m=>m[0]==='musician · proposal').length,3);assert.equal(s.ctx.studioHistory.length,2);
+});
 test('actual prompt handler preserves edits made while a provider was working',async()=>{
   const s=setup();s.ctx.request=async()=>{s.ctx.draft.tracks[0].device.gain=0.333;return {json:async()=>s.plan};};
   await s.ctx.sendStudioPrompt();assert.equal(s.ctx.draft.tracks[0].device.gain,0.333);assert.deepEqual(s.ctx.applied,s.song);assert.equal(s.history.undo.length,0);assert.match(s.$('#studio-status').textContent,/changed/);

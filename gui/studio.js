@@ -8,7 +8,7 @@
   }
   function apply(session, parts, scope, contract, E) {
     let next = structuredClone(session), count = 0;
-    if (!Array.isArray(parts) || parts.length > 3) throw Error('Invalid studio response.');
+    if (!Array.isArray(parts) || parts.length > 5) throw Error('Invalid studio response.');
     for (const part of parts) {
       if (!['producer','engineer','musician'].includes(part.role) || !Array.isArray(part.operations)) throw Error('Unknown studio role.');
       for (const op of part.operations) {
@@ -41,6 +41,21 @@
             const clip = next.tracks[i].clips?.find(c=>c.id === op.clip_id);
             if (clip?.kind !== 'notes' || next.tracks[i].device.kind === 'drumkit') throw Error('Transpose needs a pitched note clip.');
             for (const note of clip.notes) next = E.editNote(next,i,clip.id,note.id,{frequency_hz: note.frequency_hz * 2 ** (op.semitones / 12)});
+            break;
+          }
+          case 'copyNotes': {
+            const ids=op.target_clip_ids, source=next.tracks[i].clips?.find(c=>c.id===op.clip_id);
+            if(!Array.isArray(ids)||ids.length<1||ids.length>64||ids.some(id=>typeof id!=='string')||new Set(ids).size!==ids.length||ids.includes(op.clip_id)||source?.kind!=='notes') throw Error('Copy notes needs distinct existing note clips.');
+            const base=session.tracks.find(t=>t.id===op.track_id), original=base?.clips?.find(c=>c.id===op.clip_id);
+            const pattern=clip=>JSON.stringify(clip.notes.map(n=>[n.start_frame,n.duration_frames,n.frequency_hz,n.velocity]));
+            if(original?.kind!=='notes') throw Error('Copy notes needs an existing source pattern.');
+            for(const id of ids){
+              if(scope?.clip_id&&id!==scope.clip_id) throw Error('Agent exceeded the selected clip scope.');
+              const target=next.tracks[i].clips?.find(c=>c.id===id), old=base.clips.find(c=>c.id===id);
+              if(target?.kind!=='notes'||old?.kind!=='notes'||pattern(old)!==pattern(original)) throw Error('Copy notes only propagates originally identical patterns.');
+              if(JSON.stringify(target.notes)!==JSON.stringify(old.notes)) throw Error('Copy notes would discard earlier target edits.');
+              target.notes=structuredClone(source.notes);
+            }
             break;
           }
           case 'mixer': next = E.editMixer(next,i,op.patch); break;
