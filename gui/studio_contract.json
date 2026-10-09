@@ -10,6 +10,7 @@
   "editNote": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","note_id":"string","patch":"subset of start_frame,duration_frames,frequency_hz,velocity"}},
   "deleteNote": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","note_id":"string"}},
   "transpose": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"string","semitones":"number"}},
+  "setNotes": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"existing note clip","notes":"0..128 complete notes: {id,start_frame,duration_frames,frequency_hz,velocity:0..1}; replaces notes only, preserves clip placement/length"}},
   "copyNotes": {"roles":["producer","musician"],"fields":{"track_id":"string","clip_id":"existing source clip","target_clip_ids":"1..64 existing note clips with originally identical notes (ignoring IDs); preserves clip positions/lengths"}},
   "mixer": {"roles":["producer","engineer"],"fields":{"track_id":"string","patch":"subset of gain,pan,mute,solo"}},
   "gainDb": {"roles":["producer","engineer"],"fields":{"track_id":"string","db":"number (relative to current mixer gain)"}},
