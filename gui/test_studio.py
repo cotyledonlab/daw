@@ -9,7 +9,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from gui.studio import Studio, StudioError, json_object, model_catalog, remote, validate_plan
+from gui.studio import Studio, StudioError, json_object, plan_object, model_catalog, remote, validate_plan
 from gui.server import ROOT, Server
 
 SESSION = {'schema_version': 1, 'sample_rate': 48000, 'tracks': [
@@ -97,6 +97,128 @@ class StudioTests(unittest.TestCase):
         self.assertEqual([p['role'] for p in result['parts']], ['producer', 'engineer'])
         self.catalog.assert_called_once_with()
         self.assertEqual([json.loads(call.args[1])['model'] for call in send.call_args_list], ['space-bunny-free'] * 2)
+
+    def test_cheap_flash_preference_preserves_explicit_override(self):
+        self.catalog.return_value = {'glm-5.3-flash', 'space-bunny-free'}
+        with patch('gui.studio.remote', return_value=response({'reply': 'Ready.', 'operations': []})) as send:
+            self.studio.prompt(data(), SNAPSHOT)
+        self.assertEqual(json.loads(send.call_args.args[1])['model'], 'glm-5.3-flash')
+        self.assertEqual(json.loads(send.call_args.args[1])['reasoning_effort'], 'low')
+
+    def test_truncated_planning_is_compacted_once_without_applying_partial_content(self):
+        truncated = json.dumps({'choices': [{'finish_reason': 'length', 'message': {'content': '{"reply":"partial'}}]}).encode()
+        with patch('gui.studio.remote', side_effect=[truncated, response({'reply': 'Ready.', 'operations': []})]) as send:
+            plan = self.studio.prompt(data(), SNAPSHOT)
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(plan['parts'][0]['operations'], [])
+        messages = json.loads(send.call_args.args[1])['messages']
+        self.assertIn('shorter complete JSON', messages[-1]['content'])
+        self.assertEqual(messages[-1]['role'], 'user')
+
+    def test_whole_song_is_one_bounded_plan_with_scoped_musicians_and_shared_brief(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        snapshot = {'revision': '7', 'session': song}
+        before = copy.deepcopy(snapshot)
+        tasks = [{'role': 'musician', 'prompt': 'French-house part', 'scope': {'track_id': track}}
+                 for track in ('lead', 'bass', 'drums')]
+        tasks.append({'role': 'engineer', 'prompt': 'Balance/filter the parts', 'scope': None})
+        producer = {'reply': 'Tight disco groove with filtered synths.', 'operations': [], 'delegations': tasks}
+        children = [{'reply': 'Change timbre.', 'operations': [
+            {'op': 'device', 'track_id': track, 'patch': {'gain': 0.1}}]}
+                    for track in ('lead', 'bass', 'drums')]
+        children.append({'reply': 'Balance lead.', 'operations': [{'op': 'gainDb', 'track_id': 'lead', 'db': -3}]})
+        events = []
+        with patch('gui.studio.remote', side_effect=[response(p) for p in [producer, *children]]) as send:
+            result = self.studio.prompt(data(), snapshot, progress=events.append)
+        self.assertEqual(len(result['parts']), 5)
+        self.assertEqual(snapshot, before)
+        wires = [json.loads(call.args[1]) for call in send.call_args_list]
+        overview = json.loads(wires[0]['messages'][1]['content'])['session']
+        self.assertNotIn('notes', overview['tracks'][0]['clips'][0])
+        self.assertEqual(overview['tracks'][0]['clips'][0]['note_count'], len(song['tracks'][0]['clips'][0]['notes']))
+        self.assertEqual(wires[0]['max_tokens'], 2000)
+        for wire, track in zip(wires[1:4], song['tracks']):
+            context = json.loads(wire['messages'][1]['content'])
+            view = context['session']['tracks'][0]
+            self.assertEqual({k: v for k, v in view.items() if k != 'matching_note_patterns'}, track)
+            self.assertIn(producer['reply'], context['prompt'])
+            self.assertEqual(wire['max_tokens'], 4000)
+        mix = json.loads(wires[4]['messages'][1]['content'])
+        self.assertNotIn('notes', mix['session']['tracks'][0]['clips'][0])
+        self.assertEqual(len(mix['pending_proposals']), 4)
+        self.assertEqual([e['type'] for e in events].count('delegation'), 4)
+
+    def test_delegation_cannot_widen_track_or_clip_scope_or_name_missing_tracks(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        snapshot = {'revision': '7', 'session': song}
+        selected = {'track_id': 'lead', 'clip_id': song['tracks'][0]['clips'][0]['id']}
+        for scope in (None, {'track_id': 'bass'}, {'track_id': 'lead'}, {'track_id': 'missing'}, {'clip_id': 'x'}):
+            bad = {'reply': 'Split it.', 'operations': [], 'delegations': [
+                {'role': 'musician', 'prompt': 'Change it', 'scope': scope}]}
+            with patch('gui.studio.remote', return_value=response(bad)) as send, self.assertRaises(StudioError):
+                self.studio.prompt(data(scope=selected), snapshot)
+            self.assertEqual(send.call_count, 2)
+        inherited = {'reply': 'Split it.', 'operations': [], 'delegations': [
+            {'role': 'musician', 'prompt': 'Change this clip'}]}
+        with patch('gui.studio.remote', side_effect=[response(inherited), response({'reply': 'Ready.', 'operations': []})]) as send:
+            self.studio.prompt(data(scope=selected), snapshot)
+        child = json.loads(json.loads(send.call_args.args[1])['messages'][1]['content'])['session']
+        self.assertEqual(len(child['tracks']), 1)
+        self.assertEqual(child['tracks'][0]['clips'], [song['tracks'][0]['clips'][0]])
+
+    def test_musician_tasks_keep_all_patterns_of_one_track_available(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        for task_scope in (None, {'track_id': 'drums', 'clip_id': 'beat-1'}):
+            plan = {'reply': 'Change all patterns.', 'delegations': [
+                {'role': 'musician', 'prompt': 'Edit and propagate', 'scope': task_scope}]}
+            with self.assertRaisesRegex(StudioError, 'one existing track'):
+                validate_plan(plan, 'producer', None, session=song)
+        plan['delegations'][0]['scope'] = {'track_id': 'drums'}
+        validate_plan(plan, 'producer', None, session=song)
+
+    def test_task_operation_budget_and_last_task_failure_leave_snapshot_unchanged(self):
+        before = copy.deepcopy(SNAPSHOT)
+        producer = {'reply': 'Split it.', 'operations': [], 'delegations': [
+            {'role': 'engineer', 'prompt': 'First'}, {'role': 'engineer', 'prompt': 'Second'}]}
+        valid = {'reply': 'Level.', 'operations': [{'op': 'gainDb', 'track_id': 'tone', 'db': -3}]}
+        oversized = {'reply': 'Too much.', 'operations': valid['operations'] * 25}
+        with patch('gui.studio.remote', side_effect=[response(producer), response(valid), response(oversized), response(oversized)]):
+            with self.assertRaisesRegex(StudioError, 'Too many studio operations'):
+                self.studio.prompt(data(), SNAPSHOT)
+        self.assertEqual(SNAPSHOT, before)
+        self.assertFalse(self.studio.lock.locked())
+
+    def test_provider_formatting_preserves_strings_and_rejects_ambiguous_or_invalid_json(self):
+        expected = {'reply': 'Line one\nLine two\\n', 'operations': []}
+        formatted = json.dumps(expected, indent=2).replace('\n', '\\n')
+        self.assertEqual(plan_object('A musical explanation.\n' + formatted), expected)
+        self.assertEqual(plan_object('```json\n' + json.dumps(expected) + '\n```'), expected)
+        for text in ('{"reply":"a","reply":"b"}', '{"reply":NaN}',
+                     '{"reply":"a"} {"reply":"b"}', '{"reply":"a"} trailing text',
+                     '[{"reply":"a"}]', '{"reply":"unfinished'):
+            with self.assertRaises(StudioError):
+                plan_object(text)
+
+    def test_copy_notes_only_uses_matching_existing_patterns_inside_scope(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        before = copy.deepcopy(song)
+        track = song['tracks'][2]
+        op = {'op': 'copyNotes', 'track_id': track['id'], 'clip_id': track['clips'][0]['id'],
+              'target_clip_ids': [c['id'] for c in track['clips'][1:]]}
+        plan = {'reply': 'Propagate the groove.', 'operations': [op]}
+        validate_plan(plan, 'musician', {'track_id': track['id']}, session=song)
+        with self.assertRaises(StudioError):
+            validate_plan(plan, 'engineer', None, session=song)
+        with self.assertRaises(StudioError):
+            validate_plan(plan, 'musician', {'track_id': track['id'], 'clip_id': op['clip_id']}, session=song)
+        track['clips'][1]['notes'][0]['frequency_hz'] += 0.125
+        with self.assertRaisesRegex(StudioError, 'originally identical'):
+            validate_plan(plan, 'musician', None, session=song)
+        song = before
+        for targets in ([], ['missing'], [op['clip_id']], ['beat-2', 'beat-2'], [42]):
+            bad = {'reply': '', 'operations': [{**op, 'target_clip_ids': targets}]}
+            with self.assertRaises(StudioError):
+                validate_plan(bad, 'musician', None, session=song)
 
     def test_invalid_plan_gets_one_bounded_correction_without_relaxing_scope(self):
         bad = {'reply': '', 'operations': [{'op': 'gainDb', 'track_id': 'other', 'db': -3}]}

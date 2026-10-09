@@ -65,7 +65,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(json.loads(body), plan)
         upstream = [call for call in connect.call_args_list if call.args[1] == self.daw.server_port]
         self.assertEqual(len(upstream), 1)
-        self.assertGreater(upstream[0].kwargs['timeout'], 6 * 120 + 10)
+        self.assertGreater(upstream[0].kwargs['timeout'], 10 * 120 + 10)
         self.assertEqual(self.daw.engine.call('session.inspect'), before)
 
     def test_root_preserves_csp_token_and_exact_downloads(self):

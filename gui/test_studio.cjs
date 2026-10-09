@@ -23,6 +23,18 @@ test('bad final operation rolls back the entire local batch',()=>{
   assert.throws(()=>Studio.apply(song,part('engineer',[{op:'gainDb',track_id:'lead',db:-3},{op:'mixer',track_id:'bass',patch:{gain:99}}]),null,contract,E));
   assert.deepEqual(song,original);
 });
+test('four internal tasks apply in order as one undoable producer interaction',()=>{
+  const song=E.createMusicalDemoSession(), original=structuredClone(song);
+  const parts=[{role:'producer',operations:[]},
+    ...['lead','bass','drums'].map(track_id=>({role:'musician',operations:[{op:'device',track_id,patch:{gain:0.1}}]})),
+    {role:'engineer',operations:[{op:'gainDb',track_id:'lead',db:-3}]}];
+  const next=Studio.apply(song,parts,null,contract,E), history=new History();history.commit(song,next);
+  assert.equal(history.undo.length,1);assert.deepEqual(history.undoTarget(next),original);
+  assert.deepEqual(song,original); assert.equal(next.tracks[2].device.gain,0.1);
+  parts[4].operations.push({op:'mixer',track_id:'bass',patch:{gain:99}});
+  assert.throws(()=>Studio.apply(song,parts,null,contract,E));assert.deepEqual(song,original);
+  assert.throws(()=>Studio.apply(song,[...parts,{role:'engineer',operations:[]}],null,contract,E));
+});
 test('roles, selected scope, unknown fields and embedded runtime code are enforced',()=>{
   const song=E.createMusicalDemoSession();
   for(const [role,ops,scope] of [
@@ -38,4 +50,34 @@ test('producer creates a complete phrase and tempo leaves all saved frames uncha
   const song=E.createArrangementSession();
   const next=Studio.apply(song,part('producer',[{op:'addTrack',id:'part',kind:'synth'},{op:'addClip',track_id:'part',clip:{id:'phrase',start_frame:1,length_frames:48000,notes:[]}},{op:'addNote',track_id:'part',clip_id:'phrase',note:{id:'a',start_frame:17,duration_frames:20000,frequency_hz:440.123,velocity:0.6}},{op:'tempo',tempo_milli_bpm:100000}]),null,contract,E);
   assert.equal(E.validate(next),null);assert.equal(next.tracks[0].clips[0].start_frame,1);assert.equal(next.tracks[0].clips[0].notes[0].start_frame,17);assert.equal(next.tracks[0].clips[0].notes[0].frequency_hz,440.123);
+});
+test('copy notes propagates a changed groove while preserving positions, other tracks and Undo',()=>{
+  const song=E.createMusicalDemoSession(), drums=song.tracks[2], source=drums.clips[0];
+  drums.clips[1].notes[0].id='different-id';const original=structuredClone(song);
+  const op={op:'copyNotes',track_id:drums.id,clip_id:source.id,target_clip_ids:drums.clips.slice(1).map(c=>c.id)};
+  const next=Studio.apply(song,part('musician',[{op:'editNote',track_id:drums.id,clip_id:source.id,note_id:source.notes[0].id,patch:{velocity:0.731}},op]),null,contract,E);
+  for(let i=1;i<drums.clips.length;i++){
+    assert.deepEqual(next.tracks[2].clips[i].notes,next.tracks[2].clips[0].notes);
+    assert.equal(next.tracks[2].clips[i].start_frame,drums.clips[i].start_frame);
+    assert.equal(next.tracks[2].clips[i].length_frames,drums.clips[i].length_frames);
+  }
+  assert.deepEqual(next.tracks.slice(0,2),song.tracks.slice(0,2));assert.deepEqual(song,original);
+  const history=new History();history.commit(song,next);assert.deepEqual(history.undoTarget(next),original);
+  const different=structuredClone(song);different.tracks[2].clips[1].notes[0].frequency_hz+=0.125;
+  assert.throws(()=>Studio.apply(different,part('musician',[op]),null,contract,E));
+  assert.throws(()=>Studio.apply(song,part('musician',[op]),{track_id:drums.id,clip_id:source.id},contract,E));
+  assert.throws(()=>Studio.apply(song,part('engineer',[op]),null,contract,E));
+  assert.throws(()=>Studio.apply(song,part('musician',[{op:'editNote',track_id:drums.id,clip_id:drums.clips[1].id,note_id:'different-id',patch:{velocity:0.2}},op]),null,contract,E));
+});
+test('copy notes rejects the entire batch when an edited source no longer fits a target',()=>{
+  let song=E.addNoteTrack(E.createArrangementSession(),'t','sine');
+  for(const [id,length_frames] of [['source',4000],['target',800]]){
+    song=E.addNoteClip(song,0,{id,start_frame:0,length_frames,notes:[]});
+    song=E.addNote(song,0,id,{id:'n',start_frame:0,duration_frames:600,frequency_hz:440.123,velocity:0.7});
+  }
+  const original=structuredClone(song);
+  assert.throws(()=>Studio.apply(song,part('musician',[
+    {op:'editNote',track_id:'t',clip_id:'source',note_id:'n',patch:{duration_frames:1600}},
+    {op:'copyNotes',track_id:'t',clip_id:'source',target_clip_ids:['target']}]),null,contract,E));
+  assert.deepEqual(song,original);
 });
