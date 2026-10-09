@@ -43,6 +43,12 @@
             for (const note of clip.notes) next = E.editNote(next,i,clip.id,note.id,{frequency_hz: note.frequency_hz * 2 ** (op.semitones / 12)});
             break;
           }
+          case 'setNotes': {
+            const clip=next.tracks[i].clips?.find(c=>c.id===op.clip_id);
+            if(clip?.kind!=='notes'||!Array.isArray(op.notes)||op.notes.length>128||op.notes.some(n=>!own(n,['id','start_frame','duration_frames','frequency_hz','velocity'])||Object.keys(n).length!==5)) throw Error('Rewrite needs an existing note clip and at most 128 complete notes.');
+            clip.notes=structuredClone(op.notes);
+            break;
+          }
           case 'copyNotes': {
             const ids=op.target_clip_ids, source=next.tracks[i].clips?.find(c=>c.id===op.clip_id);
             if(!Array.isArray(ids)||ids.length<1||ids.length>64||ids.some(id=>typeof id!=='string')||new Set(ids).size!==ids.length||ids.includes(op.clip_id)||source?.kind!=='notes') throw Error('Copy notes needs distinct existing note clips.');

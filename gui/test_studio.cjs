@@ -81,3 +81,16 @@ test('copy notes rejects the entire batch when an edited source no longer fits a
     {op:'copyNotes',track_id:'t',clip_id:'source',target_clip_ids:['target']}]),null,contract,E));
   assert.deepEqual(song,original);
 });
+
+test('complete note rewrites preserve clip placement and other data as one Undo entry',()=>{
+  const song=E.createMusicalDemoSession(), original=structuredClone(song);
+  const operations=song.tracks[0].clips.map(c=>({op:'setNotes',track_id:'lead',clip_id:c.id,notes:[{id:'new-hook',start_frame:1200,duration_frames:6000,frequency_hz:660.123,velocity:0.8}]}));
+  const next=Studio.apply(song,part('musician',operations),{track_id:'lead'},contract,E);
+  assert.deepEqual(next.tracks.slice(1),song.tracks.slice(1));assert.deepEqual(next.tracks[0].device,song.tracks[0].device);
+  next.tracks[0].clips.forEach((c,i)=>{assert.equal(c.start_frame,song.tracks[0].clips[i].start_frame);assert.equal(c.length_frames,song.tracks[0].clips[i].length_frames);assert.deepEqual(c.notes,operations[i].notes);});
+  const history=new History();history.commit(song,next);assert.deepEqual(history.undoTarget(next),original);assert.deepEqual(song,original);
+  assert.throws(()=>Studio.apply(song,part('musician',operations),{track_id:'lead',clip_id:'phrase'},contract,E));
+  for(const notes of ([{id:'bad'}],Array(129).fill(operations[0].notes[0]),[{...operations[0].notes[0],duration_frames:999999}], [{...operations[0].notes[0],frequency_hz:NaN}], [operations[0].notes[0],operations[0].notes[0]])) {
+    assert.throws(()=>Studio.apply(song,part('musician',[operations[0],{...operations[1],notes}]),null,contract,E));assert.deepEqual(song,original);
+  }
+});

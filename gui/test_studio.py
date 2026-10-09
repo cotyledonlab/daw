@@ -122,6 +122,53 @@ class StudioTests(unittest.TestCase):
                     self.studio.prompt(data(), SNAPSHOT)
             self.assertFalse(self.studio.lock.locked())
 
+    def test_truncated_specialist_retries_larger_without_partial_json(self):
+        truncated = json.dumps({'choices': [{'finish_reason': 'length', 'message': {'content': '{"reply":"partial'}}]}).encode()
+        with patch('gui.studio.remote', side_effect=[truncated, response({'reply': 'Rewrite.', 'operations': []})]) as send:
+            self.studio.prompt(data('musician'), SNAPSHOT)
+        wires = [json.loads(c.args[1]) for c in send.call_args_list]
+        self.assertEqual([w['max_tokens'] for w in wires], [8000, 16000])
+        self.assertFalse(any(m['role'] == 'assistant' for m in wires[1]['messages']))
+        self.assertIn('setNotes', wires[1]['messages'][-1]['content'])
+        with patch('gui.studio.remote', return_value=truncated):
+            with self.assertRaisesRegex(StudioError, 'Musician.*bounded retry.*No studio edits'):
+                self.studio.prompt(data('musician'), SNAPSHOT)
+        self.assertFalse(self.studio.lock.locked())
+
+    def test_whole_clip_rewrite_validates_notes_and_existing_scope(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        op = {'op': 'setNotes', 'track_id': 'lead', 'clip_id': 'phrase',
+              'notes': copy.deepcopy(song['tracks'][0]['clips'][0]['notes'])}
+        plan = {'reply': 'New melody.', 'operations': [op]}
+        validate_plan(plan, 'musician', None, session=song)
+        for change in ({'notes': op['notes'] * 17}, {'notes': [{'id': 'x'}]},
+                       {'notes': [{**op['notes'][0], 'velocity': 127}]},
+                       {'notes': [{**op['notes'][0], 'duration_frames': 999999}]},
+                       {'notes': [op['notes'][0], op['notes'][0]]},
+                       {'notes': [{**op['notes'][0], 'frequency_hz': song['sample_rate']}]}, {'clip_id': 'missing'}):
+            with self.assertRaises(StudioError):
+                validate_plan({'reply': '', 'operations': [{**op, **change}]}, 'musician', None, session=song)
+        with self.assertRaises(StudioError):
+            validate_plan(plan, 'musician', {'track_id': 'bass'}, session=song)
+        with self.assertRaises(StudioError):
+            validate_plan(plan, 'engineer', None, session=song)
+        validate_plan({'reply': '', 'operations': [{**op, 'notes': []}]}, 'musician', None, session=song)
+
+    def test_rewrite_clip_end_failure_is_corrected_internally(self):
+        song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
+        note = {**song['tracks'][0]['clips'][0]['notes'][0], 'start_frame': 191999, 'duration_frames': 6000}
+        op = {'op': 'setNotes', 'track_id': 'lead', 'clip_id': 'phrase', 'notes': [note]}
+        bad = {'reply': 'New motif.', 'operations': [op]}
+        fixed = {'reply': 'New motif within clip.', 'operations': [{**op, 'notes': [{**note, 'start_frame': 12000}]}]}
+        before = copy.deepcopy(song)
+        with patch('gui.studio.remote', side_effect=[response(bad), response(fixed)]) as send:
+            plan = self.studio.prompt(data('musician', scope={'track_id': 'lead'}), {'revision': '7', 'session': song})
+        self.assertEqual(plan['parts'][0]['operations'], fixed['operations'])
+        correction = json.loads(send.call_args.args[1])['messages'][-1]['content']
+        self.assertIn('192000 frames', correction)
+        self.assertIn('do not change the clip length', correction)
+        self.assertEqual(song, before)
+
     def test_whole_song_is_one_bounded_plan_with_scoped_musicians_and_shared_brief(self):
         song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
         snapshot = {'revision': '7', 'session': song}
@@ -149,7 +196,7 @@ class StudioTests(unittest.TestCase):
             view = context['session']['tracks'][0]
             self.assertEqual({k: v for k, v in view.items() if k != 'matching_note_patterns'}, track)
             self.assertIn(producer['reply'], context['prompt'])
-            self.assertEqual(wire['max_tokens'], 4000)
+            self.assertEqual(wire['max_tokens'], 8000)
         mix = json.loads(wires[4]['messages'][1]['content'])
         self.assertNotIn('notes', mix['session']['tracks'][0]['clips'][0])
         self.assertEqual(len(mix['pending_proposals']), 4)

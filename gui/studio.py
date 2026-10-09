@@ -192,6 +192,26 @@ def validate_plan(plan, role, scope, *, session=None, operation_limit=MAX_OPERAT
                 raise StudioError('Agent exceeded the selected track scope.')
             if scope.get('clip_id') and op.get('clip_id') != scope['clip_id']:
                 raise StudioError('Agent exceeded the selected clip scope.')
+        if name == 'setNotes':
+            notes = op['notes']
+            if not isinstance(notes, list) or len(notes) > 128:
+                raise StudioError('Rewrite accepts at most 128 complete notes per clip.')
+            validate_scope({'track_id': op['track_id'], 'clip_id': op['clip_id']}, scope, session)
+            if session is not None:
+                track = next(t for t in session['tracks'] if t['id'] == op['track_id'])
+                clip = next(c for c in track.get('clips', []) if c['id'] == op['clip_id'])
+                if clip.get('kind') != 'notes':
+                    raise StudioError('Rewrite requires an existing note clip.')
+            validate_plan({'reply': '', 'operations': [
+                {'op': 'addNote', 'track_id': op['track_id'], 'clip_id': op['clip_id'], 'note': note}
+                for note in notes]}, role, scope)
+            if session is not None:
+                if len({n['id'] for n in notes}) != len(notes):
+                    raise StudioError('Rewrite note IDs must be unique within the clip.')
+                if any(n['start_frame'] + n['duration_frames'] > clip['length_frames'] for n in notes):
+                    raise StudioError(f'Rewrite notes must end within {op["track_id"]}/{op["clip_id"]}: clip length is {clip["length_frames"]} frames. Shorten or reposition the new notes; do not change the clip length.')
+                if any(n['frequency_hz'] >= session['sample_rate'] / 2 for n in notes):
+                    raise StudioError('Rewrite note frequencies must be below Nyquist.')
         if name == 'copyNotes':
             targets = op['target_clip_ids']
             if (not isinstance(targets, list) or not 1 <= len(targets) <= 64
@@ -260,7 +280,7 @@ class Studio:
         overview = role in ('producer', 'engineer')
         view = context_session(session, scope, overview=overview)
         supported = {name: spec['fields'] for name, spec in CONTRACT.items() if role in spec['roles']}
-        directing = (f'''Producer is a musical director: session context is an overview with note counts, not the full notes. For a broad style/arrangement request, return a concise common musical brief and a few small tasks, not a long edit list. For broad style requests leave operations empty and delegate the concrete edits. Split musician work by existing track, then one engineer task for timbre/effects and the mix. Use track-only task scope when modifying or propagating across several clips; a clip scope prevents copyNotes to every other clip. Inspect matching_note_patterns in the overview to cover repeated material. Use only the available instruments, lowpass, delay, gain and automation; there is no vocoder, sidechain compressor, saturation or reverb. Explain approximations honestly. Prefer a few high-impact timbre, motif, groove and processing changes over rewriting every note. Keep each task under {TASK_OPERATIONS} operations and describe musical intent within the task scope. For repeated material, tell the musician to edit one existing pattern and use copyNotes to propagate it to originally identical clips, rather than making the user ask again. Preserve the song's duration/structure unless the user asks otherwise. Simple edits/transport commands can remain direct. Delegate any work needing exact existing notes to the musician. Engineer also sees note counts rather than notes and must not infer acoustic properties from them.''' if role == 'producer' else f'''You are a specialist performing the task, not directing other agents. Return concrete operations and delegations:[]; do not return a task list. Keep this response within {operation_limit} operations. Choose a few high-impact changes that actually fit, using existing clips and note IDs. Do not add overlapping replacement clips merely to restyle existing material. For repeated notes, edit one existing source pattern then use copyNotes for originally identical target clips. Use matching_note_patterns to identify the safe source/target groups. Distribute the operation budget across the distinct patterns before propagating them, instead of rebuilding only one section. Compare the original note arrays (ignoring note IDs), including pitch: do not copy over different harmonies. Clip start/length stay unchanged; copied notes must fit every target. This saves operations and should cover the whole repeated section in the task. Supported processing is lowpass, delay and gain/automation; do not invent vocoders, compressors, saturation or reverb. Explain approximation/partial coverage honestly. The musical direction is context; the task and scope define your work.''')
+        directing = (f'''Producer is a musical director: session context is an overview with note counts, not the full notes. For a broad style/arrangement request, return a concise common musical brief and a few small tasks, not a long edit list. For broad style requests leave operations empty and delegate the concrete edits. Split musician work by existing track, then one engineer task for timbre/effects and the mix. Use track-only task scope when modifying or propagating across several clips; a clip scope prevents copyNotes to every other clip. Inspect matching_note_patterns in the overview to cover repeated material. Use only the available instruments, lowpass, delay, gain and automation; there is no vocoder, sidechain compressor, saturation or reverb. Explain approximations honestly. Prefer a few high-impact changes for general style requests. When the user explicitly requests new melodic content, delegate complete setNotes rewrites with genuinely new pitches and rhythms across all targeted clips, not just timbre/velocity changes. Keep each task under {TASK_OPERATIONS} operations and describe musical intent within the task scope. For repeated material, tell the musician to edit one existing pattern and use copyNotes to propagate it to originally identical clips, rather than making the user ask again. Preserve the song's duration/structure unless the user asks otherwise. Simple edits/transport commands can remain direct. Delegate any work needing exact existing notes to the musician. Engineer also sees note counts rather than notes and must not infer acoustic properties from them.''' if role == 'producer' else f'''You are a specialist performing the task, not directing other agents. Return concrete operations and delegations:[]; do not return a task list. Keep this response within {operation_limit} operations. Choose a few high-impact changes that actually fit, using existing clips and note IDs. For a full melodic/rhythmic rewrite use one setNotes operation per existing clip, instead of dozens of deleteNote/addNote operations. Compose new pitches and rhythms when asked: preserve untouched values, not notes the user explicitly wants rewritten. Keep each complete note list concise. Do not add overlapping replacement clips merely to restyle existing material. For repeated notes, edit one existing source pattern then use copyNotes for originally identical target clips. Use matching_note_patterns to identify the safe source/target groups. Distribute the operation budget across the distinct patterns before propagating them, instead of rebuilding only one section. Compare the original note arrays (ignoring note IDs), including pitch: do not copy over different harmonies. Clip start/length stay unchanged; copied notes must fit every target. This saves operations and should cover the whole repeated section in the task. Supported processing is lowpass, delay and gain/automation; do not invent vocoders, compressors, saturation or reverb. Explain approximation/partial coverage honestly. The musical direction is context; the task and scope define your work.''')
         rules = f'''You are the studio {role}, controlling an arrangement DAW. Return only JSON:
 {{"reply":"concise explanation of the proposed action, not a claim it has already happened", "operations":[{{"op":"name", ...fields}}], "delegations":[]}}.
 For musician tasks on existing tracks, always choose exactly one track per task (track-only scope unless the user selected a clip). Do not combine lead and bass in one musician task. Producer may delegate up to {MAX_DELEGATIONS} tasks using {{"role":"engineer|musician","prompt":"short musical task","scope":null or {{"track_id":"existing ID","clip_id":"optional existing ID"}}}}. Omitted task scope inherits the user scope. Task scopes may narrow but never widen it. Specialists cannot delegate.
@@ -273,9 +293,10 @@ At most {operation_limit} operations for this response. Do not mix a command wit
         messages = [
             {'role': 'system', 'content': rules},
             {'role': 'user', 'content': json.dumps({'prompt': prompt, 'history': history, 'session': view, 'pending_proposals': proposed or []})}]
+        output_tokens = 2000 if role == 'producer' else 8000
         for attempt in range(2):
             request = {'model': self.model, 'messages': messages,
-                       'max_tokens': 2000 if role == 'producer' else (4000 if operation_limit == TASK_OPERATIONS else 8000),
+                       'max_tokens': output_tokens,
                        'response_format': {'type': 'json_object'}}
             if self.model == 'glm-5.3-flash':
                 request['reasoning_effort'] = 'low'
@@ -298,12 +319,14 @@ At most {operation_limit} operations for this response. Do not mix a command wit
                     raise StudioError('Provider returned no studio response.')
                 if choice.get('finish_reason') == 'length':
                     if not attempt:
+                        output_tokens *= 2
                         messages.append({'role': 'user', 'content':
                                          'The response exceeded its token budget. Return a shorter complete JSON plan. '
                                          'Producer: use only a short brief and small scoped delegations. '
-                                         'Specialist: propose fewer high-impact operations within the task. Do not relax scope.'})
+                                         'Specialist: use concise setNotes lists for full rewrites, avoiding per-note delete/add sequences. '
+                                         'Keep the requested musical change and scope; minimize reply prose. The retry has more output room.'})
                         continue
-                    raise StudioError('Agent response exceeded its token budget. No studio edits applied.')
+                    raise StudioError(f'{role.capitalize()} · {self.model}: Agent response exceeded its token budget after the bounded retry. No studio edits applied.')
                 content = choice['message']['content']
             except (KeyError, IndexError, TypeError):
                 raise StudioError('Provider returned no studio response.') from None
