@@ -16,7 +16,7 @@ CONTRACT = json.loads(Path(__file__).with_name('studio_contract.json').read_text
 ROLES = ('producer', 'engineer', 'musician')
 MAX_OPERATIONS = 128
 MAX_DELEGATIONS = 4
-TASK_OPERATIONS = 24
+TASK_OPERATIONS = 32
 MAX_RESPONSE = 2 * 1024 * 1024
 # Vetted chat-completions stealth candidates, in our preference order.
 # Zen's catalog exposes availability, not quality rankings or stealth labels.
@@ -294,6 +294,8 @@ At most {operation_limit} operations for this response. Do not mix a command wit
             envelope = json_object(raw)
             try:
                 choice = envelope['choices'][0]
+                if not isinstance(choice, dict):
+                    raise StudioError('Provider returned no studio response.')
                 if choice.get('finish_reason') == 'length':
                     if not attempt:
                         messages.append({'role': 'user', 'content':

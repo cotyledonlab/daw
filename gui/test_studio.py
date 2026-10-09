@@ -115,6 +115,13 @@ class StudioTests(unittest.TestCase):
         self.assertIn('shorter complete JSON', messages[-1]['content'])
         self.assertEqual(messages[-1]['role'], 'user')
 
+    def test_malformed_provider_choice_returns_diagnostic_and_releases_lock(self):
+        for choice in (None, [], 42):
+            with patch('gui.studio.remote', return_value=json.dumps({'choices': [choice]}).encode()):
+                with self.assertRaisesRegex(StudioError, 'no studio response'):
+                    self.studio.prompt(data(), SNAPSHOT)
+            self.assertFalse(self.studio.lock.locked())
+
     def test_whole_song_is_one_bounded_plan_with_scoped_musicians_and_shared_brief(self):
         song = json.loads((ROOT / 'examples/sessions/musical-demo.json').read_text())
         snapshot = {'revision': '7', 'session': song}
@@ -181,7 +188,7 @@ class StudioTests(unittest.TestCase):
         producer = {'reply': 'Split it.', 'operations': [], 'delegations': [
             {'role': 'engineer', 'prompt': 'First'}, {'role': 'engineer', 'prompt': 'Second'}]}
         valid = {'reply': 'Level.', 'operations': [{'op': 'gainDb', 'track_id': 'tone', 'db': -3}]}
-        oversized = {'reply': 'Too much.', 'operations': valid['operations'] * 25}
+        oversized = {'reply': 'Too much.', 'operations': valid['operations'] * 33}
         with patch('gui.studio.remote', side_effect=[response(producer), response(valid), response(oversized), response(oversized)]):
             with self.assertRaisesRegex(StudioError, 'Too many studio operations'):
                 self.studio.prompt(data(), SNAPSHOT)
