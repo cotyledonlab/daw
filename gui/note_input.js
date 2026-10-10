@@ -17,6 +17,7 @@ class NoteInput {
     this.cache = new Map();
     this.held = new Set();
     this.performanceHeld = new Map();
+    this.localMonitors = new Map();
     this.clock = options.clock || (() => performance.now());
     this.midiInputs = new Map();
     this.midiAccess = null;
@@ -86,6 +87,14 @@ class NoteInput {
     const note = {midi, frequency_hz: 440 * 2 ** ((midi - 69) / 12), velocity, source, channel, key};
     this.performanceHeld.set(key, note);
     this.emitPerformance({...note, type: 'on', timestamp: this.clock()});
+    if(this.options.getPerformanceTarget?.()?.localMonitor) {
+      const context=this.context;
+      if(context && context.state==='running') {
+        const osc=context.createOscillator(),gain=context.createGain();
+        osc.frequency.value=note.frequency_hz;gain.gain.value=0;gain.gain.setTargetAtTime(velocity*0.12,context.currentTime,0.005);
+        osc.connect(gain);gain.connect(this.master);osc.start();this.localMonitors.set(key,{osc,gain});
+      }
+    }
     // During native recording getTarget is null: capture still runs without browser preview.
     if (this.options.getTarget?.()) void this.playNote(midi, velocity, source, channel);
   }
@@ -95,6 +104,8 @@ class NoteInput {
     const note = this.performanceHeld.get(key);
     if (!note) return;
     this.performanceHeld.delete(key);
+    const monitor=this.localMonitors.get(key);
+    if(monitor){this.localMonitors.delete(key);monitor.gain.gain.setTargetAtTime(0,this.context.currentTime,0.005);monitor.osc.stop(this.context.currentTime+0.04);monitor.osc.onended=()=>{monitor.osc.disconnect();monitor.gain.disconnect();};}
     this.emitPerformance({...note, type: 'off', timestamp: this.clock(), cancelled});
   }
 

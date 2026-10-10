@@ -24,7 +24,7 @@ function setup() {
   let selected = 'phrase';
   const ctx = {SessionEditor:E, applied:song, draft:structuredClone(song), sessionRevision:'r1',
     noteRecording:new Recording({clock:()=>0}), recordingStarting:false, takeApplying:false,
-    noteProjectGeneration:0, noteTargetKey:null, metronomeAvailable:true, nativeAvailable:true,
+    noteProjectGeneration:0, noteTargetKey:null, metronomeAvailable:true, nativeAvailable:true, browserStreaming:false,
     checkedReplacementAvailable:true, notePreviewAvailable:true, stepCapturing:false,
     busy:false, nativeModeChange:false, nativePlayGeneration:0, playGeneration:0, starting:false,
     paused:false, metadataSuppressed:false, untilStoppedAvailable:true, untilStoppedDevices:['synth'],

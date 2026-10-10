@@ -68,6 +68,8 @@
   let starting = false;
   let playGeneration = 0;
   let nativeAvailable = false;
+  let browserStreaming = false;
+  const streamPlayer = typeof BrowserStream === "undefined" ? null : new BrowserStream(request, {onError:error => { nativeSnapshot = {...streamPlayer.snapshot(), state:"error", error:error.message}; applyNativeSnapshot(nativeSnapshot); }});
   let nativePluginsAvailable = false;
   let untilStoppedAvailable = false;
   let processingAvailable = false;
@@ -150,11 +152,11 @@
   }
 
   function nativeStatusText(snapshot) {
-    if (snapshot.state === 'starting') return 'Starting native audio…';
+    if (snapshot.state === 'starting') return browserStreaming ? 'Starting browser stream…' : 'Starting native audio…';
     if (snapshot.state === 'playing') {
       const device = snapshot.device ? ` · ${snapshot.device}` : '';
       const rate = snapshot.sample_rate ? ` · ${(snapshot.sample_rate / 1000).toLocaleString()} kHz` : '';
-      return snapshot.count_in_remaining_frames > 0 ? `Count-in · ${Math.ceil(snapshot.count_in_remaining_frames / snapshot.sample_rate * (applied?.tempo_milli_bpm || 120000) / 60000)} beats` : `Playing${device}${rate}`;
+      return browserStreaming && snapshot.count_in_remaining_frames > 0 ? 'Buffering…' : snapshot.count_in_remaining_frames > 0 ? `Count-in · ${Math.ceil(snapshot.count_in_remaining_frames / snapshot.sample_rate * (applied?.tempo_milli_bpm || 120000) / 60000)} beats` : `Playing${device}${rate}`;
     }
     if (snapshot.state === 'paused') return 'Paused';
     if (snapshot.state === 'error') return 'Native audio error';
@@ -171,6 +173,7 @@
     }
     nativeSnapshot = snapshot;
     if (noteRecording?.active && !recordingStarting) {
+      if (browserStreaming && snapshot.underruns > 0) noteRecording.cancel('Listening stream underrun. Take discarded; try a more stable connection.');
       if (snapshot.state === 'error') noteRecording.cancel('Native playback failed. Take discarded.');
       else if (snapshot.state === 'stopped') void finishNoteTake(snapshot);
       else if (snapshot.sample_rate) noteRecording.updateTransport({...snapshot, timestamp: performance.now()});
@@ -261,8 +264,10 @@
       csoundBridgeAvailable = capabilities.gui_bridge?.csound_sources === true;
       csoundLiveAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.implemented === true;
       csoundLiveEditsAvailable = csoundBridgeAvailable && capabilities.csound_live_transport?.live_control_edits === true;
-      nativeAvailable = capabilities.live_audio === true;
-      liveArrangementEditsAvailable = capabilities.live_arrangement_edits?.implemented === true;
+      browserStreaming = capabilities.live_audio !== true && capabilities.browser_stream?.implemented === true;
+      nativeAvailable = capabilities.live_audio === true || browserStreaming;
+      if (browserStreaming) {liveArrangementEditsAvailable = true; untilStoppedAvailable = true; untilStoppedDevices = ['sine','synth','drumkit','audio'];}
+      liveArrangementEditsAvailable = browserStreaming || capabilities.live_arrangement_edits?.implemented === true;
       nativePluginsAvailable = capabilities.plugin_hosting === true;
       offlinePluginsAvailable = capabilities.offline_vst3?.implemented === true;
       parameterMetadataAvailable = capabilities.parameter_metadata?.implemented === true;
@@ -271,6 +276,7 @@
       liveParameterEditsAvailable = capabilities.live_parameter_edits?.implemented === true && capabilities.live_parameter_edits?.automation_override === false;
       const option = outputMode.querySelector('option[value="native"]');
       option.disabled = !nativeAvailable;
+      option.textContent = browserStreaming ? 'Browser stream' : 'Native audio';
       $('#native-build-hint').hidden = nativeAvailable;
       if (nativeAvailable) {
         const transportResponse = await request('/api/transport');
@@ -661,7 +667,7 @@
     const take = noteRecording.take;
     const track = applied?.tracks[take.trackIndex];
     return track ? {key: `record:${noteProjectGeneration}:${take.revision}:${take.clipId}`, track_id: track.id,
-      drum: track.device.kind === 'drumkit'} : null;
+      drum: track.device.kind === 'drumkit', localMonitor:browserStreaming} : null;
   }
 
   function syncRecordingControls() {
@@ -683,7 +689,7 @@
       playButton.textContent = 'Stop recording';
       $('#note-input-enabled').checked = true;
       $('#note-input-enabled').disabled = true;
-      $('#note-input-help').textContent = `${applied.tracks[noteRecording.take.trackIndex].id} · recording held keyboard/MIDI gates into ${noteRecording.take.clipId}. Stop applies the overdub as one undoable take. Input is not monitored during playback. Loop/seek are disabled.`;
+      $('#note-input-help').textContent = `${applied.tracks[noteRecording.take.trackIndex].id} · recording held keyboard/MIDI gates into ${noteRecording.take.clipId}. Stop applies the overdub as one undoable take. ${browserStreaming ? 'Local sine tones monitor MIDI/keyboard input; saved instruments play on replay.' : 'Input is not monitored during playback.'} Loop/seek are disabled.`;
     }
     if (pending) { playButton.disabled = true; recoverButton.disabled = true; }
   }
@@ -693,6 +699,7 @@
     if (!target || busy || nativeLocked() || noteRecording?.take) return;
     try {
       noteInput.reset();
+      if (browserStreaming) void noteInput.unlock();
       noteRecording.arm({session: applied, revision: sessionRevision, trackIndex: target.trackIndex, clipId: target.clipId});
       recordingStarting = true;
       $('#step-entry-enabled').checked = false;
@@ -750,6 +757,12 @@
   }
 
   async function request(path, options = {}) {
+    if (browserStreaming && path.startsWith('/api/transport')) {
+      const payload = options.body ? JSON.parse(options.body) : {action:'status'};
+      const action = path.endsWith('/seek') ? 'seek' : path.endsWith('/loop') ? 'loop' : payload.action;
+      const snapshot = action === 'play' ? await streamPlayer.start(sessionRevision, payload.volume) : await streamPlayer.control(action,payload);
+      return {json:async()=>snapshot};
+    }
     const headers = new Headers(options.headers || {});
     if (token) headers.set('X-DAW-Token', token);
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -853,12 +866,12 @@
     $('#render-limit').textContent = `Export up to ${durationInput.max} seconds for this project.`;
     rateSelect.disabled = effectsMode && SessionEditor.plugins(draft).length > 0;
     $('.live-help').textContent = hasSources() ? 'Click Play/Stop for live sources. Escape also stops. Playback ends at the longest saved source duration (up to ten seconds). Saved scalar/array controls without automation can change live; SC initialization-rate slots remain read-only. Listening volume affects playback only.' : 'Click Play/Pause. Hold the button or press Escape to stop. Browser output plays draft edits live. Native output applies the session and stops after 60 seconds, including time paused. Listening volume affects playback only.';
-    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? 'Effects use native audio. Built-in sound, effect, automation, mixer, note and clip edits apply during native playback. Track and foreign-runtime changes require Stop.' : 'Effects use native playback. Add gain, lowpass or delay, or load a saved VST3 session to reuse its validated effects.';
-    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = `Native playback uses the applied arrangement. Seek and loop are available during playback or pause. Edit notes, clips and mix while built-in playback runs. ${untilStoppedAvailable ? `Built-in playback runs until Stop; WAV export supports up to ${durationInput.max} seconds.` : 'This engine limits playback to 60 seconds.'}`;
+    $('#effects-hint').textContent = hasSources() ? (draft.sample_rate !== 48000 ? 'Live sources require a 48 kHz session/device. The saved rate is preserved; use scripts to change it. Save and render remain available.' : canPlaySources() ? 'Live native sources with gain effects. Programs, duration and automation are preserved. Declared saved controls without automation can change live; structural edits require stopped playback.' : 'Live sources require a native-audio build and their installed runtime/queue bridge. Loaded sources can still be saved and rendered when their runtime is available.') : effectsMode && SessionEditor.plugins(draft).length && !nativePluginsAvailable ? 'Live VST3 requires a vst3-live build. Offline rendering requires vst3-offline. Saved automation points are preserved.' : effectsMode ? (browserStreaming ? 'Server audio plays in this browser. Notes and mix edits reach playback after the listening buffer. Track/device changes require Stop.' : 'Effects use native audio. Built-in sound, effect, automation, mixer, note and clip edits apply during native playback. Track and foreign-runtime changes require Stop.') : 'Effects use native playback. Add gain, lowpass or delay, or load a saved VST3 session to reuse its validated effects.';
+    if (SessionEditor.arrangement(draft)) $('.live-help').textContent = `${browserStreaming ? 'Browser streaming' : 'Native playback'} uses the applied arrangement. Seek and loop are available during playback or pause. Edit notes, clips and mix while built-in playback runs. ${untilStoppedAvailable ? `Built-in playback runs until Stop; WAV export supports up to ${durationInput.max} seconds.` : 'This engine limits playback to 60 seconds.'}`;
     if (SessionEditor.arrangement(draft)) $('#effects-hint').textContent = `${hasAudio() ? 'Arrangement' : 'Note arrangement'} · native playback. Select a clip to ${hasAudio() ? 'edit notes or trim audio' : 'edit notes'}. Note, clip and mix edits apply during built-in native playback; tempo changes the grid only.`;
     if (draft.tracks.some(track => track.device.kind === 'pd_instrument')) {
       $('#effects-hint').textContent += ' Pd notes are monophonic; cutoff and gain edits apply while stopped. Playback and export require libpd.';
-      $('.live-help').textContent = `Native playback uses the applied arrangement. Use Stop & edit to change notes and Pd controls. Pd notes are scheduled in 64-frame blocks. WAV export supports up to ${durationInput.max} seconds.`;
+      $('.live-help').textContent = `${browserStreaming ? 'Browser streaming' : 'Native playback'} uses the applied arrangement. Use Stop & edit to change notes and Pd controls. Pd notes are scheduled in 64-frame blocks. WAV export supports up to ${durationInput.max} seconds.`;
     }
   }
 
@@ -1566,9 +1579,36 @@
       const result = await response.json();
       acceptImportedSession(result);
       setNotice(`Imported ${file.name} as ${track_id}. Select its clip to trim or change gain. Save project ZIP includes the audio.`);
+      return true;
     } catch (error) { announceError(`Could not import WAV. ${error.message}`); }
     finally { $('#audio-file').value = ''; setBusy(false); requestAppliedEffectMetadata(); }
   }
+
+  let audioCapture = null, audioTakeRevision = null;
+  if (typeof AudioCapture !== 'undefined' && typeof MediaRecorder !== 'undefined') {
+    const syncCapture = () => {
+      const active = audioCapture.state !== 'stopped';
+      $('#stop-audio-button').disabled = !active;
+      $('#record-audio-button').disabled = active || Boolean(audioCapture.take);
+      for (const id of ['use-audio-take','download-audio-take','discard-audio-take']) $(`#${id}`).hidden = !audioCapture.take;
+      if (!active) setBusy(false);
+    };
+    audioCapture = new AudioCapture({onStatus:message=>{$('#audio-capture-status').textContent=message;},onReady:syncCapture});
+    $('#record-audio-button').addEventListener('click', async () => {
+      if (busy || nativeActive() || isDirty() || noteRecording?.take || !audioProjectsAvailable || unsupportedSession) {announceError('Stop playback and apply edits before recording audio.');return;}
+      audioTakeRevision = sessionRevision; setBusy(true);
+      try {const capture=audioCapture.start(applied.sample_rate,$('#monitor-audio-input').checked);syncCapture();await capture;syncCapture();}
+      catch(error){$('#audio-capture-status').textContent=error.message;syncCapture();}
+    });
+    $('#stop-audio-button').addEventListener('click',()=>{audioCapture.stop();syncCapture();});
+    $('#discard-audio-take').addEventListener('click',()=>{audioCapture.discard();$('#audio-capture-status').textContent='Audio take discarded.';});
+    $('#download-audio-take').addEventListener('click',()=>{const url=URL.createObjectURL(audioCapture.take),a=document.createElement('a');a.href=url;a.download=audioCapture.take.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+    $('#use-audio-take').addEventListener('click',async()=>{
+      if(audioTakeRevision !== sessionRevision || isDirty()) {announceError('Project changed. Download this take before discarding it, or restore the recording project.');return;}
+      if(await importAudioFile(audioCapture.take)) audioCapture.discard();
+    });
+    window.addEventListener('pagehide',()=>audioCapture.discard());
+  } else {$('#record-audio-button').disabled=true;$('#audio-capture-status').textContent='Audio capture is unavailable in this browser.';}
 
   async function addCsoundFile(file) {
     if (!file || busy || nativeLocked()) return;
@@ -1785,6 +1825,7 @@
 
   async function toggleNative() {
     if (!nativeAvailable || busy || nativeModeChange) return;
+    if (browserStreaming && !nativeActive()) void streamPlayer.unlock().catch(announceError);
     if (noteRecording?.active && nativeActive()) { await stopNative(); return; }
     if (noteRecording?.pending) return;
     if (!recordingStarting) stopNoteInput();
@@ -1818,7 +1859,7 @@
     if (!draft.tracks.length) { metadataSuppressed = false; requestAppliedEffectMetadata(); setNotice('Add a note track or open the musical demo, then press Play.'); return; }
     nativeSnapshot = { state: 'starting' };
     if (hasSources()) setNotice('Starting live sources…');
-    playState.textContent = 'Starting native audio…';
+    playState.textContent = browserStreaming ? 'Starting browser stream…' : 'Starting native audio…';
     syncStatus();
     try {
       const seconds = hasSources() ? Math.max(...SessionEditor.sources(draft).map(track => track.device.duration_frames)) / draft.sample_rate : 60;
@@ -2048,7 +2089,7 @@
     if (nativeAvailable && nativeActive()) {
       const headers = new Headers({ 'Content-Type': 'application/json' });
       if (token) headers.set('X-DAW-Token', token);
-      void fetch('/api/transport', { method: 'POST', headers, body: JSON.stringify({ action: 'stop' }), keepalive: true }).catch(() => {});
+      void fetch(browserStreaming ? '/api/stream' : '/api/transport', { method: 'POST', headers, body: JSON.stringify(browserStreaming ? {action:'stop',stream_id:streamPlayer.id} : {action:'stop'}), keepalive: true }).catch(() => {});
     }
   });
   document.addEventListener('keydown', event => {

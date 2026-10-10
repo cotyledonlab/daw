@@ -16,6 +16,14 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_EDIT_OPERATIONS: usize = 128;
 pub const METHODS: &[&str] = &[
+    "stream.play",
+    "stream.read",
+    "stream.status",
+    "stream.pause",
+    "stream.resume",
+    "stream.stop",
+    "stream.seek",
+    "stream.loop",
     "capabilities",
     "session.get",
     "session.inspect",
@@ -165,6 +173,7 @@ fn capabilities() -> Value {
             "parent_directories": "must_exist", "max_session_bytes": MAX_MESSAGE_BYTES
         }
     });
+    result["browser_stream"] = json!({"implemented":true,"max_block_frames":4096,"sample_format":"stereo_float32","devices":["sine","synth","drumkit","audio"],"lease_seconds":30});
     result["live_arrangement_edits"] = json!({"implemented":cfg!(all(feature="native-audio",target_os="macos")),"same_tracks":true,"devices":["sine","synth","drumkit","audio"],"max_pending":1});
     result["supercollider_live_transport"] = sc_live;
     result["csound_offline"] = json!({"implemented":cfg!(unix),"configured":std::env::var_os("DAW_CSOUND").is_some_and(|p| Path::new(&p).is_absolute() && Path::new(&p).is_file()),"session_device":false,"native_playback":false,"max_csd_bytes":1048576,"max_seconds":10,"channels":2,"sample_format":"wav_pcm16","worker_timeout_seconds":15,"duration":"exact_requested_frames","asset_preparation":false});
@@ -280,6 +289,7 @@ impl Response {
 pub struct Controller {
     session: Session,
     revision: u64,
+    stream: crate::browser_stream::Stream,
     #[cfg(all(feature = "native-audio", target_os = "macos"))]
     transport: crate::audio::Transport,
 }
@@ -287,6 +297,40 @@ pub struct Controller {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyParams {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamStatus {
+    stream_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamStart {
+    expected_revision: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamOwner {
+    stream_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamRead {
+    stream_id: String,
+    frames: usize,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamSeek {
+    stream_id: String,
+    frame: u64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamLoop {
+    stream_id: String,
+    #[serde(deserialize_with = "deserialize_region")]
+    region: Option<LoopRegion>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EffectParameterParams {
@@ -505,6 +549,78 @@ impl Controller {
 
     fn execute(&mut self, method: &str, value: Value) -> Result<Value, ControlError> {
         match method {
+            "stream.play" => {
+                let p: StreamStart = params(value)?;
+                self.check_revision(&p.expected_revision)?;
+                #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                if self
+                    .transport
+                    .status()
+                    .map_err(|e| ControlError::new("audio_error", e))?["state"]
+                    != "stopped"
+                {
+                    return Err(ControlError::new(
+                        "transport_active",
+                        "Stop native playback first",
+                    ));
+                }
+                self.stream
+                    .start(&self.session, self.revision)
+                    .map_err(|e| ControlError::new("stream_error", e))
+            }
+            "stream.status" => {
+                let p: StreamStatus = params(value)?;
+                if let Some(id) = p.stream_id {
+                    self.stream
+                        .check(&id)
+                        .map_err(|e| ControlError::new("stream_error", e))?;
+                }
+                Ok(self.stream.status())
+            }
+            "stream.read" => {
+                let p: StreamRead = params(value)?;
+                self.stream
+                    .check(&p.stream_id)
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                self.stream
+                    .read(p.frames)
+                    .map_err(|e| ControlError::new("stream_error", e))
+            }
+            "stream.seek" => {
+                let p: StreamSeek = params(value)?;
+                self.stream
+                    .check(&p.stream_id)
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                self.stream
+                    .seek(p.frame)
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                Ok(self.stream.status())
+            }
+            "stream.loop" => {
+                let p: StreamLoop = params(value)?;
+                self.stream
+                    .check(&p.stream_id)
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                self.stream
+                    .set_loop(p.region.map(|r| (r.start_frame, r.end_frame)))
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                Ok(self.stream.status())
+            }
+            "stream.pause" | "stream.resume" | "stream.stop" => {
+                let p: StreamOwner = params(value)?;
+                self.stream
+                    .check(&p.stream_id)
+                    .map_err(|e| ControlError::new("stream_error", e))?;
+                let mut status = self.stream.status();
+                if method == "stream.stop" {
+                    self.stream.stop();
+                    status["state"] = json!("stopped");
+                } else {
+                    self.stream.pause(method == "stream.pause");
+                    status = self.stream.status();
+                }
+                Ok(status)
+            }
             "capabilities" => {
                 let _: EmptyParams = params(value)?;
                 Ok(capabilities())
@@ -847,24 +963,26 @@ impl Controller {
                             "live edits require expected_revision",
                         ));
                     }
-                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
                     let next = self.revision.checked_add(1).ok_or_else(|| {
                         ControlError::new("revision_exhausted", "session revision exhausted")
                     })?;
-                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
-                    self.transport
-                        .update_session(&replacement.session, next)
-                        .map_err(|e| ControlError::new("transport_error", e))?;
-                    #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
-                    return Err(ControlError::new(
-                        "unsupported",
-                        "live edits require native macOS audio",
-                    ));
-                    #[cfg(all(feature = "native-audio", target_os = "macos"))]
-                    {
-                        self.session = replacement.session;
-                        self.revision = next;
+                    if self.stream.active() {
+                        self.stream
+                            .update(&replacement.session, next)
+                            .map_err(|e| ControlError::new("transport_error", e))?;
+                    } else {
+                        #[cfg(all(feature = "native-audio", target_os = "macos"))]
+                        self.transport
+                            .update_session(&replacement.session, next)
+                            .map_err(|e| ControlError::new("transport_error", e))?;
+                        #[cfg(not(all(feature = "native-audio", target_os = "macos")))]
+                        return Err(ControlError::new(
+                            "unsupported",
+                            "live edits require native macOS audio",
+                        ));
                     }
+                    self.session = replacement.session;
+                    self.revision = next;
                 } else {
                     self.commit_session(replacement.session)?;
                 }
@@ -1225,6 +1343,7 @@ impl Controller {
         self.transport
             .stop()
             .map_err(|e| ControlError::new("audio_error", e))?;
+        self.stream.stop();
         Ok(())
     }
 
@@ -1278,6 +1397,12 @@ impl Controller {
     }
 
     fn transport_command(&mut self, method: &str, value: Value) -> Result<Value, ControlError> {
+        if method == "transport.play" && self.stream.active() {
+            return Err(ControlError::new(
+                "transport_active",
+                "Stop browser playback first",
+            ));
+        }
         let mut frame = 0;
         let mut region = None;
         let mut seconds = 0.0;

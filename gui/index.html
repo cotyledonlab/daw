@@ -64,10 +64,21 @@
           <button class="button button-quiet" id="import-pd-button" type="button">Pd preset</button>
           <input id="pd-file" type="file" accept="application/json,.json" hidden>
           <button class="button button-quiet" id="import-audio-button" type="button" disabled>Import WAV</button>
+
           <button class="button button-quiet" id="import-midi-button" type="button" title="Import note lanes at Insert at, using project tempo. MIDI sounds and expression are not imported.">Import MIDI</button>
           <input id="midi-file" type="file" accept="audio/midi,.mid,.midi" hidden>
           <input id="audio-file" type="file" accept="audio/wav,.wav" hidden>
         </div>
+          <details class="editing-help"><summary>Record audio</summary>
+            <button class="button button-quiet" id="record-audio-button" type="button">Record audio</button>
+            <button class="button button-quiet" id="stop-audio-button" type="button" disabled>Stop audio</button>
+            <label><input id="monitor-audio-input" type="checkbox"> Monitor input locally (headphones)</label>
+            <p class="output-hint">Standalone mono take, up to 2 minutes. Monitor through your interface or enable local monitoring. Use take adds the recording at Insert at; download it before closing this window.</p>
+            <button class="button button-quiet" id="use-audio-take" type="button" hidden>Use take</button>
+            <button class="button button-quiet" id="download-audio-take" type="button" hidden>Download take</button>
+            <button class="button button-quiet" id="discard-audio-take" type="button" hidden>Discard take</button>
+            <p id="audio-capture-status" class="output-hint" role="status"></p>
+          </details>
         <div id="arrangement" hidden></div>
         <section id="note-input" class="note-input-panel" aria-label="Play and enter notes" hidden>
           <div class="arrangement-controls">
@@ -206,6 +217,8 @@
   </div>
   <!-- DAW_CONFIG -->
   <script src="/live.js" defer></script>
+  <script src="/stream.js" defer></script>
+  <script src="/audio_capture.js" defer></script>
   <script src="/pd_instrument.js" defer></script>
   <script src="/midi_file.js" defer></script>
   <script src="/editor.js" defer></script>

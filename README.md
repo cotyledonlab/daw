@@ -68,7 +68,35 @@ tailscale serve --bg http://127.0.0.1:8790
 
 On macOS, if `tailscale` is absent from PATH, use `/Applications/Tailscale.app/Contents/MacOS/Tailscale`. Open the printed Tailscale HTTPS URL in the phone browser. Serve may require enabling HTTPS for the tailnet. The gateway accepts only that exact root HTTPS origin/host and retains the DAW's token checks; it owns no engine or project. Use private [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve), with access controlled by your tailnet policy. Anyone your policy allows to reach this URL can use the editor and its configured provider accounts. Stop this route with `tailscale serve --https=443 off`; Ctrl+C stops the gateway without stopping the DAW.
 
-Use one active editing window; the phone controls the same in-memory session, with existing revision checks. Native playback remains on the Mac. Browser previews, downloaded files and optional voice UI use the viewing device; this does not add live audio streaming or change phone MIDI/microphone support. The Mac, DAW and gateway must remain running. No server restart is needed to expose an existing session.
+Use one active editing window; the phone controls the same in-memory session, with existing revision checks. Native playback remains on the Mac. Browser previews, browser streaming, downloaded files and optional voice UI use the viewing device. Web MIDI and microphone support depend on its browser. The Mac, DAW and gateway must remain running. No server restart is needed to expose an existing session.
+
+## Hetzner evaluation instance
+
+The headless Linux evaluation instance runs on `jellyfin-box`, privately through Tailscale at [the DAW editor](https://jellyfin-box.tail28c990.ts.net:8443/). Connect the viewing device to the tailnet. Jellyfin retains its existing HTTPS port 443. The DAW and its gateway bind only to remote loopback ports 8789/8790; Tailscale Serve owns HTTPS port 8443.
+
+The deployed source is under `/opt/daw/current`, with separate `daw` and `daw-gateway` systemd services running as the `daw` user. The Zen credential is in root-only `/etc/daw.env`. Inspect the services over the existing dedicated SSH connection:
+
+```sh
+ssh -i ~/.ssh/id_ed25519_hetzner_jellyfin root@100.80.145.96 'systemctl status daw daw-gateway --no-pager'
+```
+
+This portable build supports editing, Studio prompts, saving/loading, WAV export and server-rendered browser playback. On builds without native output, Play uses **Browser stream** for built-in sine/synth/drum/PCM arrangements. The Rust engine renders stereo PCM in bounded blocks; your browser plays it, including supported note/mix/effect edits after the listening buffer. Pause/Stop, seek and loop work without a server sound card. Foreign runtimes/plugins still require their existing playback paths. Sessions remain in memory: download the project before restarting `daw`, and Load that download after restart. Service startup does not automatically restore a saved project.
+
+If the Mac cannot resolve the Tailscale hostname, use a private tunnel (with local port 8789 free):
+
+```sh
+ssh -i ~/.ssh/id_ed25519_hetzner_jellyfin -N -L 127.0.0.1:8789:127.0.0.1:8789 root@100.80.145.96
+```
+
+Open `http://127.0.0.1:8789` while that tunnel runs; the engine still runs on Hetzner. To remove only the remote DAW HTTPS route, run `tailscale serve --https=8443 off` on the server.
+
+## Remote listening and recording
+
+The headless browser stream keeps roughly 250–335 ms of audio queued (4096-frame blocks at 48 kHz), plus network/render time and device latency. It is an auditioning path, not a low-latency WebRTC connection. An underrun introduces a listening gap; MIDI takes are discarded if one is observed so a misleadingly timed take is not applied. Listening volume stays local and does not change saved mix/export. One browser owns playback; refresh/page close stops its output, and an abandoned server stream expires after 30 seconds without an owner request. Other editing windows retain revision checks; use one active window.
+
+On the portable build, **Record notes** captures held keyboard/Web MIDI gates against the browser listening clock. During recording, local sine tones monitor pitch immediately; the saved instrument sounds on replay. This monitor is an audition tone, not the server instrument/effects. Stop applies a validated take with one Undo entry. Loop/seek and edits remain disabled while recording. Physical MIDI timing and end-to-end latency still need measurement. Web MIDI requires a supporting browser and a secure context (localhost or HTTPS).
+
+**Record audio** captures a standalone mono take locally for up to two minutes while transport is stopped. Choose your microphone/audio interface in the browser or OS. Use interface direct monitoring, or enable **Monitor input locally** with headphones. The take stays in browser memory until **Use take** uploads it at **Insert at** through the existing WAV import path, adding one audio lane and one Undo entry. **Download take** preserves it locally; failed/stale imports retain the take for download/discard. Capture is converted to PCM16 at the saved session rate. This first slice does not record audio against a playing backing track, compensate input latency, or stream incoming audio into the remote mix. Save ZIP retains imported audio; closing/reloading the page loses a take that has not been downloaded or applied.
 
 ## Scripting and optional devices
 
@@ -90,7 +118,7 @@ Optional integrations are existing compatibility paths; they are not MVP prerequ
 | VST3 | Constrained macOS offline effects and experimental live effects; saved-effect metadata/parameter editing. No plugin editor, instrument hosting or GUI discovery. [Build notes](native/vst3/README.md). |
 | Audio Units | Apple's AULowpass offline only; no GUI or live playback. [Build notes](native/au/README.md). |
 
-Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Audio recording, sampled instruments and broader studio features are outside the MVP.
+Browser continuous sine audition and stopped engine-rendered note previews are separate from native arrangement transport. Standalone browser audio capture is described above. Synchronized audio overdubbing, sampled instruments and broader studio features remain outside the MVP.
 
 ## Develop
 

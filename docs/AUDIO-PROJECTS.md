@@ -54,3 +54,7 @@ Replacement/load mutations validate the model and final candidate assets before 
 ## Verification
 
 `tests/audio_clips.rs` covers PCM decoding, exact offsets/gain, path confinement, save/load and preparation failures. `gui/test_audio_projects.py` covers HTTP framing/authentication, asset ownership, budgets, transactional imports and ZIP validation. `examples/audio_project_workflow_demo.py` checks mixed PCM/instrument edits, fresh-server ZIP reopen and byte-identical WAV export. These checks establish data behavior; acoustic acceptance is tracked in [PLAN.md](PLAN.md).
+
+## Standalone browser capture
+
+Record audio holds a bounded, local mono take (up to two minutes/16 MiB of encoded capture) and converts it to matching-rate PCM16 before upload. Use take uses the existing authenticated `/api/audio/import` metadata and WAV validation, exclusive asset publication and project ownership; no microphone payload is sent to Studio providers. The normal 32 MiB WAV limit still applies. A rejected or stale import retains the browser take; Download take saves a local WAV. Browser capture is transient until downloaded or imported, and imported assets become part of ZIP saving/Undo through existing rules. This is stopped standalone capture, not synchronized audio overdubbing or remote live input mixing.

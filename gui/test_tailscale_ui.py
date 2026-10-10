@@ -14,6 +14,26 @@ HOST = 'studio.tailtest.ts.net'
 
 
 class GatewayTests(unittest.TestCase):
+    def test_browser_pcm_stream_preserves_metadata_and_project_through_gateway(self):
+        session = {'schema_version': 1, 'sample_rate': 48000, 'tracks': [
+            {'id': 'tone', 'device': {'kind': 'sine', 'frequency_hz': 440, 'gain': 0.2}}]}
+        self.daw.engine.call('session.replace', {'session': session})
+        before = self.daw.engine.call('session.inspect')
+        status, body, _ = self.request('/api/stream', json.dumps({'action': 'play', 'expected_revision': before['revision']}))
+        self.assertEqual(status, 200, body)
+        stream_id = json.loads(body)['stream_id']
+        status, body, headers = self.request('/api/stream', json.dumps({'action': 'read', 'stream_id': stream_id, 'frames': 4096}))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body), 4096 * 8)
+        block = json.loads(headers['X-DAW-Block'])
+        self.assertEqual(block['sample_rate'], 48000)
+        self.assertEqual(block['start_frame'], 0)
+        self.assertEqual(block['end_frame'], 4096)
+        self.assertEqual(self.daw.engine.call('session.inspect'), before)
+        status, _, _ = self.request('/api/stream', json.dumps({'action': 'read', 'stream_id': stream_id, 'frames': 4096}), token=False)
+        self.assertEqual(status, 403)
+        self.assertEqual(self.request('/api/stream', json.dumps({'action': 'stop', 'stream_id': stream_id}))[0], 200)
+
     def setUp(self):
         self.daw = Server(ROOT / 'target/debug/daw')
         self.gateway = Gateway(self.daw.server_port, ORIGIN)
