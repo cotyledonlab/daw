@@ -18,11 +18,12 @@ class AudioCapture {
       this.recorder.onstop=()=>{void this.finish(generation);};
       this.recorder.start(1000);this.state='recording';this.onStatus('Recording locally. Stop audio creates a take; Use take uploads it at Insert at.');
       this.timer=setTimeout(()=>this.stop(),120000);
-    }catch(error){this.release();this.state='stopped';throw error;}
+    }catch(error){if(generation!==this.generation)return;this.release();this.state='stopped';throw error;}
   }
   stop(){clearTimeout(this.timer);if(this.recorder?.state==='recording'){this.state='finishing';this.recorder.stop();}else if(this.state==='starting'){this.generation++;this.release();this.state='stopped';}}
   release(){this.source?.disconnect();this.source=null;this.stream?.getTracks().forEach(t=>t.stop());this.stream=null;if(this.context){void this.context.close();this.context=null;}}
   async finish(generation){
+    if(generation!==this.generation)return;
     try{
       this.release();if(this.error)throw this.error;
       const bytes=await new Blob(this.chunks,{type:this.recorder.mimeType}).arrayBuffer();

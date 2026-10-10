@@ -74,7 +74,10 @@ class BrowserStream {
     if(action==='volume') {this.volume=params.volume;if(this.master)this.master.gain.setTargetAtTime(this.volume,this.context.currentTime,0.01);return this.snapshot();}
     if(action==='status') {
       if(this.state==='playing' && this.context?.state !== 'running') {await this.fail(new Error('Browser audio was suspended. Stop and restart playback.'));return this.snapshot();}
-      if(this.id) {const remote=await this.wire('status',{stream_id:this.id});if(remote.state==='stopped'||remote.stream_id!==this.id) {await this.fail(new Error('Browser playback was stopped or replaced on the server.'));}}
+      if(this.id) {
+        try {const remote=await this.wire('status',{stream_id:this.id});if(remote.state==='stopped'||remote.stream_id!==this.id) {await this.fail(new Error('Browser playback was stopped or replaced on the server.'));}}
+        catch(error) {if(!error.message.includes('Browser stream expired or belongs to another playback'))throw error;await this.fail(error);}
+      }
       return this.snapshot();
     }
     if(action==='stop') {
@@ -94,8 +97,10 @@ class BrowserStream {
       const state=this.state;this.state='paused';clearTimeout(this.timer);await this.pumping;
       const frame=this.snapshot().timeline_frame;
       // Discard queued audio and restart from the actual listening position.
-      if(action==='loop') {await this.wire('loop',{stream_id:this.id,...params});this.loop=params.region;await this.wire('seek',{stream_id:this.id,frame});}
-      else await this.wire('seek',{stream_id:this.id,...params});
+      try {
+        if(action==='loop') {await this.wire('loop',{stream_id:this.id,...params});this.loop=params.region;await this.wire('seek',{stream_id:this.id,frame});}
+        else await this.wire('seek',{stream_id:this.id,...params});
+      } catch(error) {await this.fail(error);throw error;}
       this.clearQueue();this.lastFrame=action==='seek'?params.frame:frame;this.nextTime=this.context.currentTime+0.12;
       this.state=state;if(state==='playing')this.run();return this.snapshot();
     }

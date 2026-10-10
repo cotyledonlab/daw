@@ -16,10 +16,17 @@ test('bounded prebuffer, audible clock, pause/resume, seek and stop release ever
  await stream.control('resume');await stream.pumping;const stopped=await stream.control('stop');assert.equal(stopped.state,'stopped');assert.equal(context.state,'closed');assert.equal(stream.sources.size,0);
 });
 test('replacement cancels audio promptly rather than keeping stale blocks playing',async()=>{
- const {stream,context}=setup();await stream.start('4',0.3);stream.onError=()=>{};stream.wire=async action=>action==='status'?{state:'stopped',stream_id:'2'}:{};const result=await stream.control('status');assert.equal(result.state,'error');assert.equal(context.state,'closed');assert.equal(stream.sources.size,0);
+ const {stream,context}=setup();await stream.start('4',0.3);stream.onError=()=>{};await stream.control('pause');stream.wire=async action=>{if(action==='status')throw new Error('Browser stream expired or belongs to another playback');return {};};const result=await stream.control('status');assert.equal(result.state,'error');assert.equal(context.state,'closed');assert.equal(stream.sources.size,0);
 });
 test('late network block after Stop never reaches the listening graph',async()=>{
  const {stream,sources}=setup();let release;const pending=new Promise(resolve=>release=resolve);const original=stream.wire.bind(stream);
  stream.wire=async(action,p)=>{if(action==='read'){await pending;}return original(action,p);};
  const starting=stream.start('1',0.3);await new Promise(resolve=>setImmediate(resolve));await stream.control('stop');release();await starting;assert.equal(sources.length,0);assert.equal(stream.state,'stopped');
+});
+
+for(const action of ['seek','loop'])test(`rejected ${action} releases playback when server outcome is unknown`,async()=>{
+ const {stream,context}=setup();await stream.start('4',0.3);stream.onError=()=>{};
+ const original=stream.wire.bind(stream);stream.wire=async(a,p)=>{if(a===action)throw new Error('Network failed');return original(a,p);};
+ await assert.rejects(()=>stream.control(action,action==='seek'?{frame:9600}:{region:{start_frame:0,end_frame:9600}}),/Network failed/);
+ assert.equal(stream.state,'error');assert.equal(context.state,'closed');assert.equal(stream.sources.size,0);assert.equal(stream.id,null);
 });

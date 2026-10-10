@@ -85,7 +85,7 @@ The finishing and note-recording workflow demos passed ZIP/fresh-server reopen a
 
 ## After MVP
 
-Requested MIDI note-file import and selected-clip export are delivered above. Multiselect/zoom/waveforms, sampled instruments, audio recording, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
+Requested MIDI note-file import and selected-clip export are delivered above. Multiselect/zoom/waveforms, sampled instruments, synchronized audio overdubbing, scenes, tempo-aware audio and hosting/routing expansion are deferred. None should delay acceptance of the existing arrangement workflow.
 
 Legacy continuous Pd live receiver controls are separate unfinished work (`878f711`), not the delivered sequenced preset. Keep their native acceptance/contract reconciliation open without expanding the MVP.
 
@@ -100,6 +100,6 @@ Legacy continuous Pd live receiver controls are separate unfinished work (`878f7
 
 - [x] Enable browser-clock MIDI/keyboard takes on the portable stream, with local sine-tone monitoring and whole-take Undo. An actual browser keyboard note was captured, applied on Stop and undone. Add stopped standalone mono audio capture (two-minute limit), local/interface monitoring, matching-rate PCM16 conversion, explicit upload through WAV import and a retained/downloadable take on failure. Capture resource/cancellation and PCM encoding regressions passed; existing ZIP/reopen checks cover imported assets. This is not synchronized audio overdubbing or incoming live server mixing.
 - [ ] Verify physical Web MIDI/microphone capture and monitor/recording latency on the user's device. Use a supporting HTTPS browser; browser audio capture remains unverified with a real microphone/interface.
-- [ ] Activate the updated Hetzner release after saving/restoring the exact current project and comparing pre/post-update exports.
+- [x] Activate the updated Hetzner release after saving/restoring the exact current project. Session data matched exactly and the pre/post-update WAV exports were byte-identical; remote PCM returned valid unclipped blocks. Linux streaming regressions and 60 bridge/gateway/project tests passed; two Node-dependent Linux workflow checks could not run because Node is absent on the box (both passed locally).
 
-**Next action:** activate the verified playback/input slice on Hetzner, then listen and test physical inputs. Await AWS account recovery and confirm friends' shared/separate access scope before custom-domain publication. Keep the current private Hetzner instance and evaluation project intact. Musical quality, phone URL acceptance, physical microphone and quiet listening remain open; Jev routing remains deferred. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
+**Next action:** listen to the active Hetzner browser stream and test physical MIDI/microphone inputs with local monitoring. Await AWS account recovery and confirm friends' shared/separate access scope before custom-domain publication. Keep the current private Hetzner instance and evaluation project intact. Musical quality, phone URL acceptance, physical microphone and quiet listening remain open; Jev routing remains deferred. For engineering and PR review/merge rules, use [AGENTS.md](../AGENTS.md); for current contracts, use [PROTOCOL.md](PROTOCOL.md).
