@@ -34,6 +34,7 @@
   let capabilitiesLoading = Promise.resolve();
   let sourceBridgeAvailable = false;
   let audioProjectsAvailable = false;
+  let audioCapture = null, audioTakeRevision = null;
   let renderLimits = {};
   let audioProjectByteLimit = 128 * 1024 * 1024;
   let untilStoppedDevices = [];
@@ -385,6 +386,7 @@
       control.disabled = value;
     });
     syncStatus();
+    syncAudioCaptureControls();
   }
 
   function invalidateEffectMetadata() {
@@ -1584,18 +1586,22 @@
     finally { $('#audio-file').value = ''; setBusy(false); requestAppliedEffectMetadata(); }
   }
 
-  let audioCapture = null, audioTakeRevision = null;
+  function syncAudioCaptureControls() {
+    if (!$('#record-audio-button')) return;
+    const active = Boolean(audioCapture && audioCapture.state !== 'stopped');
+    $('#stop-audio-button').disabled = !active;
+    $('#record-audio-button').disabled = busy || !audioCapture || active || Boolean(audioCapture.take);
+    for (const id of ['use-audio-take','download-audio-take','discard-audio-take']) $(`#${id}`).hidden = !audioCapture?.take;
+  }
   if (typeof AudioCapture !== 'undefined' && typeof MediaRecorder !== 'undefined') {
     const syncCapture = () => {
-      const active = audioCapture.state !== 'stopped';
-      $('#stop-audio-button').disabled = !active;
-      $('#record-audio-button').disabled = active || Boolean(audioCapture.take);
-      for (const id of ['use-audio-take','download-audio-take','discard-audio-take']) $(`#${id}`).hidden = !audioCapture.take;
-      if (!active) setBusy(false);
+      if (audioCapture.state === 'stopped') setBusy(false);
+      syncAudioCaptureControls();
     };
     audioCapture = new AudioCapture({onStatus:message=>{$('#audio-capture-status').textContent=message;},onReady:syncCapture});
     $('#record-audio-button').addEventListener('click', async () => {
       if (busy || nativeActive() || isDirty() || noteRecording?.take || !audioProjectsAvailable || unsupportedSession) {announceError('Stop playback and apply edits before recording audio.');return;}
+      if(audioCapture.take || audioCapture.state !== 'stopped') {announceError('Use or discard the current audio take first.');return;}
       audioTakeRevision = sessionRevision; setBusy(true);
       try {const capture=audioCapture.start(applied.sample_rate,$('#monitor-audio-input').checked);syncCapture();await capture;syncCapture();}
       catch(error){$('#audio-capture-status').textContent=error.message;syncCapture();}
