@@ -4,6 +4,7 @@ mod au_hosting;
 #[cfg(all(feature = "native-audio", target_os = "macos"))]
 pub mod audio;
 pub mod audio_buffer;
+pub mod browser_stream;
 pub mod builtins;
 pub mod control;
 pub mod csound;

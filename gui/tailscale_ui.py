@@ -109,7 +109,7 @@ class Relay(BaseHTTPRequestHandler):
             self.send_response(response.status)
             # Preserve CSP/nonce, downloads and content metadata; never relay hop headers.
             for name in ('Content-Type', 'Content-Length', 'Cache-Control', 'X-Content-Type-Options',
-                         'Referrer-Policy', 'Content-Security-Policy', 'Content-Disposition', 'X-Clipped-Frames'):
+                         'Referrer-Policy', 'Content-Security-Policy', 'Content-Disposition', 'X-Clipped-Frames', 'X-DAW-Block'):
                 value = response.getheader(name)
                 if value is not None:
                     self.send_header(name, value)

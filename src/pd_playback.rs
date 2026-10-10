@@ -220,31 +220,7 @@ impl Reader {
     }
 }
 pub(crate) fn validate_live_update(old: &Session, new: &Session) -> Result<(), String> {
-    new.validate()?;
-    let builtins = |session: &Session| {
-        session.tracks.iter().all(|t| {
-            matches!(
-                t.device,
-                crate::session::Device::Sine { .. }
-                    | crate::session::Device::Synth { .. }
-                    | crate::session::Device::Drumkit { .. }
-                    | crate::session::Device::Audio { .. }
-            ) && t.effects.iter().flatten().all(|e| e.is_builtin())
-        })
-    };
-    if !builtins(old)
-        || !builtins(new)
-        || old.sample_rate != new.sample_rate
-        || old.tracks.len() != new.tracks.len()
-        || old.tracks.iter().zip(&new.tracks).any(|(a, b)| {
-            a.id != b.id
-                || a.mode != b.mode
-                || std::mem::discriminant(&a.device) != std::mem::discriminant(&b.device)
-        })
-    {
-        return Err("live edits require the same ordered built-in tracks, device kinds, modes and sample rate; stop playback for track or foreign-runtime changes".into());
-    }
-    Ok(())
+    crate::browser_stream::validate_live_update(old, new)
 }
 
 pub(crate) fn start(session: &Session) -> Result<(Reader, Worker), String> {

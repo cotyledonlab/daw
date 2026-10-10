@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import selectors
 import subprocess
+import struct
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -230,6 +231,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         assets = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/live.js": ("live.js", "text/javascript; charset=utf-8"),
+                  "/stream.js": ("stream.js", "text/javascript; charset=utf-8"),
+                  "/audio_capture.js": ("audio_capture.js", "text/javascript; charset=utf-8"),
                   "/studio.js": ("studio.js", "text/javascript; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
@@ -374,6 +377,18 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/api/note/take":
                     result = self.server.engine.call("session.inspect")
                 self.send_json(200, result)
+            elif self.path == "/api/stream":
+                action = data.pop("action", None)
+                if action not in ("play", "status", "read", "pause", "resume", "stop", "seek", "loop"):
+                    raise ValueError("Unknown browser stream action.")
+                result = self.server.engine.call("stream." + action, data)
+                if action == "read":
+                    samples = [sample for frame in result.pop("pcm") for sample in frame]
+                    self.send_bytes(200, struct.pack("<" + "f" * len(samples), *samples), "application/octet-stream", {
+                        "X-DAW-Block": json.dumps(result, separators=(",", ":")),
+                    })
+                else:
+                    self.send_json(200, result)
             elif self.path == "/api/transport":
                 action = data.pop("action", None)
                 if action not in ("play", "pause", "resume", "stop", "volume"):
