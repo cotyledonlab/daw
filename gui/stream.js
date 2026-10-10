@@ -53,7 +53,9 @@ class BrowserStream {
     });
   }
   async pump(generation) {
-    while (generation === this.generation && this.state === 'playing' && this.nextTime-this.context.currentTime < 0.25) {
+    // A slow connection must yield even when it cannot fill the target buffer.
+    let blocks = 0;
+    while (blocks++ < 3 && generation === this.generation && this.state === 'playing' && this.nextTime-this.context.currentTime < 0.25) {
       const response = await this.wire('read', {stream_id:this.id,frames:4096});
       const metadata = JSON.parse(response.headers.get('X-DAW-Block'));
       const bytes = await response.arrayBuffer();

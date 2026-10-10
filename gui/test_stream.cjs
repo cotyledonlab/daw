@@ -30,3 +30,9 @@ for(const action of ['seek','loop'])test(`rejected ${action} releases playback w
  await assert.rejects(()=>stream.control(action,action==='seek'?{frame:9600}:{region:{start_frame:0,end_frame:9600}}),/Network failed/);
  assert.equal(stream.state,'error');assert.equal(context.state,'closed');assert.equal(stream.sources.size,0);assert.equal(stream.id,null);
 });
+
+test('slow reads yield after bounded work so startup and Stop remain responsive',async()=>{
+ const {stream,context,calls}=setup();stream.onError=()=>{};const original=stream.wire.bind(stream);
+ stream.wire=async(a,p)=>{const result=await original(a,p);if(a==='read')context.currentTime+=0.2;return result;};
+ const result=await stream.start('4',0.3);assert.equal(result.state,'playing');assert.equal(calls.filter(c=>c.action==='read').length,3);assert.ok(result.underruns>0);await stream.control('stop');
+});
