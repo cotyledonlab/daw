@@ -96,7 +96,17 @@ Open `http://127.0.0.1:8789` while that tunnel runs; the engine still runs on He
 
 The public Caddy proxy requires separate `john` and `mugsy` passwords. It routes John to the existing evaluation engine and Mugsy to a separate engine, page token, temporary asset directory and Studio state. Each login has one current in-memory project; Save/Load retains the existing download workflow. This is process isolation, not a new project database. Download project ZIPs before restarting either engine.
 
-Caddy binds only to the public IPv4 address. Existing Tailscale/Jellyfin routes stay on the tailnet interface. It rejects foreign Origin headers before rewriting Host/Origin for the fixed loopback gateways; API token/revision checks remain enforced. The two authenticated UI/API routes, anonymous rejection, cross-origin rejection and cross-project token rejection passed using a temporary loopback Caddy listener. Public TLS/playback acceptance remains open while the upstream firewall blocks certificate challenges.
+Caddy binds only to the public IPv4 address. Existing Tailscale/Jellyfin routes stay on the tailnet interface. It rejects foreign, empty and duplicate Origin headers before rewriting Host/Origin for the fixed loopback gateways; API token/revision checks remain enforced. The two authenticated UI/API routes, anonymous rejection, foreign/empty/duplicate Origin rejection and cross-project token rejection passed using a temporary loopback Caddy listener. Public TLS/playback acceptance remains open while the upstream firewall blocks certificate challenges.
+
+The public Origin matcher compares Caddy's joined header values exactly, so duplicated headers cannot pass by including one allowed value:
+
+```caddyfile
+@bad_origin {
+    header Origin *
+    expression `{http.request.header.Origin} != "https://daw.johnapmaher.com"`
+}
+respond @bad_origin "Cross-origin requests are not allowed." 403
+```
 
 On the box, inspect `caddy`, `daw`, `daw-gateway`, `daw-mugsy` and `daw-mugsy-gateway` with `systemctl status`. Public proxy configuration is `/etc/caddy/Caddyfile`; root-only login records are `/etc/daw-access/john.json` and `/etc/daw-access/mugsy.json`. Do not commit or print passwords. The private owner URL and SSH tunnel remain available while public access is blocked.
 
