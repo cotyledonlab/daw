@@ -90,6 +90,26 @@ ssh -i ~/.ssh/id_ed25519_hetzner_jellyfin -N -L 127.0.0.1:8789:127.0.0.1:8789 ro
 
 Open `http://127.0.0.1:8789` while that tunnel runs; the engine still runs on Hetzner. To remove only the remote DAW HTTPS route, run `tailscale serve --https=8443 off` on the server.
 
+## DAW domain and separate projects
+
+`daw.johnapmaher.com` now has an A record for the Hetzner public IPv4 address. The replacement Route 53 zone is in the `daw-domain` AWS CLI profile; its nameservers are active. Public HTTPS is configured but remains blocked until the Hetzner firewall allows inbound TCP 80/443. Do not treat the public URL as live before certificate issuance and an external HTTPS check succeed.
+
+The public Caddy proxy requires separate `john` and `mugsy` passwords. It routes John to the existing evaluation engine and Mugsy to a separate engine, page token, temporary asset directory and Studio state. Each login has one current in-memory project; Save/Load retains the existing download workflow. This is process isolation, not a new project database. Download project ZIPs before restarting either engine.
+
+Caddy binds only to the public IPv4 address. Existing Tailscale/Jellyfin routes stay on the tailnet interface. It rejects foreign, empty and duplicate Origin headers before rewriting Host/Origin for the fixed loopback gateways; API token/revision checks remain enforced. The two authenticated UI/API routes, anonymous rejection, foreign/empty/duplicate Origin rejection and cross-project token rejection passed using a temporary loopback Caddy listener. Public TLS/playback acceptance remains open while the upstream firewall blocks certificate challenges.
+
+The public Origin matcher compares Caddy's joined header values exactly, so duplicated headers cannot pass by including one allowed value:
+
+```caddyfile
+@bad_origin {
+    header Origin *
+    expression `{http.request.header.Origin} != "https://daw.johnapmaher.com"`
+}
+respond @bad_origin "Cross-origin requests are not allowed." 403
+```
+
+On the box, inspect `caddy`, `daw`, `daw-gateway`, `daw-mugsy` and `daw-mugsy-gateway` with `systemctl status`. Public proxy configuration is `/etc/caddy/Caddyfile`; root-only login records are `/etc/daw-access/john.json` and `/etc/daw-access/mugsy.json`. Do not commit or print passwords. The private owner URL and SSH tunnel remain available while public access is blocked.
+
 ## Remote listening and recording
 
 The headless browser stream keeps roughly 250–335 ms of audio queued (4096-frame blocks at 48 kHz), plus network/render time and device latency. It is an auditioning path, not a low-latency WebRTC connection. An underrun introduces a listening gap; MIDI takes are discarded if one is observed so a misleadingly timed take is not applied. Listening volume stays local and does not change saved mix/export. One browser owns playback; refresh/page close stops its output, and an abandoned server stream expires after 30 seconds without an owner request. Other editing windows retain revision checks; use one active window.
