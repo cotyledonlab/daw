@@ -108,7 +108,7 @@ The public Origin matcher compares Caddy's joined header values exactly, so dupl
 respond @bad_origin "Cross-origin requests are not allowed." 403
 ```
 
-On the box, inspect `caddy`, `daw`, `daw-gateway`, `daw-mugsy` and `daw-mugsy-gateway` with `systemctl status`. Public proxy configuration is `/etc/caddy/Caddyfile`; root-only login records are `/etc/daw-access/john.json` and `/etc/daw-access/mugsy.json`. Do not commit or print passwords. The private owner URL and SSH tunnel remain available while public access is blocked.
+On the box, inspect `caddy`, `daw`, `daw-gateway`, `daw-mugsy` and `daw-mugsy-gateway` with `systemctl status`. Public proxy configuration is `/etc/caddy/Caddyfile`; root-only login records are `/etc/daw-access/john.json` and `/etc/daw-access/mugsy.json`. Do not commit or print passwords. The private owner URL and SSH tunnel remain available.
 
 ## Remote listening and recording
 
