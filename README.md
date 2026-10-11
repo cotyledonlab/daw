@@ -92,11 +92,11 @@ Open `http://127.0.0.1:8789` while that tunnel runs; the engine still runs on He
 
 ## DAW domain and separate projects
 
-`daw.johnapmaher.com` now has an A record for the Hetzner public IPv4 address. The replacement Route 53 zone is in the `daw-domain` AWS CLI profile; its nameservers are active. Public HTTPS is configured but remains blocked until the Hetzner firewall allows inbound TCP 80/443. Do not treat the public URL as live before certificate issuance and an external HTTPS check succeed.
+`daw.johnapmaher.com` now has an A record for the Hetzner public IPv4 address. The replacement Route 53 zone is in the `daw-domain` AWS CLI profile; its nameservers are active. Public HTTPS is live at [daw.johnapmaher.com](https://daw.johnapmaher.com) with a validated Let’s Encrypt certificate; the attached Hetzner firewall allows inbound TCP 80/443.
 
 The public Caddy proxy requires separate `john` and `mugsy` passwords. It routes John to the existing evaluation engine and Mugsy to a separate engine, page token, temporary asset directory and Studio state. Each login has one current in-memory project; Save/Load retains the existing download workflow. This is process isolation, not a new project database. Download project ZIPs before restarting either engine.
 
-Caddy binds only to the public IPv4 address. Existing Tailscale/Jellyfin routes stay on the tailnet interface. It rejects foreign, empty and duplicate Origin headers before rewriting Host/Origin for the fixed loopback gateways; API token/revision checks remain enforced. The two authenticated UI/API routes, anonymous rejection, foreign/empty/duplicate Origin rejection and cross-project token rejection passed using a temporary loopback Caddy listener. Public TLS/playback acceptance remains open while the upstream firewall blocks certificate challenges.
+Caddy binds only to the public IPv4 address. Existing Tailscale/Jellyfin routes stay on the tailnet interface. It rejects foreign, empty and duplicate Origin headers before rewriting Host/Origin for the fixed loopback gateways; API token/revision checks remain enforced. The two authenticated UI/API routes, anonymous rejection, foreign/empty/duplicate Origin rejection and cross-project token rejection passed using a temporary loopback Caddy listener. External certificate-validated HTTPS checks passed for both accounts and these rejection cases. Safari Play started the 48 kHz browser stream with an advancing playhead, then Stop succeeded. Acoustic listening and physical input acceptance remain open.
 
 The public Origin matcher compares Caddy's joined header values exactly, so duplicated headers cannot pass by including one allowed value:
 
